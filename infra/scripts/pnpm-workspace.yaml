@@ -1,0 +1,16 @@
+# Workspace-root marker — this file exists to STOP pnpm, not to configure it.
+#
+# Without it, `pnpm install` run from infra/scripts/ walks up the tree, finds
+# the repo root's pnpm-workspace.yaml (which globs only apps/* and packages/*),
+# decides it is operating on the root workspace, reports "Already up to date"
+# and installs nothing here. No node_modules, no error, and relay-smoke.mjs
+# then dies on `Cannot find package 'ws'`.
+#
+# An empty `packages` list makes infra/scripts its own workspace root with a
+# single project — itself — so the install stays local and gets its own
+# node_modules and pnpm-lock.yaml.
+#
+# infra/ is deliberately not a member of the root workspace: pnpm-workspace.yaml
+# at the root globs apps/* and packages/* only, and infra/ is operator tooling,
+# not a shipped package.
+packages: []

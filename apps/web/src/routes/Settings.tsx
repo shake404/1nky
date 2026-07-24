@@ -1,0 +1,150 @@
+import { COPY } from '@1nky/protocol';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Identicon } from '../components/Identicon.js';
+import { QrBlock } from '../components/QrBlock.js';
+import { API_BASE, MEDIA_BASE, POW_BITS, RELAY_WS_URL, SHOW_FLAGS } from '../lib/config.js';
+import { exportBlackbook } from '../lib/identity.js';
+import { useTag } from '../state/TagProvider.js';
+import { useToast } from '../state/ToastProvider.js';
+
+/** Everything about this device and this tag. */
+export function Settings(): JSX.Element {
+  const { tag, persisted } = useTag();
+  const { say } = useToast();
+  const [linkPayload, setLinkPayload] = useState<string | null>(null);
+  const [linkPass, setLinkPass] = useState('');
+  const [linking, setLinking] = useState(false);
+
+  if (!tag) return <div className="shell empty" />;
+
+  const makeLink = async (): Promise<void> => {
+    if (linkPass.length < 8) {
+      say('Use at least 8 characters.', 'hazard');
+      return;
+    }
+    setLinking(true);
+    try {
+      const exported = await exportBlackbook(tag, linkPass);
+      setLinkPayload(exported.payload);
+    } catch {
+      say('Could not make the block.', 'hazard');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  return (
+    <div className="shell pad stack stack--wide">
+      <h2>Setup</h2>
+
+      <div className="row" style={{ gap: 14 }}>
+        <Identicon pubkey={tag.pubkey} size={56} />
+        <div>
+          <p className="display" style={{ fontSize: '1.5rem' }}>
+            {tag.name}
+          </p>
+          <p className="mono muted">{tag.mark}</p>
+        </div>
+      </div>
+      <p className="help">{COPY.mark.hint}</p>
+
+      <hr className="rule" />
+
+      <section className="stack">
+        <h3>{COPY.blackbook.label}</h3>
+        <div className="settings-row">
+          <span className={tag.backedUp ? 'muted' : 'hazard'}>
+            {tag.backedUp ? 'Saved.' : COPY.blackbook.nag}
+          </span>
+          <Link to="/backup" className="btn btn--go btn--sm sticker">
+            {COPY.blackbook.action}
+          </Link>
+        </div>
+        <p className="help">{COPY.blackbook.warning}</p>
+      </section>
+
+      <hr className="rule" />
+
+      <section className="stack">
+        <h3>{COPY.blackbook.linkDevice}</h3>
+        <p className="help">
+          Make a scannable block, open 1NKY on the other device, and choose
+          &ldquo;{COPY.tag.restore}&rdquo;.
+        </p>
+        {linkPayload ? (
+          <>
+            <QrBlock value={linkPayload} size={240} />
+            <p className="help hazard">
+              Anyone who photographs this and knows the passphrase becomes you. Close it when
+              you are done.
+            </p>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setLinkPayload(null)}>
+              Hide it
+            </button>
+          </>
+        ) : (
+          <div className="field">
+            <label htmlFor="link-pass">Passphrase for the block</label>
+            <input
+              id="link-pass"
+              className="input"
+              type="password"
+              value={linkPass}
+              onChange={(event) => setLinkPass(event.target.value)}
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => void makeLink()}
+              disabled={linking}
+            >
+              {linking ? 'Making it...' : 'Show the block'}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <hr className="rule" />
+
+      <section className="stack">
+        <h3>This device</h3>
+        <div className="settings-row">
+          <span className="muted">Storage held onto</span>
+          <span className={persisted ? 'mono' : 'mono hazard'}>{persisted ? 'yes' : 'not promised'}</span>
+        </div>
+        <p className="help">
+          If that says otherwise, install 1NKY to your home screen — {COPY.blackbook.installPrompt.toLowerCase()}
+        </p>
+      </section>
+
+      <hr className="rule" />
+
+      <section className="stack">
+        <h3 className="hazard">{COPY.hangItUp.label}</h3>
+        <p className="muted">{COPY.hangItUp.blurb}</p>
+        <Link to="/hang-it-up" className="btn btn--danger btn--block">
+          {COPY.hangItUp.label}
+        </Link>
+      </section>
+
+      {SHOW_FLAGS ? (
+        <>
+          <hr className="rule" />
+          <section className="stack">
+            <h3>Diagnostics</h3>
+            <ul className="list-reset mono muted" style={{ fontSize: '0.72rem', lineHeight: 1.9 }}>
+              <li>wall: {RELAY_WS_URL}</li>
+              <li>reads: {API_BASE}</li>
+              <li>pictures: {MEDIA_BASE}</li>
+              <li>
+                work: {POW_BITS.new}/{POW_BITS.post}/{POW_BITS.reaction}
+              </li>
+            </ul>
+          </section>
+        </>
+      ) : null}
+    </div>
+  );
+}

@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+.git
+**/dist
+**/build
+.env
+.env.*
+!.env.example
+*.log
+coverage
+.vercel
+strfry-db
+postgres-data
+.remember
+docs/drafts
+playwright-report
+test-results

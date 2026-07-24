@@ -1,0 +1,211 @@
+# =============================================================================
+# 1NKY — Caddyfile
+# =============================================================================
+#
+# NO-LOGS. There is not a single `log` directive in this file and there must
+# never be one. Caddy 2 does not write access logs unless a `log` block exists,
+# so the absence of one IS the configuration — this is the whole no-logs
+# posture from handoff Part 6/8 ("Caddy with logging disabled"). Caddy still
+# writes process-level messages (startup, cert renewal, panics) to stderr; that
+# is operational output about Caddy, not a record of who visited.
+#
+# Things that would break the promise, for the avoidance of doubt:
+#   - `log { ... }` at global or site scope        -> access logs
+#   - `log_credentials`                            -> worse access logs
+#   - `metrics` / the admin API's /metrics         -> per-path request counters
+#   - `reverse_proxy ... { header_up X-Real-IP }`  -> hands the client IP to an
+#     upstream that then has to be trusted not to write it down. strfry's
+#     realIpHeader is "" specifically so it cannot receive one.
+#
+# The origin keeps no logs regardless of what sits in front of it. See the
+# commented production block at the bottom for the Cloudflare tradeoff.
+# =============================================================================
+{
+	# No admin API. Nothing needs to reconfigure Caddy at runtime, and an open
+	# localhost admin endpoint inside the container is a needless surface — it
+	# also serves /metrics, which is request telemetry by another name.
+	# Consequence: `caddy reload` is unavailable. Restart the container instead.
+	admin off
+}
+
+# -----------------------------------------------------------------------------
+# Snippets
+# -----------------------------------------------------------------------------
+
+# Strip anything that fingerprints the stack. `-Server` removes Caddy's default
+# `Server: Caddy` response header (handoff Part 8: "header -Server").
+(scrub_headers) {
+	header {
+		-Server
+		-X-Powered-By
+		# A flick URL must not leak to a third party via Referer.
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		# The web client has no third-party scripts, no analytics, no cookies
+		# (CLAUDE.md: "Do NOT add analytics, telemetry, cookies, or
+		# third-party scripts to the web client").
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+	}
+}
+
+# Content-addressed blobs are immutable by construction: the URL *is* the
+# sha256 of the bytes. Handoff Part 8 — images served with
+# `Cache-Control: public, max-age=31536000, immutable`.
+(immutable_media) {
+	header Cache-Control "public, max-age=31536000, immutable"
+}
+
+# =============================================================================
+# DEV VHOST — http://localhost/
+# =============================================================================
+#
+# A bare `:80` site address means plain HTTP with no automatic TLS, which is
+# what we want locally. Bring it up with:
+#     docker compose up -d postgres strfry caddy
+#
+# api/media live in the `full` compose profile. With only the Phase 0 three
+# services running, /api/* and /media/* return 502 — that is expected, not a
+# misconfiguration. /relay and / work standalone.
+# =============================================================================
+
+:80 {
+	import scrub_headers
+
+	# --- Relay websocket -----------------------------------------------------
+	# Caddy 2's reverse_proxy performs the WebSocket upgrade transparently and
+	# streams upgraded connections with no timeout; no special directive is
+	# needed. Note the deliberate absence of any X-Forwarded-For / X-Real-IP
+	# plumbing — strfry must not learn the client IP, and with
+	# relay.realIpHeader = "" it would ignore one anyway.
+	@relay path /relay /relay/*
+	handle @relay {
+		reverse_proxy strfry:7777
+	}
+
+	# --- Read-only REST API --------------------------------------------------
+	# handle_path strips the matched prefix: /api/feed -> GET /feed on :3001.
+	handle_path /api/* {
+		reverse_proxy api:3001
+	}
+
+	# --- Blossom media service ----------------------------------------------
+	# /media/<sha256> -> GET /<sha256> on :3002.
+	handle_path /media/* {
+		# Hard ceiling above MAX_UPLOAD_MB=5 so an oversized PUT is cut off at
+		# the edge instead of streaming through to the re-encoder.
+		request_body {
+			max_size 6MB
+		}
+		import immutable_media
+		reverse_proxy media:3002
+	}
+
+	# --- Static site placeholder --------------------------------------------
+	# apps/web does not exist yet. Once it does, replace this block with the
+	# root/try_files/file_server trio shown in the production section below.
+	handle {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "1NKY" 200
+	}
+}
+
+# =============================================================================
+# PRODUCTION — 1nky.com  (COMMENTED OUT)
+# =============================================================================
+#
+# Uncomment after infra/deploy/dns-runbook.md is done and A records resolve to
+# the droplet. Then either bake apps/web's `dist/` into an image mounted at
+# /srv/web, or add a `web` service to the full profile and reverse_proxy to it.
+#
+# Prerequisites:
+#   1. A records for 1nky.com and www.1nky.com point at the droplet's reserved
+#      IP (see infra/deploy/dns-runbook.md).
+#   2. Ports 80 and 443 are open — cloud-init.yml opens them via UFW.
+#   3. If Cloudflare proxying is ON (orange cloud), the HTTP-01 challenge will
+#      fail because CF terminates TLS at the edge. Either set CF SSL mode to
+#      "Full (strict)" and switch to the DNS-01 challenge with a scoped CF API
+#      token (requires a Caddy build with the cloudflare DNS module), or
+#      grey-cloud the record while issuing. Handoff Part 6/8 puts CF in front
+#      for CDN + the free CSAM Scanning Tool; that is the later production
+#      posture, not day one.
+#
+# -----------------------------------------------------------------------------
+#
+# 1nky.com, www.1nky.com {
+# 	import scrub_headers
+#
+# 	# No `email` is configured, at global or site scope, on purpose: there is
+# 	# no email anywhere in this product (handoff Part 8). Caddy will use an
+# 	# anonymous ACME account.
+# 	# With Cloudflare proxy ON, replace automatic issuance with DNS-01:
+# 	# tls {
+# 	# 	dns cloudflare {env.CF_API_TOKEN}
+# 	# }
+#
+# 	encode zstd gzip
+#
+# 	header {
+# 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# 		X-Frame-Options "DENY"
+# 	}
+#
+# 	@relay path /relay /relay/*
+# 	handle @relay {
+# 		reverse_proxy strfry:7777
+# 	}
+#
+# 	handle_path /api/* {
+# 		reverse_proxy api:3001
+# 	}
+#
+# 	# Immutable cache headers on /media per handoff Part 8. Content-addressed
+# 	# blobs never change, so a one-year immutable TTL is safe and it is what
+# 	# drives the CDN hit ratio that keeps R2 read ops at effectively zero.
+# 	handle_path /media/* {
+# 		request_body {
+# 			max_size 6MB
+# 		}
+# 		import immutable_media
+# 		reverse_proxy media:3002
+# 	}
+#
+# 	# React PWA. SPA fallback so client-side routes deep-link correctly.
+# 	handle {
+# 		root * /srv/web
+# 		try_files {path} /index.html
+# 		file_server
+# 		# The app shell changes on every deploy; do not let it get pinned.
+# 		header /index.html Cache-Control "no-cache"
+# 		# Vite emits content-hashed asset filenames, so those ARE immutable.
+# 		header /assets/* Cache-Control "public, max-age=31536000, immutable"
+# 	}
+# }
+#
+# -----------------------------------------------------------------------------
+# .onion MIRROR (Phase 4)
+# -----------------------------------------------------------------------------
+# The sovereign path: bypasses Cloudflare entirely, so nothing but this box
+# ever sees the connection. Add a `tor` service to compose whose hidden service
+# forwards to caddy:8080, then mirror the routing above on a plain :8080 site.
+# No TLS there — Tor already authenticates and encrypts to the hidden service.
+#
+# :8080 {
+# 	import scrub_headers
+# 	@relay path /relay /relay/*
+# 	handle @relay {
+# 		reverse_proxy strfry:7777
+# 	}
+# 	handle_path /api/* {
+# 		reverse_proxy api:3001
+# 	}
+# 	handle_path /media/* {
+# 		import immutable_media
+# 		reverse_proxy media:3002
+# 	}
+# 	handle {
+# 		root * /srv/web
+# 		try_files {path} /index.html
+# 		file_server
+# 	}
+# }
+# =============================================================================

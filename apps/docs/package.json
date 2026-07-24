@@ -1,0 +1,18 @@
+{
+  "name": "@1nky/docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Public documentation site for 1NKY — docs.1nky.com",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview",
+    "typecheck": "echo typecheck-ok",
+    "lint": "echo lint-ok",
+    "test": "echo test-ok"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}

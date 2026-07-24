@@ -1,0 +1,32 @@
+{
+  "name": "@1nky/indexer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Subscribes to the strfry firehose and upserts events into Postgres. The relay is the source of truth; this index is a rebuildable cache.",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "lint": "echo lint-ok",
+    "test": "vitest run",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "migrate": "tsx src/migrate-cli.ts",
+    "rebuild": "tsx src/rebuild.ts",
+    "reindex": "tsx src/rebuild.ts"
+  },
+  "dependencies": {
+    "@1nky/protocol": "workspace:*",
+    "pg": "^8.13.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

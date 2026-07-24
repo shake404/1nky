@@ -1,0 +1,297 @@
+# ---------------------------------------------------------------------------
+# 1NKY — local + single-host production compose
+# ---------------------------------------------------------------------------
+#
+# NO-LOGS POLICY (hard rule #1 in CLAUDE.md, Part 6 + Part 8 of the handoff).
+# Read this before adding a service or an env var.
+#
+#   * No service in this file enables request/access logging.
+#     - caddy      : infra/caddy/Caddyfile contains ZERO `log` blocks. Caddy 2
+#                    does not write access logs unless a `log` directive exists,
+#                    so the absence IS the configuration. Do not add one.
+#     - strfry     : relay.logging.dumpInAll / dumpInEvents / dumpInReqs and
+#                    invalidEvents are all false, and relay.realIpHeader is ""
+#                    so strfry never even parses a forwarded client IP.
+#     - writepolicy: infra/strfry/write-policy.mjs prints EXACTLY
+#                    "kind=<n> <accept|reject>" to stderr. No pubkeys, no event
+#                    ids, no IPs, no sourceInfo. Ever.
+#     - api/media  : Express 5 with no morgan / no access-log middleware.
+#     - postgres   : no IP columns exist anywhere in the schema by design.
+#
+#   * We deliberately do NOT set `logging: { driver: "none" }`. That would also
+#     suppress crash traces and startup errors, which we need to operate the
+#     box. The docker default json-file driver is kept, and it only ever
+#     receives what the processes above choose to emit — which is not requests.
+#
+#   * If you add a service: prove it does not log connection info before you
+#     merge it. "We can turn it off later" is how this rule dies.
+#
+# ---------------------------------------------------------------------------
+# PROFILES
+#
+#   Phase 0 acceptance (default profile, no flag needed):
+#       docker compose up -d postgres strfry caddy
+#
+#   Whole stack (once apps/api, apps/indexer, apps/media exist):
+#       docker compose --profile full up -d --build
+#
+# Configuration comes from infra/.env (Compose auto-loads the .env next to this
+# file). Bootstrap it with:  cp ../.env.example .env
+# Every value below has a sane default so the Phase 0 three-service bring-up
+# works with no .env at all.
+# ---------------------------------------------------------------------------
+
+name: 1nky
+
+services:
+  # -------------------------------------------------------------------------
+  # Postgres — rebuildable index/cache. The relay is the source of truth.
+  # There is no IP column in this database and there never will be.
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: oneinky
+      POSTGRES_PASSWORD: oneinky
+      POSTGRES_DB: oneinky
+      # Deterministic initdb so `docker compose down -v && up` is reproducible.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Loopback only. Never 0.0.0.0 — this port has no business on the internet.
+      # Host port is overridable: many dev boxes already have a postgres on 5432.
+      # Set POSTGRES_HOST_PORT=5433 in infra/.env if this collides.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oneinky -d oneinky"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks: [oneinky]
+
+  # -------------------------------------------------------------------------
+  # strfry — the relay, and the source of truth for all events.
+  #
+  # The write policy is NOT a separate service: strfry spawns it as a stdio
+  # child process (see relay.writePolicy.plugin in strfry/strfry.conf). The
+  # plugin script and its ban list are bind-mounted at /app/plugin, and the
+  # plugin inherits this service's environment.
+  #
+  # We build a thin image on top of the official ghcr.io/hoytech/strfry:latest
+  # because that image is Alpine + the strfry binary only — it ships no Node
+  # runtime, and our write policy is a Node script. See docker/strfry.Dockerfile.
+  # -------------------------------------------------------------------------
+  strfry:
+    build:
+      context: ./docker
+      dockerfile: strfry.Dockerfile
+    image: 1nky/strfry:local
+    restart: unless-stopped
+    # NO-LOGS, and this line is load-bearing.
+    #
+    # At the default INFO verbosity strfry emits, per connection:
+    #     [1] Connect from 172.19.0.1 compression=Y sliding=Y
+    #     [1] Disconnect from 172.19.0.1 (0/-) UP: 1.31K ...
+    # That is an IP address in a log line, which hard rule #1 forbids outright.
+    # Behind Caddy it would only ever be the proxy's bridge address rather than
+    # a real visitor, but the rule does not have an "it's only a little bit of
+    # connection info" clause, and anyone who later publishes this port
+    # directly would start recording real client IPs with no warning.
+    #
+    # WARNING drops every INFO line — the connect/disconnect pairs, "HTTP
+    # request for [/]", and the per-event "Inserted event id=..." chatter —
+    # while keeping warnings and errors, which is what you actually need to
+    # operate the relay. The write policy's own "kind=<n> accept|reject" goes
+    # to the plugin's stderr and is unaffected by this, so the one signal we DO
+    # want survives.
+    #
+    # It must be WARNING, not WARN. `strfry --help` advertises "WARN" and the
+    # argument parser rejects it — the accepted set is INFO / WARNING / ERROR /
+    # OFF or an integer, and a bad value is a fatal startup crash loop, not a
+    # warning. Verified against strfry 1.1.0.
+    command: ["--verbosity=${STRFRY_VERBOSITY:-WARNING}", "relay"]
+    environment:
+      # --- write-policy knobs (all read by strfry/write-policy.mjs) ---
+      # Kind allowlist: 0 profile, 1 thread OP, 5 delete/"buff", 20 flick,
+      # 1111 NIP-22 reply, 1984 report/"flag it", 10000 NIP-51 mute,
+      # 30078 app-specific (board registry / mod list, signed by the site key).
+      ALLOWED_KINDS: "${ALLOWED_KINDS:-0,1,5,20,1111,1984,10000,30078}"
+      MAX_EVENT_BYTES: "${MAX_EVENT_BYTES:-65536}"
+      # NIP-13 tiers. Defaults mirror the root .env.example.
+      POW_BITS_NEW: "${POW_BITS_NEW:-18}"
+      POW_BITS_POST: "${POW_BITS_POST:-13}"
+      POW_BITS_REACTION: "${POW_BITS_REACTION:-8}"
+      # Which kinds fall into which PoW tier.
+      POW_NEW_KINDS: "${POW_NEW_KINDS:-0}"
+      POW_REACTION_KINDS: "${POW_REACTION_KINDS:-1984,10000}"
+      # Hot-reloaded ban list (JSON array of 32-byte hex pubkeys).
+      BAN_LIST_PATH: "${BAN_LIST_PATH:-/app/plugin/banlist.json}"
+      # Set to "0" to disable the PoW gate entirely (local dev only).
+      POW_ENABLED: "${POW_ENABLED:-1}"
+    volumes:
+      - strfry_db:/app/strfry-db
+      # Config is picked up from /etc/strfry.conf (strfry's search order puts it
+      # ahead of the ./strfry.conf baked into the image).
+      - ./strfry/strfry.conf:/etc/strfry.conf:ro
+      # Mount the DIRECTORY, not the individual files: editors that replace the
+      # inode on save (which is most of them) would otherwise never be visible
+      # inside the container, and the ban list hot-reload would silently stop
+      # working.
+      - ./strfry:/app/plugin:ro
+    ports:
+      # Exposed to the compose network as strfry:7777 for caddy/indexer, and to
+      # the host on loopback only so the Phase 0 smoke script can reach it.
+      - "127.0.0.1:${RELAY_HOST_PORT:-7777}:7777"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('net').connect(7777,'127.0.0.1').on('connect',function(){process.exit(0)}).on('error',function(){process.exit(1)})"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks: [oneinky]
+
+  # -------------------------------------------------------------------------
+  # Caddy — TLS terminator and the only thing bound to public ports.
+  # Logging is off (no `log` blocks in the Caddyfile) and `-Server` is stripped.
+  # -------------------------------------------------------------------------
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on:
+      strfry:
+        condition: service_healthy
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      # Overridable for dev boxes where something already owns 80/443.
+      # Leave them at the defaults in production — ACME needs 80 and 443.
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [oneinky]
+
+  # -------------------------------------------------------------------------
+  # Application services. Profile `full` — they are not part of the Phase 0
+  # acceptance bring-up and it is fine for apps/* to not exist yet.
+  # -------------------------------------------------------------------------
+
+  # Read-only REST API (@1nky/api). Writes NEVER go through here — writes are
+  # signed events to the relay.
+  api:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+      args:
+        # Flip to --no-frozen-lockfile before pnpm-lock.yaml is committed.
+        PNPM_INSTALL_FLAGS: "${PNPM_INSTALL_FLAGS:---frozen-lockfile}"
+    image: 1nky/api:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: "${NODE_ENV:-production}"
+      API_PORT: "3001"
+      DATABASE_URL: "${DATABASE_URL:-postgres://oneinky:oneinky@postgres:5432/oneinky}"
+      RELAY_WS_URL: "${RELAY_WS_URL:-ws://strfry:7777}"
+      MEDIA_PUBLIC_BASE: "${MEDIA_PUBLIC_BASE:-http://localhost/media}"
+      SITE_MOD_PUBKEYS: "${SITE_MOD_PUBKEYS:-}"
+      SITE_PUBKEY: "${SITE_PUBKEY:-}"
+    expose:
+      - "3001"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/healthz').then(function(r){process.exit(r.ok?0:1)}).catch(function(){process.exit(1)})"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [oneinky]
+
+  # Firehose consumer (@1nky/indexer). No listening port by design.
+  indexer:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: infra/docker/indexer.Dockerfile
+      args:
+        PNPM_INSTALL_FLAGS: "${PNPM_INSTALL_FLAGS:---frozen-lockfile}"
+    image: 1nky/indexer:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      strfry:
+        condition: service_healthy
+    environment:
+      NODE_ENV: "${NODE_ENV:-production}"
+      DATABASE_URL: "${DATABASE_URL:-postgres://oneinky:oneinky@postgres:5432/oneinky}"
+      RELAY_WS_URL: "${RELAY_WS_URL:-ws://strfry:7777}"
+      NEWBIE_POSTS_PER_DAY: "${NEWBIE_POSTS_PER_DAY:-5}"
+      NEWBIE_WINDOW_HOURS: "${NEWBIE_WINDOW_HOURS:-48}"
+      # Without this, any signer can define boards via kind-30078.
+      SITE_PUBKEY: "${SITE_PUBKEY:-}"
+    networks: [oneinky]
+
+  # Blossom-compatible media service (@1nky/media). Streams to R2.
+  media:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: infra/docker/media.Dockerfile
+      args:
+        PNPM_INSTALL_FLAGS: "${PNPM_INSTALL_FLAGS:---frozen-lockfile}"
+    image: 1nky/media:local
+    restart: unless-stopped
+    environment:
+      NODE_ENV: "${NODE_ENV:-production}"
+      MEDIA_PORT: "3002"
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-5}"
+      MEDIA_PUBLIC_BASE: "${MEDIA_PUBLIC_BASE:-http://localhost/media}"
+      R2_ACCOUNT_ID: "${R2_ACCOUNT_ID:-}"
+      R2_ACCESS_KEY_ID: "${R2_ACCESS_KEY_ID:-}"
+      R2_SECRET_ACCESS_KEY: "${R2_SECRET_ACCESS_KEY:-}"
+      R2_BUCKET: "${R2_BUCKET:-1nky-media}"
+      R2_ENDPOINT: "${R2_ENDPOINT:-}"
+    expose:
+      - "3002"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3002/healthz').then(function(r){process.exit(r.ok?0:1)}).catch(function(){process.exit(1)})"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [oneinky]
+
+networks:
+  oneinky:
+    driver: bridge
+
+volumes:
+  pgdata:
+  strfry_db:
+  caddy_data:
+  caddy_config:

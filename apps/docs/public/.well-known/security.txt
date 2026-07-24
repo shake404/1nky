@@ -1,0 +1,14 @@
+# 1NKY security contact — RFC 9116
+# Report vulnerabilities in key custody, EXIF stripping, or anything that
+# deanonymizes a writer. Do not disclose those publicly before we fix them.
+
+Contact: https://docs.1nky.com/security
+Policy: https://docs.1nky.com/security
+Preferred-Languages: en
+Canonical: https://docs.1nky.com/.well-known/security.txt
+Expires: 2027-07-24T00:00:00.000Z
+
+# Acknowledgments: TODO — the "props" page ships with the public repo.
+# Encryption: TODO — no PGP key is published yet. We are not going to point at a
+# key nobody controls. See https://docs.1nky.com/security#contact for the interim
+# channel.

@@ -1,0 +1,17 @@
+{
+  "name": "@1nky-infra/scripts",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Standalone operator scripts for infra/. NOT part of the pnpm workspace — pnpm-workspace.yaml only globs apps/* and packages/*, so this directory has its own lockfile and node_modules and is installed on its own.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "smoke": "node relay-smoke.mjs"
+  },
+  "devDependencies": {
+    "nostr-tools": "^2.10.4",
+    "ws": "^8.18.0"
+  }
+}
