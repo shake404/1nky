@@ -14,3 +14,6 @@ postgres-data/
 .remember/
 playwright-report/
 test-results/
+.playwright-mcp/
+1nky-landing.png
+1nky-desktop.png
