@@ -39,6 +39,26 @@ export interface PublishOptions {
 
 export class PublishError extends Error {}
 
+/** The relay caps difficulty well under this; the ceiling only stops a runaway. */
+const MAX_POW_BITS = 24;
+
+/**
+ * The difficulty a `pow:` rejection is asking for, if it names one higher than
+ * what we already tried. The relay's newcomer gate keeps an in-process memory
+ * of pubkeys it has seen, so after it restarts a returning writer briefly looks
+ * new again and their normal-tier work is turned away with
+ * "committed difficulty 13 is below the required 18". Rather than make the
+ * writer eat a mysterious failure, we read the number back off the message and
+ * grind once more at that tier.
+ */
+export function powShortfall(message: string, triedBits: number): number | null {
+  const lower = message.toLowerCase();
+  if (!lower.includes('pow') && !lower.includes('difficulty')) return null;
+  const required = [...lower.matchAll(/(\d+)/g)].map((m) => Number(m[1])).filter((n) => n > triedBits);
+  const want = Math.max(0, ...required);
+  return want > triedBits && want <= MAX_POW_BITS ? want : null;
+}
+
 async function send(
   template: EventTemplate,
   tag: Pick<Tag, 'secret' | 'pubkey'>,
@@ -46,10 +66,23 @@ async function send(
   options: PublishOptions = {},
 ): Promise<SignedEvent> {
   options.onStage?.('spraying');
-  const event = await mineAndSign(template, tag.secret, tag.pubkey, bits);
+  let event = await mineAndSign(template, tag.secret, tag.pubkey, bits);
 
   options.onStage?.('posting');
-  const result = await relay.publish(event);
+  let result = await relay.publish(event);
+
+  // One retry at the difficulty the relay actually wants. Covers the
+  // relay-restart case above without letting a persistent rejection loop.
+  if (!result.accepted) {
+    const harder = powShortfall(result.message, bits);
+    if (harder !== null) {
+      options.onStage?.('spraying');
+      event = await mineAndSign(template, tag.secret, tag.pubkey, harder);
+      options.onStage?.('posting');
+      result = await relay.publish(event);
+    }
+  }
+
   if (!result.accepted) {
     throw new PublishError(friendly(result.message));
   }
