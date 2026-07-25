@@ -159,6 +159,16 @@ The **.onion mirror** removes that entirely: Tor Browser → hidden service → 
 origin. No CDN, no third-party TLS termination, no IP visible at any hop, no ISP
 record that you visited a graffiti site.
 
+```text
+http://jd3i7s473cmwlxvfqynshzodo5rwtfrpkjtu5lhpbfguqd3u4uzqzfyd.onion
+```
+
+One honest caveat while we finish the wiring: the site and its data ride the
+hidden service end to end, but flick images themselves currently still load
+from the clearnet media host. Inside Tor Browser that fetch still goes through
+Tor — your IP stays out of it — it just crosses the regular edge instead of the
+hidden service. We're closing that gap; until then this note stays here.
+
 If you post flicks of your own work, this should be your default path, not your
 paranoid path. Combine it with:
 
