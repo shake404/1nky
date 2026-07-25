@@ -530,12 +530,16 @@ main {
 
 .tabbar a {
   position: relative;
+  min-width: 0;
   min-height: var(--tap);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
+  padding: 0 2px;
+  overflow: hidden;
+  white-space: nowrap;
   font-family: var(--body);
   font-weight: 600;
   text-transform: uppercase;
@@ -543,6 +547,17 @@ main {
   font-size: 0.66rem;
   color: var(--buff-deep);
   border-top: 3px solid transparent;
+}
+
+/* The dock carries every core route, and the column count comes from the tab
+   list itself — so on a narrow phone the type tightens rather than the labels
+   spilling out of their cells. */
+@media (max-width: 460px) {
+  .tabbar a {
+    font-size: 0.56rem;
+    letter-spacing: 0.02em;
+    padding: 0 1px;
+  }
 }
 
 /* Where you are is marked in chrome, same as any other live action. */
@@ -1586,4 +1601,227 @@ main {
   flex-wrap: wrap;
   padding: 10px 0;
   border-bottom: 1px solid var(--line);
+}
+
+/* --- Boards ----------------------------------------------------------------
+ * A board is a wall somebody claimed, so the hub reads as a row of claimed
+ * panels: hard keyline, hard drop, the slug painted big because the slug IS
+ * the name writers use out loud. Counts and last-activity are utility
+ * markings underneath, in the stencil voice.
+ */
+.board-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  padding: 4px 0 8px;
+}
+
+@media (min-width: 560px) {
+  .board-grid { grid-template-columns: repeat(2, 1fr); gap: 16px; }
+}
+
+@media (min-width: 900px) {
+  .board-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (min-width: 1300px) {
+  .board-grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 128px;
+  padding: 14px;
+  background: var(--soot-2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--drop);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.board-card:hover {
+  border-color: var(--buff);
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--keyline);
+}
+
+/* The slug is the board's name — the one thing on this card that is paint. */
+.board-card__slug {
+  font-family: var(--display);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-stretch: condensed;
+  line-height: 0.95;
+  font-size: clamp(1.5rem, 4.2vw, 2rem);
+  letter-spacing: -0.005em;
+  text-shadow: var(--drop-sm);
+  overflow-wrap: anywhere;
+}
+
+.board-card__title {
+  font-size: 0.85rem;
+}
+
+.board-card__counts {
+  margin-top: auto;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--buff);
+}
+
+.board-card__latest {
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+}
+
+/* --- Threads ---------------------------------------------------------------
+ * A thread row is a flyer stapled to the board: one line of it reads from
+ * across the room, the rest is small print.
+ */
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 13px 14px;
+  background: var(--soot-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.thread:hover {
+  border-left-color: var(--sodium);
+  background: var(--soot-3);
+}
+
+.thread__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.thread__subject {
+  font-weight: 700;
+  font-size: 1.02rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.thread__excerpt {
+  font-size: 0.9rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.thread__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+}
+
+.thread__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The countdown on a beef thread. Buff while there is time left, ink once it
+   is nearly gone — ink is reserved for the live and the irreversible, and a
+   thread about to disappear is exactly that. */
+.beef-clock {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--buff);
+  border: 1px solid var(--line-strong);
+  background: var(--soot-3);
+}
+
+.beef-clock--hot {
+  color: var(--soot);
+  border-color: var(--keyline);
+  background: var(--ink);
+  box-shadow: var(--drop-sm);
+}
+
+/* --- Beef duration picker --------------------------------------------------
+ * Four stickers, slapped down. One is peeled on.
+ */
+.beef-pick {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+@media (min-width: 620px) {
+  .beef-pick { grid-template-columns: repeat(4, 1fr); }
+}
+
+.beef-pick__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: var(--tap);
+  padding: 11px 12px;
+  text-align: left;
+  color: var(--buff);
+  border: 2px solid var(--line-strong);
+  background: var(--soot-2);
+  box-shadow: var(--drop-sm);
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.beef-pick__option:hover {
+  color: var(--chalk);
+  border-color: var(--buff);
+}
+
+.beef-pick__option--on {
+  color: var(--keyline);
+  border-color: var(--keyline);
+  background-color: #dfe4e9;
+  background-image: var(--spray-speck), var(--chrome-face);
+  background-size: 90px 90px, auto;
+  background-blend-mode: overlay, normal;
+}
+
+.beef-pick__label {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.82rem;
+}
+
+.beef-pick__note {
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  opacity: 0.78;
+}
+
+/* --- Reply tree ------------------------------------------------------------
+ * Indentation is a hanging line down the left, not a box — the conversation
+ * stays one column of text however deep it goes.
+ */
+.reply > ul {
+  border-left: 1px solid var(--line);
+}
+
+.reply__open {
+  align-self: flex-start;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.reply__open:hover {
+  color: var(--chalk);
 }

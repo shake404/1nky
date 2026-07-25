@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Shell } from './components/Shell.js';
 import { Backup } from './routes/Backup.js';
+import { Board } from './routes/Board.js';
+import { Boards } from './routes/Boards.js';
 import { Conversation } from './routes/Conversation.js';
 import { CreateCrew } from './routes/CreateCrew.js';
 import { Crew } from './routes/Crew.js';
@@ -13,11 +15,13 @@ import { HangItUp } from './routes/HangItUp.js';
 import { Landing } from './routes/Landing.js';
 import { Messages } from './routes/Messages.js';
 import { Mod } from './routes/Mod.js';
+import { NewThread } from './routes/NewThread.js';
 import { PickTag } from './routes/PickTag.js';
 import { PostFlick } from './routes/PostFlick.js';
 import { ProfileEdit } from './routes/ProfileEdit.js';
 import { Restore } from './routes/Restore.js';
 import { Settings } from './routes/Settings.js';
+import { Thread } from './routes/Thread.js';
 import { MyWall, Writer } from './routes/Writer.js';
 import { useTag } from './state/TagProvider.js';
 
@@ -64,6 +68,10 @@ export function App(): JSX.Element {
         <Route path="/" element={<Feed />} />
         <Route path="/explore" element={<Explore />} />
         <Route path="/f/:id" element={<FlickDetail />} />
+        <Route path="/boards" element={<Boards />} />
+        <Route path="/b/:slug" element={<Board />} />
+        <Route path="/b/:slug/new" element={<NewThread />} />
+        <Route path="/t/:id" element={<Thread />} />
         <Route path="/w/:pubkey" element={<Writer />} />
         <Route path="/crew/:pubkey" element={<Crew />} />
         <Route path="/crew/new" element={<CreateCrew />} />

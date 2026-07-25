@@ -25,6 +25,7 @@ function ConnectionDot(): JSX.Element {
 const TOPNAV = [
   { to: '/', label: 'Wall', end: true },
   { to: '/explore', label: 'Explore', end: false },
+  { to: '/boards', label: 'Boards', end: false },
   { to: '/post', label: 'Post', end: false },
   { to: '/me', label: 'Mine', end: false },
   { to: '/crews', label: 'Crew', end: false },
@@ -75,6 +76,7 @@ export function TopBar(): JSX.Element {
 const TABS = [
   { to: '/', glyph: '▚', label: 'Wall', end: true },
   { to: '/explore', glyph: '◎', label: 'Explore', end: false },
+  { to: '/boards', glyph: '▦', label: 'Boards', end: false },
   { to: '/post', glyph: '✚', label: 'Post', end: false },
   { to: '/messages', glyph: '✉', label: 'Word', end: false },
   { to: '/me', glyph: '◱', label: 'Mine', end: false },

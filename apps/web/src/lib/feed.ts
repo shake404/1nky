@@ -253,15 +253,22 @@ export function parseFeedResponse(payload: unknown): { flicks: Flick[]; cursor: 
 const PAGE_SIZE = 24;
 
 /**
- * A page of the global wall.
+ * A page of the wall — the whole thing, or just one board's corner of it.
  *
  * Prefers the read API. If it is not there — early dev, or the box is having
  * a moment — falls back to reading the wall directly so the app still works.
+ * The board filter survives that fallback: it becomes a slug filter on the
+ * direct read.
  */
-export async function fetchFeed(cursor: string | null, signal?: AbortSignal): Promise<FeedPage> {
+export async function fetchFeed(
+  cursor: string | null,
+  signal?: AbortSignal,
+  board?: string,
+): Promise<FeedPage> {
   const url = new URL(`${API_BASE}/feed`);
   url.searchParams.set('limit', String(PAGE_SIZE));
   if (cursor) url.searchParams.set('cursor', cursor);
+  if (board) url.searchParams.set('board', board);
 
   try {
     const response = await fetch(url, { ...(signal ? { signal } : {}), headers: { Accept: 'application/json' } });
@@ -270,16 +277,17 @@ export async function fetchFeed(cursor: string | null, signal?: AbortSignal): Pr
     return { ...parsed, degraded: false };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    return fallbackFeed(cursor);
+    return fallbackFeed(cursor, board);
   }
 }
 
-async function fallbackFeed(cursor: string | null): Promise<FeedPage> {
+async function fallbackFeed(cursor: string | null, board?: string): Promise<FeedPage> {
   const until = cursor ? Number.parseInt(cursor, 10) : undefined;
   const events = await relay.query([
     {
       kinds: [KINDS.FLICK, KINDS.VIDEO],
       limit: PAGE_SIZE,
+      ...(board ? { '#t': [board] } : {}),
       ...(Number.isFinite(until) ? { until: (until as number) - 1 } : {}),
     },
   ]);

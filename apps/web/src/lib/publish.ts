@@ -1,6 +1,7 @@
 import {
   buildBuff,
   buildComment,
+  buildThreadOp,
   KINDS,
   type EventRef,
   type EventTemplate,
@@ -159,16 +160,67 @@ export async function postVideo(tag: Tag, input: PostVideoInput): Promise<Signed
   return event;
 }
 
-/** Kind 1111 — a comment under a flick. */
+export interface PostThreadInput extends PublishOptions {
+  content: string;
+  /** Board slugs this thread goes up on. */
+  boards?: readonly string[];
+  /** Optional title. */
+  subject?: string;
+  /**
+   * When the wall should take it away (unix seconds) — this is what makes it a
+   * beef thread. Omit for one that stays up.
+   */
+  expiration?: number;
+}
+
+/**
+ * Kind 1 — start a thread on a board.
+ *
+ * Same freight as a flick: a fresh tag pays the newcomer tier on its first
+ * thing, everything after that is the ordinary post tier.
+ */
+export async function postThread(tag: Tag, input: PostThreadInput): Promise<SignedEvent> {
+  const { content, boards, subject, expiration, ...options } = input;
+  const trimmed = content.trim();
+  if (!trimmed) throw new PublishError('Say something first.');
+
+  const template = buildThreadOp({
+    content: trimmed,
+    ...(boards?.length ? { boards } : {}),
+    ...(subject?.trim() ? { subject: subject.trim() } : {}),
+    ...(expiration !== undefined ? { expiration } : {}),
+  });
+
+  const bits = tag.hasPosted ? POW_BITS.post : POW_BITS.new;
+  const event = await send(template, tag, bits, options);
+  await rememberOwnPost(event.id);
+  await markHasPosted();
+  return event;
+}
+
+/** Kind 1111 — a comment under a flick or a thread. */
 export async function postComment(
   tag: Tag,
   parent: EventRef,
   content: string,
-  options: PublishOptions = {},
+  options: PublishOptions & {
+    /**
+     * The top of the thread, when the thing being replied to is itself a
+     * reply. Left off, the parent IS the top — which is right for a comment
+     * straight onto a flick or onto a thread's opening post.
+     */
+    root?: EventRef;
+  } = {},
 ): Promise<SignedEvent> {
   const trimmed = content.trim();
   if (!trimmed) throw new PublishError('Say something first.');
-  const event = await send(buildComment(parent, { content: trimmed }), tag, POW_BITS.post, options);
+  const { root, ...publishOptions } = options;
+  const event = await send(
+    buildComment(parent, { content: trimmed, ...(root ? { root } : {}) }),
+    tag,
+    POW_BITS.post,
+    publishOptions,
+  );
   await rememberOwnPost(event.id);
   await markHasPosted();
   return event;
