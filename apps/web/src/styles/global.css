@@ -750,6 +750,57 @@ main {
   font-family: var(--body);
 }
 
+/* --- @-mention typeahead -------------------------------------------------- */
+/* The box holds the dropdown, so it hangs off the textarea, not the page. */
+.mention-box {
+  position: relative;
+}
+
+.mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--soot-2);
+  border: 2px solid var(--line-strong);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.35);
+}
+
+.mention-menu__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--chalk);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mention-menu__item.is-active,
+.mention-menu__item:hover {
+  background: var(--soot-3);
+  color: var(--sodium);
+}
+
+.mention-menu__name {
+  font-weight: 600;
+}
+
+.mention-menu__mark {
+  flex: none;
+}
+
 .help {
   font-size: 0.85rem;
   color: var(--buff);

@@ -645,6 +645,47 @@ describe('buildComment', () => {
       TypeError,
     );
   });
+
+  it('adds one p tag per mention', () => {
+    const ev = buildComment(flick, { content: 'yo @C @D', mentions: [HEX_C, HEX_D] });
+    // The parent author's p, then the two mentioned writers'.
+    expect(find(ev.tags, 'p')).toEqual([
+      ['p', HEX_B, ''],
+      ['p', HEX_C],
+      ['p', HEX_D],
+    ]);
+  });
+
+  it('dedupes a mention that repeats within the list', () => {
+    const ev = buildComment(flick, { content: 'x', mentions: [HEX_C, HEX_C] });
+    expect(find(ev.tags, 'p')).toEqual([
+      ['p', HEX_B, ''],
+      ['p', HEX_C],
+    ]);
+  });
+
+  it('does not double-tag a mention that is already the parent author', () => {
+    // HEX_B is the flick (parent) author — mentioning them adds nothing.
+    const ev = buildComment(flick, { content: 'x', mentions: [HEX_B, HEX_C] });
+    expect(find(ev.tags, 'p')).toEqual([
+      ['p', HEX_B, ''],
+      ['p', HEX_C],
+    ]);
+  });
+
+  it('does not re-tag the root author on a nested reply', () => {
+    // On a nested reply the root author (HEX_B) rides the uppercase P; a mention
+    // of them must not also emit a lowercase p.
+    const ev = buildComment(reply, { content: 'x', root: flick, mentions: [HEX_B] });
+    expect(find(ev.tags, 'p')).toEqual([['p', HEX_D, '']]);
+    expect(find(ev.tags, 'P')).toEqual([['P', HEX_B, '']]);
+  });
+
+  it('validates mention pubkeys and leaves the tags untouched when none pass', () => {
+    expect(() => buildComment(flick, { content: 'x', mentions: ['nope'] })).toThrow(TypeError);
+    const ev = buildComment(flick, { content: 'x', mentions: [] });
+    expect(find(ev.tags, 'p')).toEqual([['p', HEX_B, '']]);
+  });
 });
 
 describe('buildBuff', () => {

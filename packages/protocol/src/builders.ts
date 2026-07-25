@@ -445,6 +445,17 @@ export interface BuildCommentOptions extends BuilderOptions {
    * top-level comment on a flick or thread OP.
    */
   root?: EventRef;
+  /**
+   * Writers named in the body (an @-mention). Each becomes one `['p', pubkey]`
+   * tag so the mention is a *real* reference the wall can key on later — the
+   * seed of a "you were mentioned" signal — not just literal text.
+   *
+   * Deduped against the parent/root `p`/`P` tags already emitted and against
+   * each other, so a writer already anchored by the reply (the parent author,
+   * say) is never double-tagged. Additive and optional: a comment without it
+   * is exactly the comment `buildComment` has always produced.
+   */
+  mentions?: readonly string[];
 }
 
 /**
@@ -469,6 +480,21 @@ export function buildComment(parent: EventRef, options: BuildCommentOptions): Ev
     ['k', String(parent.kind)],
     ['p', parent.pubkey, parent.relay ?? ''],
   ];
+
+  if (options.mentions?.length) {
+    // Everyone already referenced by an `E`/`e`/`P`/`p` tag — a mention that
+    // matches one of these adds nothing and must not emit a second `p`.
+    const seen = new Set<string>();
+    for (const tag of tags) {
+      if (tag[0] === 'p' || tag[0] === 'P') seen.add(tag[1] as string);
+    }
+    for (const mention of options.mentions) {
+      const pubkey = assertHex32(mention, 'buildComment(mention)');
+      if (seen.has(pubkey)) continue;
+      seen.add(pubkey);
+      tags.push(['p', pubkey]);
+    }
+  }
 
   return template(KINDS.COMMENT, tags, options.content, options);
 }

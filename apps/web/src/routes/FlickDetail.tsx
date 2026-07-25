@@ -4,10 +4,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AgeDots } from '../components/AgeDots.js';
 import { FlagIt } from '../components/FlagIt.js';
 import { IgnoreWriter } from '../components/IgnoreWriter.js';
+import { MentionBox } from '../components/MentionBox.js';
 import { WriterChip } from '../components/WriterChip.js';
 import { Spraying } from '../components/Spraying.js';
 import { getPref, setPref } from '../lib/db.js';
 import { fetchFlick, fetchWriterSummary, type Flick, type WriterSummary } from '../lib/feed.js';
+import { candidatesFrom, extractMentions, type MentionCandidate } from '../lib/mentions.js';
 import { ago } from '../lib/platform.js';
 import { buffEvents, postComment, type Stage } from '../lib/publish.js';
 import { relay } from '../lib/relay.js';
@@ -97,18 +99,30 @@ export function FlickDetail(): JSX.Element {
 
   const mine = Boolean(tag && flick && tag.pubkey === flick.pubkey);
 
+  // Who you can @: the writer whose flick this is plus everyone who has
+  // commented. No global directory — the people on this page are the pool.
+  const candidates = useMemo<MentionCandidate[]>(
+    () =>
+      candidatesFrom([
+        ...(flick ? [{ pubkey: flick.pubkey, tag: flick.writer ?? writer?.tag ?? null }] : []),
+        ...comments.map((c) => ({ pubkey: c.pubkey, tag: null })),
+      ]),
+    [flick, writer, comments],
+  );
+
   const send = useCallback(async () => {
     if (!tag || !parent || !draft.trim()) return;
+    const mentions = extractMentions(draft, candidates);
     setStage('spraying');
     try {
-      await postComment(tag, parent, draft, { onStage: setStage });
+      await postComment(tag, parent, draft, { mentions, onStage: setStage });
       setDraft('');
     } catch (error) {
       say(error instanceof Error ? error.message : 'That did not go up.', 'hazard');
     } finally {
       setStage(null);
     }
-  }, [tag, parent, draft, say]);
+  }, [tag, parent, draft, say, candidates]);
 
   const buff = useCallback(async () => {
     if (!tag || !flick) return;
@@ -248,11 +262,12 @@ export function FlickDetail(): JSX.Element {
         {tag ? (
           <div className="field">
             <label htmlFor="reply">Say something</label>
-            <textarea
+            <MentionBox
               id="reply"
-              className="textarea"
               value={draft}
-              onChange={(event) => setDraft(event.target.value.slice(0, 600))}
+              onChange={setDraft}
+              candidates={candidates}
+              maxLength={600}
               placeholder="..."
             />
             <button

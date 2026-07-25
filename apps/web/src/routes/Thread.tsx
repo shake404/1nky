@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { BeefChip } from '../components/BeefChip.js';
 import { FlagIt } from '../components/FlagIt.js';
+import { MentionBox } from '../components/MentionBox.js';
 import { Spraying } from '../components/Spraying.js';
 import { WriterChip } from '../components/WriterChip.js';
 import {
@@ -13,6 +14,7 @@ import {
   type ThreadView,
 } from '../lib/boards.js';
 import { HAPPENING_BOARD, runsLine } from '../lib/happenings.js';
+import { collectParticipants, extractMentions, type MentionCandidate } from '../lib/mentions.js';
 import { ago } from '../lib/platform.js';
 import { postComment, type Stage } from '../lib/publish.js';
 import { useTag } from '../state/TagProvider.js';
@@ -98,6 +100,13 @@ export function Thread(): JSX.Element {
     return map;
   }, [view]);
 
+  // Who you can @: the writer who put the thread up plus everyone under it.
+  // No global directory — the people already on screen are the whole pool.
+  const candidates = useMemo<MentionCandidate[]>(
+    () => (view ? collectParticipants(view) : []),
+    [view],
+  );
+
   const send = useCallback(
     async (parentId: string | null, text: string): Promise<void> => {
       if (!tag || !root || !text.trim() || stage) return;
@@ -109,9 +118,11 @@ export function Thread(): JSX.Element {
         ? { id: target.id, pubkey: target.writer.pubkey, kind: KINDS.COMMENT }
         : root;
 
+      const mentions = extractMentions(text, candidates);
+
       setStage('spraying');
       try {
-        await postComment(tag, parent, text, { root, onStage: setStage });
+        await postComment(tag, parent, text, { root, mentions, onStage: setStage });
         if (parentId) {
           setReplyDraft('');
           setReplyingTo(null);
@@ -125,7 +136,7 @@ export function Thread(): JSX.Element {
         setStage(null);
       }
     },
-    [tag, root, stage, byId, load, say, op],
+    [tag, root, stage, byId, load, say, op, candidates],
   );
 
   if (missing) {
@@ -203,6 +214,7 @@ export function Thread(): JSX.Element {
               reply={reply}
               depth={0}
               canReply={Boolean(tag)}
+              candidates={candidates}
               openId={replyingTo}
               draft={replyDraft}
               busy={stage !== null}
@@ -225,11 +237,12 @@ export function Thread(): JSX.Element {
       {tag ? (
         <div className="field">
           <label htmlFor="thread-reply">Say something</label>
-          <textarea
+          <MentionBox
             id="thread-reply"
-            className="textarea"
             value={opDraft}
-            onChange={(event) => setOpDraft(event.target.value.slice(0, REPLY_MAX))}
+            onChange={setOpDraft}
+            candidates={candidates}
+            maxLength={REPLY_MAX}
             placeholder="..."
           />
           <button
@@ -250,6 +263,7 @@ interface NodeProps {
   reply: ThreadReply;
   depth: number;
   canReply: boolean;
+  candidates: readonly MentionCandidate[];
   openId: string | null;
   draft: string;
   busy: boolean;
@@ -260,7 +274,7 @@ interface NodeProps {
 
 /** One reply and its branch. Indentation stops at {@link MAX_REPLY_DEPTH}. */
 function ReplyNode(props: NodeProps): JSX.Element {
-  const { reply, depth, canReply, openId, draft, busy, onOpen, onDraft, onSend } = props;
+  const { reply, depth, canReply, candidates, openId, draft, busy, onOpen, onDraft, onSend } = props;
   const step = Math.min(depth, MAX_REPLY_DEPTH);
   const open = openId === reply.id;
 
@@ -277,11 +291,12 @@ function ReplyNode(props: NodeProps): JSX.Element {
           open ? (
             <div className="field" style={{ marginTop: 10 }}>
               <label htmlFor={`reply-${reply.id}`}>Back at them</label>
-              <textarea
+              <MentionBox
                 id={`reply-${reply.id}`}
-                className="textarea"
                 value={draft}
-                onChange={(event) => onDraft(event.target.value.slice(0, REPLY_MAX))}
+                onChange={onDraft}
+                candidates={candidates}
+                maxLength={REPLY_MAX}
                 placeholder="..."
               />
               <div className="row" style={{ gap: 10 }}>
@@ -318,6 +333,7 @@ function ReplyNode(props: NodeProps): JSX.Element {
               reply={child}
               depth={depth + 1}
               canReply={canReply}
+              candidates={candidates}
               openId={openId}
               draft={draft}
               busy={busy}

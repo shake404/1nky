@@ -280,13 +280,24 @@ export async function postComment(
      * straight onto a flick or onto a thread's opening post.
      */
     root?: EventRef;
+    /**
+     * Pubkeys of writers named in the body (an @-mention). Each rides along as
+     * a real `p` tag so the mention can drive a "you were mentioned" signal
+     * later — see `buildComment`, which dedupes them against the reply's own
+     * anchors.
+     */
+    mentions?: readonly string[];
   } = {},
 ): Promise<SignedEvent> {
   const trimmed = content.trim();
   if (!trimmed) throw new PublishError('Say something first.');
-  const { root, ...publishOptions } = options;
+  const { root, mentions, ...publishOptions } = options;
   const event = await send(
-    buildComment(parent, { content: trimmed, ...(root ? { root } : {}) }),
+    buildComment(parent, {
+      content: trimmed,
+      ...(root ? { root } : {}),
+      ...(mentions?.length ? { mentions } : {}),
+    }),
     tag,
     POW_BITS.post,
     publishOptions,
