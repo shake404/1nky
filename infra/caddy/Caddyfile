@@ -130,13 +130,10 @@ api.1nky.com, REDACTED-HOST.sslip.io {
 		X-Frame-Options "DENY"
 	}
 
-	# CORS for the Vercel-hosted PWA. Auth is signed events, so a permissive
-	# origin is safe; the API is read-only and the relay/media verify signatures.
-	header Access-Control-Allow-Origin "*"
-	header Access-Control-Allow-Methods "GET, HEAD, PUT, DELETE, OPTIONS"
-	header Access-Control-Allow-Headers "Authorization, Content-Type, X-SHA-256, X-Content-Type, X-Content-Length"
-	@options method OPTIONS
-	respond @options 204
+	# NOTE: CORS is owned by the upstream services (media and api each set
+	# Access-Control-* and handle OPTIONS preflight themselves). Do NOT set CORS
+	# headers here too — duplicate Access-Control-Allow-Origin values make
+	# browsers reject the response ("Load failed" on Safari) and break uploads.
 
 	@relay path /relay /relay/*
 	handle @relay {
