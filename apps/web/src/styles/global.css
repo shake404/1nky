@@ -1470,3 +1470,120 @@ main {
 .toggle--on {
   color: var(--chalk);
 }
+
+/* --- Flag it / Ignore this writer -----------------------------------------
+ * Both are quiet on purpose. A loud "report" button gets used as a weapon, so
+ * these read as small stencilled annotations next to the post — the mono
+ * utility voice, never the display face.
+ */
+.flagit__open {
+  align-self: flex-start;
+  padding: 4px 0;
+  min-height: 32px;
+  background: none;
+  border: 0;
+  border-bottom: 1px dashed var(--line-strong);
+  color: var(--buff-deep);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.flagit__open:hover:not(:disabled) {
+  color: var(--chalk);
+  border-bottom-color: var(--chalk);
+}
+
+.flagit__open:disabled {
+  cursor: not-allowed;
+  color: var(--buff-shadow);
+}
+
+.flagit {
+  border-color: var(--line-strong);
+}
+
+/* --- Mod console ----------------------------------------------------------
+ * A staff workbench, not a piece: dense rows, hard keylines, no paint beyond
+ * the page title. Everything here is body sans or the mono stencil.
+ */
+.mod-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--soot-2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--drop-sm);
+}
+
+.mod-card--banned {
+  border-color: var(--ink-deep);
+}
+
+.mod-card__head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.mod-card__thumb {
+  width: 84px;
+  height: 84px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  background: var(--soot-3);
+  border: 1px solid var(--keyline);
+}
+
+.mod-card__thumb--none {
+  background-image: var(--roller);
+}
+
+.mod-card__who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mod-card__body {
+  color: var(--chalk);
+  overflow-wrap: anywhere;
+  border-left: 2px solid var(--line-strong);
+  padding-left: 10px;
+}
+
+.mod-card__link {
+  align-self: flex-start;
+  color: var(--buff);
+  text-transform: uppercase;
+  border-bottom: 1px dashed var(--line-strong);
+}
+
+.mod-card__link:hover {
+  color: var(--chalk);
+}
+
+/* Non-interactive chip: labels a flag's reason, so it must not look tappable. */
+.chip--reason {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 0.68rem;
+  cursor: default;
+}
+
+.chip--reason:hover {
+  color: var(--buff);
+  border-color: var(--line-strong);
+}
+
+/* One writer per row, with their single action on the right. */
+.mod-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}

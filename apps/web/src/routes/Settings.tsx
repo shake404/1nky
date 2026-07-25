@@ -1,10 +1,12 @@
-import { COPY } from '@1nky/protocol';
-import { useState } from 'react';
+import { COPY, fingerprint } from '@1nky/protocol';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Identicon } from '../components/Identicon.js';
+import { IgnoreWriter, useIgnoredWriters } from '../components/IgnoreWriter.js';
 import { QrBlock } from '../components/QrBlock.js';
 import { API_BASE, MEDIA_BASE, POW_BITS, RELAY_WS_URL, SHOW_FLAGS } from '../lib/config.js';
 import { exportBlackbook } from '../lib/identity.js';
+import { loadModKey } from '../lib/mod.js';
 import { useTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
 
@@ -15,6 +17,14 @@ export function Settings(): JSX.Element {
   const [linkPayload, setLinkPayload] = useState<string | null>(null);
   const [linkPass, setLinkPass] = useState('');
   const [linking, setLinking] = useState(false);
+  const [hasModKey, setHasModKey] = useState(false);
+  const ignored = useIgnoredWriters();
+
+  // The mod door only exists in this list for someone who already has the key
+  // on this device. Everybody else never learns the screen is there.
+  useEffect(() => {
+    void loadModKey().then((key) => setHasModKey(Boolean(key)));
+  }, []);
 
   if (!tag) return <div className="shell empty" />;
 
@@ -130,6 +140,28 @@ export function Settings(): JSX.Element {
       <hr className="rule" />
 
       <section className="stack">
+        <h3>Ignored writers</h3>
+        {ignored.length === 0 ? (
+          <p className="muted">Nobody. Your wall is whoever is on it.</p>
+        ) : (
+          <ul className="list-reset stack" style={{ gap: 10 }}>
+            {ignored.map((pubkey) => (
+              <li key={pubkey} className="mod-row">
+                <div className="row" style={{ gap: 10, minWidth: 0 }}>
+                  <Identicon pubkey={pubkey} size={24} />
+                  <span className="mono">{fingerprint(pubkey)}</span>
+                </div>
+                <IgnoreWriter pubkey={pubkey} look="button" />
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="help">Their work stays up for everyone else — you just do not see it.</p>
+      </section>
+
+      <hr className="rule" />
+
+      <section className="stack">
         <h3>This device</h3>
         <div className="settings-row">
           <span className="muted">Storage held onto</span>
@@ -139,6 +171,21 @@ export function Settings(): JSX.Element {
           If that says otherwise, install 1NKY to your home screen — {COPY.blackbook.installPrompt.toLowerCase()}
         </p>
       </section>
+
+      {hasModKey ? (
+        <>
+          <hr className="rule" />
+          <section className="stack">
+            <h3>Mod console</h3>
+            <div className="settings-row">
+              <span className="muted">Flags waiting, and who is banned.</span>
+              <Link to="/mod" className="btn btn--ghost btn--sm sticker">
+                Open it
+              </Link>
+            </div>
+          </section>
+        </>
+      ) : null}
 
       <hr className="rule" />
 

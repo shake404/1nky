@@ -1,6 +1,8 @@
 import { COPY, KINDS, type EventRef, type SignedEvent } from '@1nky/protocol';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { FlagIt } from '../components/FlagIt.js';
+import { IgnoreWriter } from '../components/IgnoreWriter.js';
 import { WriterChip } from '../components/WriterChip.js';
 import { Spraying } from '../components/Spraying.js';
 import { getPref, setPref } from '../lib/db.js';
@@ -154,6 +156,20 @@ export function FlickDetail(): JSX.Element {
         <span className="mono faint">{ago(flick.createdAt)}</span>
       </div>
 
+      {mine ? null : (
+        // Next to the byline, because both of these are about the writer, not
+        // the picture: hide them, or hand them over.
+        <div className="row" style={{ gap: 14 }}>
+          <IgnoreWriter
+            pubkey={flick.pubkey}
+            onStage={setStage}
+            onDone={(ignored) => {
+              if (ignored) navigate('/', { replace: true });
+            }}
+          />
+        </div>
+      )}
+
       {flick.caption ? <p>{flick.caption}</p> : null}
 
       {mine ? (
@@ -182,6 +198,11 @@ export function FlickDetail(): JSX.Element {
             </button>
           )}
         </div>
+      ) : parent ? (
+        <FlagIt
+          target={{ pubkey: flick.pubkey, eventId: flick.id, kind: parent.kind }}
+          onStage={setStage}
+        />
       ) : null}
 
       <hr className="rule" />

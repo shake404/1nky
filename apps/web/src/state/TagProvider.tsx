@@ -9,6 +9,7 @@ import {
   renameTag,
   type Tag,
 } from '../lib/identity.js';
+import { loadIgnored } from '../lib/mute.js';
 import { stopMiner } from '../lib/pow.js';
 import { publishProfile } from '../lib/publish.js';
 import { relay } from '../lib/relay.js';
@@ -45,6 +46,9 @@ export function TagProvider({ children }: { children: ReactNode }): JSX.Element 
       // the fastest way for a writer to lose their tag.
       const granted = await requestPersistence();
       const existing = await loadTag();
+      // Prime the ignored-writers mirror before the first wall renders, so a
+      // writer never gets a flash of somebody they told us to hide.
+      await loadIgnored().catch(() => []);
       if (!live) return;
       setPersisted(granted);
       setTag(existing);

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FlickCard } from '../components/FlickCard.js';
 import { Identicon } from '../components/Identicon.js';
+import { IgnoreWriter, useIgnoredWriters } from '../components/IgnoreWriter.js';
 import { fetchWriterCrews } from '../lib/crews.js';
 import { fetchWriterFlicks, type Flick } from '../lib/feed.js';
 import { fetchProfile } from '../lib/profiles.js';
@@ -19,9 +20,11 @@ export function Writer(): JSX.Element {
   const [flicks, setFlicks] = useState<Flick[]>([]);
   const [crews, setCrews] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const ignored = useIgnoredWriters();
 
   const valid = HEX64.test(pubkey);
   const isMe = tag?.pubkey === pubkey;
+  const hidden = !isMe && ignored.includes(pubkey.toLowerCase());
 
   // Crews a writer is repping — a self-declared claim, not a verified roster.
   useEffect(() => {
@@ -117,14 +120,22 @@ export function Writer(): JSX.Element {
           Edit your tag
         </Link>
       ) : (
-        <Link to={`/messages/${pubkey}`} className="btn btn--go btn--sm sticker">
-          Send a message
-        </Link>
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+          <Link to={`/messages/${pubkey}`} className="btn btn--go btn--sm sticker">
+            Send a message
+          </Link>
+          <IgnoreWriter pubkey={pubkey} look="button" />
+        </div>
       )}
 
       <hr className="rule" />
 
-      {loading ? (
+      {hidden ? (
+        <div className="empty">
+          <h2>You are ignoring them.</h2>
+          <p className="muted">Their stuff stays off your wall until you say otherwise.</p>
+        </div>
+      ) : loading ? (
         <p className="kicker" style={{ textAlign: 'center', padding: 24 }}>
           loading
         </p>

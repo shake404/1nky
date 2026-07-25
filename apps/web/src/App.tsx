@@ -12,6 +12,7 @@ import { FlickDetail } from './routes/FlickDetail.js';
 import { HangItUp } from './routes/HangItUp.js';
 import { Landing } from './routes/Landing.js';
 import { Messages } from './routes/Messages.js';
+import { Mod } from './routes/Mod.js';
 import { PickTag } from './routes/PickTag.js';
 import { PostFlick } from './routes/PostFlick.js';
 import { ProfileEdit } from './routes/ProfileEdit.js';
@@ -77,6 +78,9 @@ export function App(): JSX.Element {
         <Route path="/restore" element={<Restore />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/hang-it-up" element={<HangItUp />} />
+        {/* Staff door. Not in the nav — you get here by typing it, and the
+            screen is a locked gate without the key stored on the device. */}
+        <Route path="/mod" element={<Mod />} />
         <Route path="/pick" element={<Navigate to="/" replace />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

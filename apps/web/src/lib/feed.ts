@@ -1,5 +1,6 @@
 import { fingerprint, KINDS, type SignedEvent } from '@1nky/protocol';
 import { API_BASE } from './config.js';
+import { isIgnored } from './mute.js';
 import { relay } from './relay.js';
 
 /** What kind of media a feed row carries — picks an `<img>` or a `<video>`. */
@@ -217,11 +218,34 @@ function flickFromRow(row: unknown): Flick | null {
   return base;
 }
 
+/**
+ * The one gate ignored writers are dropped at.
+ *
+ * Every wall in the app — the global feed, Explore (including its degraded
+ * client-side filter, which reads through `fetchFeed`), a crew page, a writer's
+ * own page — gets its rows shaped here, so filtering here covers all of them
+ * without a `.filter()` sprinkled through four routes. `fetchFlick` is
+ * deliberately NOT filtered: following a direct link to one post should still
+ * show it.
+ *
+ * Reads the synchronous mirror in `mute.ts`, primed once at launch.
+ */
+function visible(flicks: readonly Flick[]): Flick[] {
+  return flicks.filter((flick) => !isIgnored(flick.pubkey));
+}
+
+/** Shape a batch of relay events into a newest-first wall. */
+function fromEvents(events: readonly SignedEvent[]): Flick[] {
+  return visible(events.map((event) => flickFromEvent(event)).filter((f): f is Flick => f !== null)).sort(
+    (a, b) => b.createdAt - a.createdAt,
+  );
+}
+
 export function parseFeedResponse(payload: unknown): { flicks: Flick[]; cursor: string | null } {
   const body = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>;
   const rawItems = body['items'] ?? body['flicks'] ?? body['data'] ?? (Array.isArray(payload) ? payload : []);
   const items = Array.isArray(rawItems) ? rawItems : [];
-  const flicks = items.map(flickFromRow).filter((f): f is Flick => f !== null);
+  const flicks = visible(items.map(flickFromRow).filter((f): f is Flick => f !== null));
   const rawCursor = body['cursor'] ?? body['nextCursor'] ?? body['next'];
   return { flicks, cursor: typeof rawCursor === 'string' && rawCursor ? rawCursor : null };
 }
@@ -259,14 +283,13 @@ async function fallbackFeed(cursor: string | null): Promise<FeedPage> {
       ...(Number.isFinite(until) ? { until: (until as number) - 1 } : {}),
     },
   ]);
-  const flicks = events
-    .map((event) => flickFromEvent(event))
-    .filter((f): f is Flick => f !== null)
-    .sort((a, b) => b.createdAt - a.createdAt);
+  const flicks = fromEvents(events);
   const last = flicks[flicks.length - 1];
   return {
     flicks,
-    cursor: flicks.length === PAGE_SIZE && last ? String(last.createdAt) : null,
+    // Paginate on what the wall handed back, not on what survived the filter —
+    // a page made entirely of ignored writers must not end the wall.
+    cursor: events.length === PAGE_SIZE && last ? String(last.createdAt) : null,
     degraded: true,
   };
 }
@@ -282,10 +305,7 @@ export async function fetchWriterFlicks(pubkey: string): Promise<Flick[]> {
     /* fall through to the wall */
   }
   const events = await relay.query([{ kinds: [KINDS.FLICK, KINDS.VIDEO], authors: [pubkey], limit: 60 }]);
-  return events
-    .map((event) => flickFromEvent(event))
-    .filter((f): f is Flick => f !== null)
-    .sort((a, b) => b.createdAt - a.createdAt);
+  return fromEvents(events);
 }
 
 /** One flick by id, for the detail view on a cold load. */

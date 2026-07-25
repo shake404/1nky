@@ -174,14 +174,21 @@ export async function postComment(
   return event;
 }
 
-/** Kind 5 — "Buff this". Only ever your own work. */
+/**
+ * Kind 5 — "Buff this".
+ *
+ * Normally your own work; a mod taking something down publishes the same shape
+ * against somebody else's post. Priced at the POST tier because the wall's
+ * write policy only discounts the signal kinds (flags, ignore lists, wrapped
+ * messages) — a buff mined at the cheap tier gets turned away at the door.
+ */
 export function buffEvents(
   tag: Tag,
   ids: readonly string[],
   kinds: readonly number[] = [KINDS.FLICK],
   options: PublishOptions = {},
 ): Promise<SignedEvent> {
-  return send(buildBuff(ids, { kinds }), tag, POW_BITS.reaction, options);
+  return send(buildBuff(ids, { kinds }), tag, POW_BITS.post, options);
 }
 
 /**
