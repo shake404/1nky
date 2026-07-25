@@ -1,11 +1,11 @@
 # DMCA / copyright policy
 
-::: danger DRAFT — pending counsel review
-Working skeleton, not reviewed by counsel, not in force. The designated agent has
-not been registered yet and the contact details below are placeholders. Do not
-send a notice against this page expecting it to be processed.
+::: warning Operator-drafted policy
+Written by the operator, not by outside counsel. The **designated agent below is
+registered** with the U.S. Copyright Office and notices sent to it are processed;
+the surrounding policy language is a working draft and may be revised.
 
-**Last updated:** 2026-07-24 · **Status:** draft, not effective
+**Last updated:** 2026-07-25 · **Operator:** Bodegga LLC (Wyoming)
 :::
 
 1NKY hosts photographs and text posted by its users. We don't create that content
@@ -15,17 +15,17 @@ claimed copyright infringement under the Digital Millennium Copyright Act
 
 ## Designated agent
 
-📋 **TODO — registration pending.** DMCA agent registration with the U.S. Copyright
-Office ($6, copyright.gov) is on the pre-launch checklist. Until it is complete and
-the details below are filled in, this page is informational only.
+1NKY is operated by **Bodegga LLC**, a Wyoming limited liability company, whose DMCA
+Designated Agent is registered with the U.S. Copyright Office.
 
 ```
 DMCA Designated Agent — 1NKY
-Name:      TODO
-Entity:    TODO (pending entity formation)
-Address:   TODO
-Email:     TODO
-Phone:     TODO
+Entity:    Bodegga LLC (a Wyoming limited liability company)
+Agent:     Bodegga LLC, c/o Registered Agents Inc
+Address:   30 N Gould St, Ste R, Sheridan, WY 82801
+Email:     dmca@bodegga.net
+Phone:     (307) 200-2803
+U.S. Copyright Office Registration No.: DMCA-1076277
 ```
 
 Notices sent through the security or feedback channels will be redirected here and

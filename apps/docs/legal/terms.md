@@ -159,10 +159,13 @@ you accept the revised terms.
 
 ## 11. Governing law, contact, entity
 
-📋 TODO — pending entity formation and counsel review. The operating entity,
-governing law, venue, and notice address will be stated here before public launch.
+1NKY is operated by **Bodegga LLC**, a Wyoming limited liability company. These
+terms are governed by the laws of the State of Wyoming, without regard to its
+conflict-of-laws rules. 📋 The registered notice address is pending and will be
+filled in once formation completes.
 
-- Legal notices: TODO
+- Operator: Bodegga LLC (Wyoming)
+- Legal notices: Bodegga LLC, 30 N Gould St, Ste R, Sheridan, WY 82801
 - Copyright: see [DMCA](/legal/dmca)
 - Security: see [responsible disclosure](/security)
 - Everything else: see [feedback](/feedback)

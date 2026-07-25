@@ -128,6 +128,6 @@ and every diff is inspectable; material changes will be announced in the app.
 
 ## Contact
 
-📋 TODO — pending entity formation and counsel review. Privacy contact details will
-be published here before launch. For security issues use
-[responsible disclosure](/security); for anything else, [feedback](/feedback).
+1NKY is operated by **Bodegga LLC**, a Wyoming limited liability company. Written
+notices: Bodegga LLC, 30 N Gould St, Ste R, Sheridan, WY 82801. For security issues
+use [responsible disclosure](/security); for anything else, [feedback](/feedback).
