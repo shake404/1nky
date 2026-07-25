@@ -69,6 +69,8 @@ export {
   CREW_DEFINITION_DTAG,
   decodeInviteCode,
   encodeInviteCode,
+  HAPPENING_BOARD,
+  HAPPENING_GRACE_SECONDS,
   imetaTag,
   INVITE_DTAG_PREFIX,
   inviteRedemptionTag,
@@ -78,8 +80,10 @@ export {
   parseInvite,
   parseInviteRedemption,
   parseModBan,
+  parseWhen,
   SUBTREE_BAN_REASON_PREFIX,
   videoImetaTag,
+  whenTag,
 } from './builders.js';
 export { PROFILE_BIO_MAX } from './builders.js';
 export type {
@@ -98,6 +102,7 @@ export type {
   BuildVideoInput,
   InviteTag,
   ReportTarget,
+  WhenTag,
 } from './builders.js';
 
 // --- Explore facets --------------------------------------------------------

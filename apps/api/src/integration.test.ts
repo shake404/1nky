@@ -55,6 +55,8 @@ describe.skipIf(!enabled)('endpoints against a live Postgres', () => {
     ['/explore'],
     ['/explore/facets'],
     ['/search?q=rooftop'],
+    ['/happenings'],
+    ['/happenings?city=sf&limit=5'],
     [`/writer/${'a'.repeat(64)}`],
     [`/flick/${'a'.repeat(64)}`],
     [`/thread/${'a'.repeat(64)}`],
@@ -199,6 +201,143 @@ describe.skipIf(!enabled)('expired rows are hidden before the sweep reaches them
     const res = await request(app, '/search?q=gone');
     const ids = (res.body as { threads: { id: string }[] }).threads.map((t) => t.id);
     expect(ids).not.toContain(DOOMED);
+  });
+});
+
+/**
+ * Happenings, end to end.
+ *
+ * The unit tests prove the ordering, the city filter and the 7-day window are in
+ * the SQL; only this proves Postgres agrees. Four dated threads are seeded — one
+ * soon, one later, one that happened three weeks ago (still un-swept, with no
+ * NIP-40 expiry at all, which is the case the defensive window exists for) and
+ * one in a different city — plus one ordinary undated thread that must not
+ * appear at all.
+ */
+describe.skipIf(!enabled)('happenings against a live Postgres', () => {
+  let config: ApiConfig;
+  let db: Database;
+  let app: Express;
+  let seed: pg.Pool;
+
+  const WRITER = hex('a2');
+  const SOON = hex('c1');
+  const LATER = hex('c2');
+  const STALE = hex('c3');
+  const ELSEWHERE = hex('c4');
+  const UNDATED = hex('c5');
+  const CITY = 'pgtest-happenings';
+  const OTHER_CITY = 'pgtest-elsewhere';
+  const now = Math.floor(Date.now() / 1000);
+  const DAY = 86_400;
+
+  const ALL_IDS = [SOON, LATER, STALE, ELSEWHERE, UNDATED];
+
+  const seedThread = async (
+    id: string,
+    city: string,
+    happeningAt: number | null,
+    subject: string,
+  ) => {
+    await seed.query(
+      `insert into events (id, pubkey, kind, created_at, content, tags, raw, expires_at)
+       values ($1, $2, 1, $3, $4, '[]'::jsonb, '{}'::jsonb, null)
+       on conflict (id) do nothing`,
+      [id, WRITER, now - 600, `${subject} — bring paint`],
+    );
+    const boards = happeningAt === null ? [city] : [city, 'happening'];
+    await seed.query(
+      `insert into threads (event_id, pubkey, subject, boards, created_at, happening_at)
+       values ($1, $2, $3, $4::text[], $5, $6)
+       on conflict (event_id) do nothing`,
+      [id, WRITER, subject, boards, now - 600, happeningAt],
+    );
+  };
+
+  beforeAll(async () => {
+    config = loadConfig({
+      ...process.env,
+      MOD_API_KEY: process.env['MOD_API_KEY'] ?? 'pgtest-mod-key',
+    });
+    db = connect(config.databaseUrl);
+    app = createApp(db, config);
+    seed = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
+
+    for (const id of ALL_IDS) await seed.query('delete from events where id = $1', [id]);
+
+    await seedThread(LATER, CITY, now + 10 * DAY, 'later jam');
+    await seedThread(SOON, CITY, now + DAY, 'tomorrow jam');
+    // Three weeks past, and deliberately with NO expiry: nothing but the
+    // query's own 7-day window can keep this off the list.
+    await seedThread(STALE, CITY, now - 21 * DAY, 'long gone jam');
+    await seedThread(ELSEWHERE, OTHER_CITY, now + 2 * DAY, 'other town jam');
+    await seedThread(UNDATED, CITY, null, 'just a thread');
+  });
+
+  afterAll(async () => {
+    if (seed) {
+      for (const id of ALL_IDS) await seed.query('delete from events where id = $1', [id]);
+      await seed.end();
+    }
+    if (db) await db.end();
+  });
+
+  const idsOf = (body: unknown): string[] =>
+    (body as { happenings: { id: string }[] }).happenings.map((h) => h.id);
+
+  it('lists upcoming happenings soonest first', async () => {
+    const res = await request(app, `/happenings?city=${CITY}`);
+    expect(res.status).toBe(200);
+    expect(idsOf(res.body)).toEqual([SOON, LATER]);
+  });
+
+  it('excludes an undated thread — a happening is a thread WITH a date', async () => {
+    const res = await request(app, `/happenings?city=${CITY}`);
+    expect(idsOf(res.body)).not.toContain(UNDATED);
+  });
+
+  it('excludes one that happened more than seven days ago, un-swept and unexpiring', async () => {
+    const res = await request(app, `/happenings?city=${CITY}`);
+    expect(idsOf(res.body)).not.toContain(STALE);
+  });
+
+  it('filters by city', async () => {
+    const mine = await request(app, `/happenings?city=${CITY}`);
+    expect(idsOf(mine.body)).not.toContain(ELSEWHERE);
+    const theirs = await request(app, `/happenings?city=${OTHER_CITY}`);
+    expect(idsOf(theirs.body)).toEqual([ELSEWHERE]);
+  });
+
+  it('pages forwards on the date without repeating a row', async () => {
+    const first = await request(app, `/happenings?city=${CITY}&limit=1`);
+    expect(idsOf(first.body)).toEqual([SOON]);
+    const cursor = (first.body as { nextCursor: string | null }).nextCursor;
+    expect(cursor).toBeTypeOf('string');
+
+    const second = await request(app, `/happenings?city=${CITY}&limit=1&cursor=${cursor ?? ''}`);
+    expect(idsOf(second.body)).toEqual([LATER]);
+  });
+
+  it('carries the date, the boards and the writer', async () => {
+    const res = await request(app, `/happenings?city=${CITY}&limit=1`);
+    const happening = (res.body as {
+      happenings: { happeningAt: number; boards: string[]; writer: { pubkey: string } }[];
+    }).happenings[0];
+    expect(happening?.happeningAt).toBe(now + DAY);
+    expect(happening?.boards).toContain(CITY);
+    expect(happening?.boards).toContain('happening');
+    expect(happening?.writer.pubkey).toBe(WRITER);
+  });
+
+  it('reports the date on the thread detail too', async () => {
+    const res = await request(app, `/thread/${SOON}`);
+    expect(res.status).toBe(200);
+    expect((res.body as { thread: { happeningAt: number } }).thread.happeningAt).toBe(now + DAY);
+  });
+
+  it('reports null on an undated thread detail', async () => {
+    const res = await request(app, `/thread/${UNDATED}`);
+    expect((res.body as { thread: { happeningAt: number | null } }).thread.happeningAt).toBeNull();
   });
 });
 

@@ -21,6 +21,8 @@ import {
   CREW_DEFINITION_DTAG,
   decodeInviteCode,
   encodeInviteCode,
+  HAPPENING_BOARD,
+  HAPPENING_GRACE_SECONDS,
   imetaTag,
   INVITE_DTAG_PREFIX,
   inviteRedemptionTag,
@@ -29,8 +31,10 @@ import {
   parseInvite,
   parseInviteRedemption,
   parseModBan,
+  parseWhen,
   PROFILE_BIO_MAX,
   videoImetaTag,
+  whenTag,
 } from './builders.js';
 import { fingerprint } from './mark.js';
 import { GRAF_TYPES, LEGAL_PERMISSION_TAG, parseFacets, SURFACES, typeTag } from './facets.js';
@@ -469,6 +473,139 @@ describe('buildThreadOp', () => {
     const expiry = beefExpiration('72h', FIXED);
     const ev = buildThreadOp({ content: 'beef', expiration: expiry ?? undefined });
     expect(first(ev.tags, 'expiration')).toEqual(['expiration', String(FIXED + 259_200)]);
+  });
+
+  it('carries no when tag and no happening slug by default', () => {
+    const ev = buildThreadOp({ content: 'just a thread', boards: ['sf'], createdAt: FIXED });
+    expect(first(ev.tags, 'when')).toBeUndefined();
+    expect(find(ev.tags, 't')).toEqual([['t', 'sf']]);
+    expect(first(ev.tags, 'expiration')).toBeUndefined();
+    expect(parseWhen(ev)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Happenings
+// ---------------------------------------------------------------------------
+
+describe('the happening marker', () => {
+  it('is a plain unprefixed board slug, so it rides the board machinery', () => {
+    expect(HAPPENING_BOARD).toBe('happening');
+    expect(normalizeBoard(HAPPENING_BOARD)).toBe(HAPPENING_BOARD);
+    expect(boardTag(HAPPENING_BOARD)).toEqual(['t', 'happening']);
+  });
+
+  it('grants a week of grace after the event before NIP-40 removes it', () => {
+    expect(HAPPENING_GRACE_SECONDS).toBe(604_800);
+  });
+});
+
+describe('whenTag', () => {
+  it('serialises a unix timestamp', () => {
+    expect(whenTag(FIXED)).toEqual(['when', String(FIXED)]);
+  });
+
+  it('refuses anything that is not a positive whole number of seconds', () => {
+    expect(() => whenTag(0)).toThrow(TypeError);
+    expect(() => whenTag(-1)).toThrow(TypeError);
+    expect(() => whenTag(1.5)).toThrow(TypeError);
+    expect(() => whenTag(Number.NaN)).toThrow(TypeError);
+  });
+});
+
+describe('parseWhen', () => {
+  it('reads the when tag back', () => {
+    expect(parseWhen({ tags: [['when', String(FIXED)]] })).toBe(FIXED);
+  });
+
+  it('is null when there is no when tag', () => {
+    expect(parseWhen({ tags: [['t', 'sf'], ['subject', 'x']] })).toBeNull();
+    expect(parseWhen({ tags: [] })).toBeNull();
+  });
+
+  it('steps over a malformed when tag and takes the first valid one', () => {
+    expect(
+      parseWhen({
+        tags: [
+          ['when'],
+          ['when', ''],
+          ['when', 'soon'],
+          ['when', '-5'],
+          ['when', '0'],
+          ['when', '12.5'],
+          ['when', String(FIXED)],
+          ['when', String(FIXED + 1)],
+        ],
+      }),
+    ).toBe(FIXED);
+  });
+
+  it('tolerates surrounding whitespace but not trailing junk', () => {
+    expect(parseWhen({ tags: [['when', ` ${String(FIXED)} `]] })).toBe(FIXED);
+    expect(parseWhen({ tags: [['when', '1800000000x']] })).toBeNull();
+  });
+});
+
+describe('buildThreadOp as a happening', () => {
+  const WHEN = FIXED + 86_400;
+
+  it('appends a when tag and joins the happening board', () => {
+    const ev = buildThreadOp({
+      content: 'yard jam, bring paint',
+      subject: 'Yard jam',
+      boards: ['SF Bay'],
+      happeningAt: WHEN,
+      createdAt: FIXED,
+    });
+
+    expect(ev.kind).toBe(KINDS.NOTE);
+    expect(first(ev.tags, 'when')).toEqual(['when', String(WHEN)]);
+    expect(find(ev.tags, 't')).toEqual([['t', 'sf-bay'], ['t', 'happening']]);
+    expect(parseWhen(ev)).toBe(WHEN);
+  });
+
+  it('expires seven days after the event when no expiration was passed', () => {
+    const ev = buildThreadOp({ content: 'jam', happeningAt: WHEN, createdAt: FIXED });
+    expect(first(ev.tags, 'expiration')).toEqual(['expiration', String(WHEN + HAPPENING_GRACE_SECONDS)]);
+  });
+
+  it('lets an explicit expiration win over the seven-day default', () => {
+    const ev = buildThreadOp({
+      content: 'jam',
+      happeningAt: WHEN,
+      expiration: WHEN + 60,
+      createdAt: FIXED,
+    });
+    expect(find(ev.tags, 'expiration')).toEqual([['expiration', String(WHEN + 60)]]);
+  });
+
+  it('dedupes the happening slug when the caller also passes it as a board', () => {
+    const ev = buildThreadOp({
+      content: 'jam',
+      boards: ['happening', 'oakland', 'Happening'],
+      happeningAt: WHEN,
+    });
+    expect(find(ev.tags, 't')).toEqual([['t', 'happening'], ['t', 'oakland']]);
+  });
+
+  it('works with no boards at all', () => {
+    const ev = buildThreadOp({ content: 'jam', happeningAt: WHEN });
+    expect(find(ev.tags, 't')).toEqual([['t', 'happening']]);
+  });
+
+  it('refuses a bad date before building anything', () => {
+    expect(() => buildThreadOp({ content: 'jam', happeningAt: 0 })).toThrow(TypeError);
+    expect(() => buildThreadOp({ content: 'jam', happeningAt: 1.5 })).toThrow(TypeError);
+  });
+
+  it('is not read as a city by parseFacets', () => {
+    const ev = buildThreadOp({ content: 'jam', boards: ['oakland'], happeningAt: WHEN });
+    const facets = parseFacets(ev.tags);
+    expect(facets.city).toBe('oakland');
+
+    // And with no city at all, `happening` must not fill the slot.
+    const bare = buildThreadOp({ content: 'jam', happeningAt: WHEN });
+    expect(parseFacets(bare.tags).city).toBeNull();
   });
 });
 

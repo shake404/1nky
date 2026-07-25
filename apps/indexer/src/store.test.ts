@@ -389,6 +389,32 @@ describe('thread OPs (kind 1)', () => {
     expect(counters.threads).toBe(0);
     expect(db.matching('insert into threads')).toHaveLength(0);
   });
+
+  it('stores the date of a happening and registers its marker as its own kind', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    const template = buildThreadOp({
+      subject: 'Yard jam',
+      content: 'bring paint',
+      boards: ['sf'],
+      happeningAt: NOW + 86_400,
+      createdAt: NOW - 20,
+    });
+    await indexEvent(db, makeEvent({ ...template, id: hex('5d'), pubkey: AUTHOR }), counters, {
+      now: NOW,
+    });
+
+    // Same table, same route: a happening IS a thread.
+    expect(counters.threads).toBe(1);
+    expect(db.matching('insert into threads')[0]?.params[5]).toBe(NOW + 86_400);
+
+    // Both slugs auto-register, but `happening` is not a city.
+    const boards = db.matching('insert into boards').map((call) => [call.params[0], call.params[2]]);
+    expect(boards).toEqual([
+      ['sf', 'city'],
+      ['happening', 'happening'],
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

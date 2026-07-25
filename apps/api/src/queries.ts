@@ -1,4 +1,4 @@
-import { normalizeBoard } from '@1nky/protocol';
+import { HAPPENING_GRACE_SECONDS, normalizeBoard } from '@1nky/protocol';
 
 import type { Cursor } from './cursor.js';
 import type { Sql } from './types.js';
@@ -21,8 +21,14 @@ const FLICK_COLUMNS = `f.event_id, f.pubkey, f.created_at, f.url, f.sha256,
 
 const WRITER_COLUMNS = `p.tag_name, p.city, p.avatar_sha256`;
 
-/** Columns shared by every thread-shaped response. `t` is `threads`. */
-const THREAD_COLUMNS = `t.event_id, t.pubkey, t.subject, t.boards, t.created_at`;
+/**
+ * Columns shared by every thread-shaped response. `t` is `threads`.
+ *
+ * `happening_at` rides along on all of them: a happening is a thread, so every
+ * thread read reports its date (null for the ordinary ones) rather than a
+ * separate shape existing for the dated ones.
+ */
+const THREAD_COLUMNS = `t.event_id, t.pubkey, t.subject, t.boards, t.created_at, t.happening_at`;
 
 /** Banned writers disappear from every public read path. */
 const notBanned = (pubkeyColumn: string): string =>
@@ -395,7 +401,7 @@ export interface BoardThreadsOptions {
 export function boardThreadsQuery(options: BoardThreadsOptions): Sql {
   return {
     text: `select s.event_id, s.pubkey, s.subject, s.excerpt, s.created_at, s.expires_at,
-       s.reply_count, s.last_reply_at, s.sort_at,
+       s.happening_at, s.reply_count, s.last_reply_at, s.sort_at,
        s.tag_name, s.city, s.avatar_sha256
 from (
   select ${THREAD_COLUMNS},
@@ -419,6 +425,69 @@ order by s.sort_at desc, s.event_id desc
 limit $4::int`,
     params: [
       options.slug ?? null,
+      options.cursor?.createdAt ?? null,
+      options.cursor?.eventId ?? null,
+      options.limit,
+    ],
+  };
+}
+
+export interface HappeningsOptions {
+  /** City board slug to narrow to, already normalised. */
+  city?: string | undefined;
+  cursor?: Cursor | undefined;
+  limit: number;
+}
+
+/**
+ * `GET /happenings` — dated threads, soonest first.
+ *
+ * Three things separate this from `boardThreadsQuery`, which is otherwise the
+ * same read:
+ *
+ *   1. `happening_at is not null` — the whole selection rule. It is the same
+ *      predicate as the partial index in migration 008, so this read uses it.
+ *   2. `happening_at asc` — a board sorts by newest activity because it is a
+ *      conversation; a happenings list sorts by *soonest*, because it answers
+ *      "what is coming up". The keyset bound is therefore `>` rather than `<`.
+ *   3. The 7-day window. NIP-40 already removes a happening a week after it
+ *      happens (`buildThreadOp` sets that expiration), and `NOT_EXPIRED` filters
+ *      what the sweep has not caught up with — but a happening published with an
+ *      explicit longer expiry, or with none at all, would otherwise sit at the
+ *      top of the list forever with a date in the past. So the window is
+ *      re-applied here, defensively, from `happening_at` itself.
+ *
+ * `604800` is spelled as a literal rather than bound: it is `HAPPENING_GRACE_SECONDS`
+ * from @1nky/protocol, a constant of the protocol and not a value from a caller.
+ */
+export function happeningsQuery(options: HappeningsOptions): Sql {
+  return {
+    text: `select s.event_id, s.pubkey, s.subject, s.excerpt, s.boards, s.created_at,
+       s.expires_at, s.happening_at, s.reply_count, s.last_reply_at,
+       s.tag_name, s.city, s.avatar_sha256
+from (
+  select ${THREAD_COLUMNS},
+         e.expires_at,
+         left(e.content, 160) as excerpt,
+         ${WRITER_COLUMNS},
+         coalesce(r.reply_count, 0) as reply_count,
+         r.last_reply_at
+  from threads t
+  join events e on e.id = t.event_id
+  left join profiles p on p.pubkey = t.pubkey
+  ${replyCounts('t.event_id')}
+  where t.happening_at is not null
+    and ${notBanned('t.pubkey')}
+    and ${notBuffed('t.pubkey', 't.event_id')}
+    and ${NOT_EXPIRED}
+) s
+where ($1::text is null or $1::text = any(s.boards))
+  and s.happening_at + ${String(HAPPENING_GRACE_SECONDS)} > extract(epoch from now())::bigint
+  and ($2::bigint is null or (s.happening_at, s.event_id) > ($2::bigint, $3::text))
+order by s.happening_at asc, s.event_id asc
+limit $4::int`,
+    params: [
+      options.city ?? null,
       options.cursor?.createdAt ?? null,
       options.cursor?.eventId ?? null,
       options.limit,

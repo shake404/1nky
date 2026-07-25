@@ -1,4 +1,4 @@
-import { normalizeBoard } from './builders.js';
+import { HAPPENING_BOARD, normalizeBoard } from './builders.js';
 import type { BoardTag } from './types.js';
 
 /**
@@ -57,6 +57,18 @@ export const LEGAL_PERMISSION_TAG = 'legal-permission';
 const TYPE_PREFIX = 'type-';
 const SURFACE_PREFIX = 'surface-';
 const REGION_PREFIX = 'region-';
+
+/**
+ * Unprefixed `t` slugs that are system markers rather than cities.
+ *
+ * The dash-prefix convention covers `type-*`, `surface-*` and `region-*`, but
+ * two slugs are deliberately bare — `legal-permission` (a one-directional flag,
+ * Part 3.2) and `happening` (a thread marker that rides the board machinery) —
+ * and "any unprefixed tag is a city" would read both of them as a place. Every
+ * future bare marker belongs in this set, or somebody's Explore page grows a
+ * city called `happening`.
+ */
+const SYSTEM_SLUGS: ReadonlySet<string> = new Set<string>([LEGAL_PERMISSION_TAG, HAPPENING_BOARD]);
 
 /** `["t", "type-<slug>"]`. */
 export function typeTag(t: GrafType): BoardTag {
@@ -136,6 +148,8 @@ export function parseFacets(tags: readonly string[][]): ParsedFacets {
       legalPermission = true;
       continue;
     }
+    // A bare system marker (`happening`) is not a place.
+    if (SYSTEM_SLUGS.has(slug)) continue;
     // Unprefixed => city board.
     if (city === null) city = slug;
   }

@@ -171,6 +171,7 @@ export interface ThreadSummarySource extends WriterSource {
   excerpt: string | null;
   created_at: number | string;
   expires_at: number | string | null;
+  happening_at?: number | string | null;
   reply_count?: number | string;
   last_reply_at?: number | string | null;
 }
@@ -188,6 +189,11 @@ export interface ThreadSummaryJson {
    * mechanism, the UI supplies the word.
    */
   expiresAt: number | null;
+  /**
+   * When the thing happens, for a **happening** — a thread somebody put a date
+   * on. Null for every ordinary thread, which is almost all of them.
+   */
+  happeningAt: number | null;
   replyCount: number;
   /** When the newest reply landed, or null when nobody has replied. */
   lastReplyAt: number | null;
@@ -201,8 +207,36 @@ export function shapeThreadSummary(row: ThreadSummarySource): ThreadSummaryJson 
     writer: shapeWriter(row),
     createdAt: num(row.created_at),
     expiresAt: nullableNum(row.expires_at),
+    happeningAt: nullableNum(row.happening_at ?? null),
     replyCount: num(row.reply_count),
     lastReplyAt: nullableNum(row.last_reply_at),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Happenings — a thread with a date on it
+// ---------------------------------------------------------------------------
+
+export interface HappeningSource extends ThreadSummarySource {
+  happening_at: number | string | null;
+  boards: string[] | null;
+}
+
+export interface HappeningJson extends ThreadSummaryJson {
+  /**
+   * Never null here: `GET /happenings` selects on `happening_at is not null`, so
+   * a row without a date could not have reached this shaper.
+   */
+  happeningAt: number;
+  /** The boards it was posted to, including the `happening` marker itself. */
+  boards: string[];
+}
+
+export function shapeHappening(row: HappeningSource): HappeningJson {
+  return {
+    ...shapeThreadSummary(row),
+    happeningAt: num(row.happening_at),
+    boards: row.boards ?? [],
   };
 }
 
@@ -213,6 +247,7 @@ export interface ThreadSource extends WriterSource {
   boards: string[] | null;
   created_at: number | string;
   expires_at: number | string | null;
+  happening_at?: number | string | null;
   reply_count?: number | string;
 }
 
@@ -224,6 +259,8 @@ export interface ThreadJson {
   writer: WriterJson;
   createdAt: number;
   expiresAt: number | null;
+  /** When the thing happens, for a happening; null for an ordinary thread. */
+  happeningAt: number | null;
   replyCount: number;
 }
 
@@ -236,6 +273,7 @@ export function shapeThread(row: ThreadSource): ThreadJson {
     writer: shapeWriter(row),
     createdAt: num(row.created_at),
     expiresAt: nullableNum(row.expires_at),
+    happeningAt: nullableNum(row.happening_at ?? null),
     replyCount: num(row.reply_count),
   };
 }

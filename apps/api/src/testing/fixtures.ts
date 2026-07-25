@@ -157,12 +157,30 @@ export function threadSummaryRow(overrides: Record<string, unknown> = {}): Recor
     excerpt: 'gone as of this morning',
     created_at: '1700000000',
     expires_at: null,
+    happening_at: null,
     reply_count: 3,
     last_reply_at: '1700000900',
     sort_at: '1700000900',
     tag_name: 'SMOG',
     city: 'sf',
     avatar_sha256: null,
+    ...overrides,
+  };
+}
+
+/** A `happeningsQuery` row — a thread summary with a date and its boards. */
+export function happeningRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...threadSummaryRow({
+      event_id: hex('66'),
+      subject: 'Yard jam',
+      excerpt: 'bring paint, 2pm at the wall',
+      happening_at: '1800000000',
+      expires_at: '1800604800',
+      last_reply_at: null,
+      reply_count: 1,
+    }),
+    boards: ['oakland', 'happening'],
     ...overrides,
   };
 }
@@ -177,6 +195,7 @@ export function threadRow(overrides: Record<string, unknown> = {}): Record<strin
     created_at: '1700000000',
     content: 'gone as of this morning, whole panel',
     expires_at: null,
+    happening_at: null,
     reply_count: 3,
     last_reply_at: '1700000900',
     tag_name: 'SMOG',

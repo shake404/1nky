@@ -26,8 +26,14 @@ interface BoardHeaderRow {
   has_media: boolean;
 }
 
-/** The facets `?kind=` accepts. Anything else is a 400, not an empty list. */
-const BOARD_KINDS = new Set(['city', 'type', 'surface', 'region', 'legal']);
+/**
+ * The facets `?kind=` accepts. Anything else is a 400, not an empty list.
+ *
+ * `happening` is the marker slug every happening carries (see `GET /happenings`);
+ * it is its own kind so that asking for cities never returns a board called
+ * "happening".
+ */
+const BOARD_KINDS = new Set(['city', 'type', 'surface', 'region', 'legal', 'happening']);
 
 /**
  * `GET /boards?kind=` — every board, with how busy it is.

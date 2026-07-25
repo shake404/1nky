@@ -76,6 +76,67 @@ export function beefExpiration(duration: BeefDuration, from: number = nowSeconds
   return seconds === null ? null : from + seconds;
 }
 
+// ---------------------------------------------------------------------------
+// Happenings — a thread with a date on it
+// ---------------------------------------------------------------------------
+
+/**
+ * The board slug that marks a thread as a happening.
+ *
+ * Deliberately a plain, unprefixed `t` tag rather than a new kind or a new
+ * dash-namespace: a happening IS a thread, so riding the existing board
+ * machinery means every board read, every reply path and the NIP-40 sweep work
+ * on it the day it ships. The one thing that makes it a happening is the
+ * companion `when` tag. `parseFacets` knows this slug is a system marker and
+ * never reports it as a city.
+ */
+export const HAPPENING_BOARD = 'happening';
+
+/**
+ * How long a happening stays up after it starts, before NIP-40 removes it.
+ *
+ * A week: long enough that "what happened at the jam" is still readable the
+ * following weekend, short enough that the board is a list of what is coming
+ * rather than an archive of what is gone.
+ */
+export const HAPPENING_GRACE_SECONDS = 7 * 86_400;
+
+/** `["when", "<unix-seconds>"]` — the moment a happening happens. */
+export type WhenTag = ['when', string];
+
+/**
+ * The `when` tag. Validated the same way `buildExpiration` validates its
+ * timestamp, and for the same reason: a date is the whole point of a happening,
+ * so a non-integer or negative one is a programming error, not a shrug.
+ */
+export function whenTag(unixSeconds: number): WhenTag {
+  if (!Number.isInteger(unixSeconds) || unixSeconds <= 0) {
+    throw new TypeError('whenTag: expected a positive integer unix timestamp');
+  }
+  return ['when', String(unixSeconds)];
+}
+
+const UNSIGNED_INT = /^\d+$/;
+
+/**
+ * When an event says it happens, or null when it says nothing readable.
+ *
+ * The FIRST *valid* `when` tag wins — malformed ones are stepped over rather
+ * than aborting the read, matching `parseFacets`' habit of ignoring junk
+ * instead of surfacing it. Never throws: the indexer hands this every kind-1
+ * off the firehose.
+ */
+export function parseWhen(event: { tags: readonly (readonly string[])[] }): number | null {
+  for (const tag of event.tags) {
+    if (tag[0] !== 'when') continue;
+    const raw = (tag[1] ?? '').trim();
+    if (!UNSIGNED_INT.test(raw)) continue;
+    const value = Number.parseInt(raw, 10);
+    if (Number.isSafeInteger(value) && value > 0) return value;
+  }
+  return null;
+}
+
 /** Lowercase, dash-separated board slug. `"SF Bay"` -> `"sf-bay"`. */
 export function normalizeBoard(board: string): string {
   return board
@@ -335,18 +396,46 @@ export interface BuildThreadOpInput extends BuilderOptions {
   boards?: readonly string[];
   /** Thread title. */
   subject?: string;
+  /**
+   * When the thing actually happens (unix seconds) — this makes the thread a
+   * **happening**.
+   *
+   * Three things follow from setting it, all of them additive:
+   *   - a `['when', ...]` tag carrying the date
+   *   - the `happening` slug joins the thread's board tags (deduped, so passing
+   *     it in `boards` as well emits one tag)
+   *   - an `expiration` of `happeningAt + 7 days`, UNLESS the caller passed an
+   *     explicit `expiration`, which always wins
+   */
+  happeningAt?: number;
 }
 
 /**
  * Kind 1 — a thread OP on a board.
  *
- * Pass `expiration` (see `beefExpiration`) to make it a beef thread.
+ * Pass `expiration` (see `beefExpiration`) to make it a beef thread, or
+ * `happeningAt` to make it a happening (see `HAPPENING_BOARD`).
  */
 export function buildThreadOp(input: BuildThreadOpInput): EventTemplate {
   const tags: Tag[] = [];
   if (input.subject) tags.push(['subject', input.subject]);
-  tags.push(...boardTags(input.boards));
-  return template(KINDS.NOTE, tags, input.content, input);
+
+  if (input.happeningAt === undefined) {
+    tags.push(...boardTags(input.boards));
+    return template(KINDS.NOTE, tags, input.content, input);
+  }
+
+  // Validates before anything else is built, so a bad date never produces a
+  // half-formed happening.
+  const when = whenTag(input.happeningAt);
+  tags.push(...boardTags([...(input.boards ?? []), HAPPENING_BOARD]));
+  tags.push(when);
+
+  const options: BuilderOptions =
+    input.expiration === undefined
+      ? { ...input, expiration: input.happeningAt + HAPPENING_GRACE_SECONDS }
+      : input;
+  return template(KINDS.NOTE, tags, input.content, options);
 }
 
 export interface BuildCommentOptions extends BuilderOptions {

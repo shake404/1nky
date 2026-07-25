@@ -137,16 +137,19 @@ export function upsertVideo(row: VideoRow): Sql {
 
 /**
  * A kind-1 thread OP. `do nothing` rather than `do update`: a kind 1 is not
- * replaceable, so the same event id always carries the same subject and boards
- * and a re-delivery has nothing to say. (`upsertEvent` already short-circuits
- * the duplicate before this runs; this is the second lock.)
+ * replaceable, so the same event id always carries the same subject, boards and
+ * happening date, and a re-delivery has nothing to say. (`upsertEvent` already
+ * short-circuits the duplicate before this runs; this is the second lock.)
+ *
+ * `happening_at` is null for an ordinary thread and the event's `when` tag for a
+ * happening — one column, read from the event, so a rebuild reproduces it.
  */
 export function upsertThread(row: ThreadRow): Sql {
   return {
-    text: `insert into threads (event_id, pubkey, subject, boards, created_at)
-           values ($1, $2, $3, $4::text[], $5)
+    text: `insert into threads (event_id, pubkey, subject, boards, created_at, happening_at)
+           values ($1, $2, $3, $4::text[], $5, $6)
            on conflict (event_id) do nothing`,
-    params: [row.event_id, row.pubkey, row.subject, row.boards, row.created_at],
+    params: [row.event_id, row.pubkey, row.subject, row.boards, row.created_at, row.happening_at],
   };
 }
 

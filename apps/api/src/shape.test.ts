@@ -11,6 +11,7 @@ import {
   num,
   shapeFeedItem,
   shapeFlick,
+  shapeHappening,
   shapeProfile,
   shapeThread,
   shapeThreadSummary,
@@ -20,6 +21,7 @@ import {
 import {
   commentRow,
   flickRow,
+  happeningRow,
   hex,
   threadRow,
   threadSummaryRow,
@@ -183,6 +185,55 @@ describe('shapeThread', () => {
     expect(thread.content).toBe('');
     expect(thread.boards).toEqual([]);
     expect(thread.replyCount).toBe(0);
+  });
+});
+
+describe('happenings', () => {
+  it('reports happeningAt as null on an ordinary thread', () => {
+    expect(shapeThreadSummary(threadSummaryRow() as never).happeningAt).toBeNull();
+    expect(shapeThread(threadRow() as never).happeningAt).toBeNull();
+  });
+
+  it('reports the date on a dated thread, in both shapes', () => {
+    expect(
+      shapeThreadSummary(threadSummaryRow({ happening_at: '1800000000' }) as never).happeningAt,
+    ).toBe(1_800_000_000);
+    expect(shapeThread(threadRow({ happening_at: 1_800_000_000 }) as never).happeningAt).toBe(
+      1_800_000_000,
+    );
+  });
+
+  it('tolerates a column that is absent entirely (an older row)', () => {
+    const row = threadSummaryRow();
+    delete row['happening_at'];
+    expect(shapeThreadSummary(row as never).happeningAt).toBeNull();
+  });
+
+  it('shapeHappening carries the date, the boards and the thread summary', () => {
+    const happening = shapeHappening(happeningRow() as never);
+    expect(happening).toMatchObject({
+      id: hex('66'),
+      subject: 'Yard jam',
+      excerpt: 'bring paint, 2pm at the wall',
+      happeningAt: 1_800_000_000,
+      expiresAt: 1_800_604_800,
+      boards: ['oakland', 'happening'],
+      replyCount: 1,
+      lastReplyAt: null,
+    });
+    expect(happening.writer.tag).toBe('SMOG');
+    expect(happening.writer.mark).toHaveLength(6);
+  });
+
+  it('defaults a happening with no boards rather than emitting null', () => {
+    expect(shapeHappening(happeningRow({ boards: null }) as never).boards).toEqual([]);
+  });
+
+  it('says nothing about the protocol', () => {
+    const json = JSON.stringify(shapeHappening(happeningRow() as never));
+    for (const word of ['nsec', 'npub', 'relay', 'kind', 'event_id', 'nostr', 'expiration']) {
+      expect(json.toLowerCase()).not.toContain(word);
+    }
   });
 });
 

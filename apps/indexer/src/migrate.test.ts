@@ -19,6 +19,7 @@ describe('loadMigrations', () => {
       '005_explore_crews.sql',
       '006_threads.sql',
       '007_invites.sql',
+      '008_happenings.sql',
     ]);
     expect(migrations[0]?.sql).toContain('create table if not exists events');
   });
@@ -43,6 +44,18 @@ describe('loadMigrations', () => {
     expect(byVersion.get('001_init.sql')).not.toContain('create table if not exists invites');
     expect(byVersion.get('007_invites.sql')).toContain('create table if not exists invites');
     expect(byVersion.get('007_invites.sql')).toContain('create table if not exists invite_edges');
+
+    // threads.happening_at was added in 008, as a nullable column on the table
+    // 006 created — never by editing 006.
+    expect(byVersion.get('006_threads.sql')).not.toContain('happening_at');
+    expect(byVersion.get('008_happenings.sql')).toContain(
+      'alter table threads add column if not exists happening_at bigint',
+    );
+    // Partial index: almost every thread has no date, so the index only carries
+    // the rows GET /happenings reads.
+    expect(byVersion.get('008_happenings.sql')).toContain('where happening_at is not null');
+    // No new table: a happening is a thread, so it reuses the one 006 created.
+    expect(byVersion.get('008_happenings.sql')).not.toContain('create table');
   });
 });
 

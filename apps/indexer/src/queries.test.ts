@@ -153,11 +153,19 @@ describe('upserts', () => {
       subject: 'who buffed it',
       boards: ['sf', 'oakland'],
       created_at: 1_700_000_000,
+      happening_at: null,
     });
     expect(sql.text).toContain('insert into threads');
     expect(sql.text).toContain('on conflict (event_id) do nothing');
     expect(sql.text).not.toContain(AUTHOR);
-    expect(sql.params).toEqual([hex('55'), AUTHOR, 'who buffed it', ['sf', 'oakland'], 1_700_000_000]);
+    expect(sql.params).toEqual([
+      hex('55'),
+      AUTHOR,
+      'who buffed it',
+      ['sf', 'oakland'],
+      1_700_000_000,
+      null,
+    ]);
   });
 
   it('stores neither the thread content nor its expiry — those live in events', () => {
@@ -167,9 +175,23 @@ describe('upserts', () => {
       subject: null,
       boards: [],
       created_at: 1,
+      happening_at: null,
     });
     expect(sql.text).not.toContain('content');
     expect(sql.text).not.toContain('expires_at');
+  });
+
+  it('stores the happening date on the thread row', () => {
+    const sql = upsertThread({
+      event_id: hex('55'),
+      pubkey: AUTHOR,
+      subject: 'Yard jam',
+      boards: ['oakland', 'happening'],
+      created_at: 1_700_000_000,
+      happening_at: 1_800_000_000,
+    });
+    expect(sql.text).toContain('happening_at');
+    expect(sql.params[5]).toBe(1_800_000_000);
   });
 
   it('lets the signed registry set a title but never a discovered board', () => {

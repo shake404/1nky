@@ -14,6 +14,7 @@ import {
   exploreQuery,
   feedQuery,
   flickQuery,
+  happeningsQuery,
   inviteEdgesQuery,
   inviteNodeQuery,
   inviteRootsQuery,
@@ -51,6 +52,8 @@ const ALL = [
   boardThreadsQuery({ slug: 'sf', limit: 24 }),
   boardThreadsQuery({ limit: 24, cursor: { createdAt: 100, eventId: hex('55') } }),
   threadQuery(hex('55')),
+  happeningsQuery({ limit: 24 }),
+  happeningsQuery({ city: 'oakland', limit: 24, cursor: { createdAt: 1_800_000_000, eventId: hex('66') } }),
   searchVideosQuery('burner', 24),
   searchThreadsQuery('burner', 24),
   inviteRootsQuery(),
@@ -74,6 +77,7 @@ const PUBLIC_EVENT_READS = [
   ['boards', boardsQuery()],
   ['board threads', boardThreadsQuery({ slug: 'sf', limit: 24 })],
   ['thread detail', threadQuery(hex('55'))],
+  ['happenings', happeningsQuery({ limit: 24 })],
   ['search flicks', searchQuery('burner', 24)],
   ['search videos', searchVideosQuery('burner', 24)],
   ['search threads', searchThreadsQuery('burner', 24)],
@@ -341,6 +345,81 @@ describe('threadQuery', () => {
     const text = threadQuery(hex('55')).text;
     expect(text).toContain('b.pubkey = t.pubkey');
     expect(text).toContain('t.event_id = any(d.targets)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Happenings — a thread with a date on it
+// ---------------------------------------------------------------------------
+
+describe('happeningsQuery', () => {
+  it('selects only dated threads, on the same predicate as the partial index', () => {
+    const text = happeningsQuery({ limit: 24 }).text;
+    expect(text).toContain('from threads t');
+    expect(text).toContain('where t.happening_at is not null');
+  });
+
+  it('orders soonest first — a happenings list is not a board', () => {
+    const text = happeningsQuery({ limit: 24 }).text;
+    expect(text).toContain('order by s.happening_at asc, s.event_id asc');
+    expect(text).not.toContain('sort_at');
+  });
+
+  it('paginates forwards by keyset on the date it sorts by', () => {
+    const sql = happeningsQuery({
+      limit: 24,
+      cursor: { createdAt: 1_800_000_000, eventId: hex('66') },
+    });
+    // `>`, not `<`: the order is ascending, so the page bound runs the other way.
+    expect(sql.text).toContain('(s.happening_at, s.event_id) > ($2::bigint, $3::text)');
+    expect(sql.text).not.toContain('offset');
+    expect(sql.params).toEqual([null, 1_800_000_000, hex('66'), 24]);
+  });
+
+  it('filters by city with the bound board slug, optionally', () => {
+    const sql = happeningsQuery({ city: 'oakland', limit: 10 });
+    expect(sql.text).toContain('$1::text is null or $1::text = any(s.boards)');
+    expect(sql.params).toEqual(['oakland', null, null, 10]);
+    expect(happeningsQuery({ limit: 10 }).params[0]).toBeNull();
+  });
+
+  it('drops a happening seven days after it happened, defensively', () => {
+    // NIP-40 is the real mechanism; this is the belt to its braces, for a
+    // happening published with a longer expiry or none at all.
+    const text = happeningsQuery({ limit: 10 }).text;
+    expect(text).toContain('s.happening_at + 604800 > extract(epoch from now())::bigint');
+  });
+
+  it('binds no clock of its own: the window is evaluated by Postgres', () => {
+    const sql = happeningsQuery({ limit: 10 });
+    expect(sql.params).not.toContain(Math.floor(Date.now() / 1000));
+    expect(sql.params).not.toContain(604_800);
+  });
+
+  it('hides banned writers, buffed threads and expired rows', () => {
+    const text = happeningsQuery({ limit: 10 }).text;
+    expect(text).toContain('b.pubkey = t.pubkey');
+    expect(text).toContain('t.event_id = any(d.targets)');
+    expect(text).toContain('e.expires_at is null or e.expires_at > extract(epoch from now())::bigint');
+  });
+
+  it('carries the boards, the excerpt, the expiry and a reply count', () => {
+    const text = happeningsQuery({ limit: 10 }).text;
+    expect(text).toContain('s.boards');
+    expect(text).toContain('left(e.content, 160) as excerpt');
+    expect(text).toContain('s.expires_at');
+    expect(text).toContain('coalesce(r.reply_count, 0) as reply_count');
+  });
+});
+
+describe('every thread read reports happening_at', () => {
+  it.each([
+    ['board threads', boardThreadsQuery({ slug: 'sf', limit: 10 })],
+    ['thread detail', threadQuery(hex('55'))],
+    ['search threads', searchThreadsQuery('jam', 10)],
+    ['happenings', happeningsQuery({ limit: 10 })],
+  ] as const)('%s selects the column', (_name, sql) => {
+    expect(sql.text).toContain('happening_at');
   });
 });
 

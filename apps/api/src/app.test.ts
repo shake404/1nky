@@ -9,6 +9,7 @@ import {
   commentRow,
   fakeDb,
   flickRow,
+  happeningRow,
   hex,
   request,
   type Responder,
@@ -504,6 +505,99 @@ describe('GET /thread/:id', () => {
 
   it('refuses writes (read-only)', async () => {
     expect((await request(app(), `/thread/${hex('55')}`, { method: 'POST' })).status).toBe(405);
+  });
+});
+
+describe('GET /happenings', () => {
+  const happeningsDb = (rows: unknown[] = [happeningRow()]) =>
+    fakeDb((text) => (text.includes('from threads t') ? { rows } : undefined));
+
+  it('returns the upcoming happenings', async () => {
+    const res = await request(createApp(happeningsDb(), TEST_CONFIG), '/happenings');
+    expect(res.status).toBe(200);
+    const body = res.body as {
+      happenings: {
+        id: string;
+        subject: string;
+        excerpt: string;
+        createdAt: number;
+        expiresAt: number | null;
+        happeningAt: number;
+        replyCount: number;
+        boards: string[];
+        writer: { tag: string; mark: string };
+      }[];
+      nextCursor: string | null;
+    };
+    expect(body.happenings).toHaveLength(1);
+    expect(body.happenings[0]).toMatchObject({
+      id: hex('66'),
+      subject: 'Yard jam',
+      excerpt: 'bring paint, 2pm at the wall',
+      createdAt: 1_700_000_000,
+      expiresAt: 1_800_604_800,
+      happeningAt: 1_800_000_000,
+      replyCount: 1,
+      boards: ['oakland', 'happening'],
+    });
+    expect(body.happenings[0]?.writer.tag).toBe('SMOG');
+    expect(body.happenings[0]?.writer.mark).toHaveLength(6);
+    expect(body.nextCursor).toBeNull();
+  });
+
+  it('is empty rather than a 404 when nothing is coming up', async () => {
+    const res = await request(app(), '/happenings');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ happenings: [], nextCursor: null });
+  });
+
+  it('filters by city, normalising the slug first', async () => {
+    const db = happeningsDb();
+    await request(createApp(db, TEST_CONFIG), '/happenings?city=SF%20Bay');
+    expect(db.matching('from threads t')[0]?.params[0]).toBe('sf-bay');
+  });
+
+  it('leaves the city filter unbound when none is asked for', async () => {
+    const db = happeningsDb();
+    await request(createApp(db, TEST_CONFIG), '/happenings');
+    expect(db.matching('from threads t')[0]?.params[0]).toBeNull();
+  });
+
+  it('400s for a city that normalises to nothing', async () => {
+    const res = await request(app(), '/happenings?city=%23%23%23');
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: { code: 'bad_request' } });
+  });
+
+  it('pages on the happening date, not on when it was posted', async () => {
+    const rows = [
+      happeningRow({ event_id: hex('66'), happening_at: '1800000000' }),
+      happeningRow({ event_id: hex('77'), happening_at: '1800086400' }),
+    ];
+    const res = await request(createApp(happeningsDb(rows), TEST_CONFIG), '/happenings?limit=2');
+    const cursor = (res.body as { nextCursor: string | null }).nextCursor;
+    expect(cursor).toBeTypeOf('string');
+    expect(decodeCursor(cursor as string)).toEqual({
+      createdAt: 1_800_086_400,
+      eventId: hex('77'),
+    });
+  });
+
+  it('passes a cursor through as the keyset bound', async () => {
+    const db = happeningsDb();
+    const cursor = encodeCursor({ createdAt: 1_800_000_000, eventId: hex('66') });
+    await request(createApp(db, TEST_CONFIG), `/happenings?cursor=${cursor}`);
+    const params = db.matching('from threads t')[0]?.params;
+    expect(params?.[1]).toBe(1_800_000_000);
+    expect(params?.[2]).toBe(hex('66'));
+  });
+
+  it('400s for a malformed cursor', async () => {
+    expect((await request(app(), '/happenings?cursor=nope')).status).toBe(400);
+  });
+
+  it('refuses writes (read-only)', async () => {
+    expect((await request(app(), '/happenings', { method: 'POST' })).status).toBe(405);
   });
 });
 

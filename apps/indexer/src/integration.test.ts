@@ -168,6 +168,62 @@ describe.skipIf(!enabled)('schema against a live Postgres', () => {
     expect(boards.rows).toHaveLength(1);
   });
 
+  it('stores a happening date on the thread row and rebuilds it from the event', async () => {
+    const counters = newCounters();
+    const happeningAt = now + 86_400;
+    const op = finalizeEvent(
+      buildThreadOp({
+        subject: 'Yard jam',
+        boards: ['oakland'],
+        content: 'bring paint',
+        happeningAt,
+        createdAt: now - 300,
+      }),
+      sk,
+    );
+    await indexEvent(db, op, counters, { now });
+
+    const read = async () =>
+      (
+        await db.query<{ happening_at: string | null; boards: string[] }>(
+          'select happening_at, boards from threads where event_id = $1',
+          [op.id],
+        )
+      ).rows[0];
+
+    const row = await read();
+    expect(Number(row?.happening_at)).toBe(happeningAt);
+    expect(row?.boards).toContain('happening');
+
+    // The marker registers as its own board kind, never as a city.
+    const marker = await db.query<{ kind: string }>('select kind from boards where slug = $1', [
+      'happening',
+    ]);
+    expect(marker.rows[0]?.kind).toBe('happening');
+
+    // DERIVED: the column comes off the event's `when` tag, so a rebuild
+    // reproduces it with nothing extra to replay.
+    await truncateDerived(db);
+    expect(await read()).toBeUndefined();
+    await indexEvent(db, op, newCounters(), { now });
+    expect(Number((await read())?.happening_at)).toBe(happeningAt);
+  });
+
+  it('leaves happening_at null for an ordinary thread', async () => {
+    const counters = newCounters();
+    const op = finalizeEvent(
+      buildThreadOp({ subject: 'no date', boards: ['sf'], content: 'just a thread' }),
+      sk,
+    );
+    await indexEvent(db, op, counters, { now });
+
+    const { rows } = await db.query<{ happening_at: string | null }>(
+      'select happening_at from threads where event_id = $1',
+      [op.id],
+    );
+    expect(rows[0]?.happening_at).toBeNull();
+  });
+
   it('buffs a thread OP and cascades the row out of threads', async () => {
     const counters = newCounters();
     const op = finalizeEvent(

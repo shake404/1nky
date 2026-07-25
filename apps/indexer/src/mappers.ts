@@ -1,10 +1,12 @@
 import {
+  HAPPENING_BOARD,
   isSubtreeBan,
   KINDS,
   normalizeBoard,
   parseInvite,
   parseInviteRedemption,
   parseModBan,
+  parseWhen,
   REPORT_REASONS,
   type SignedEvent,
 } from '@1nky/protocol';
@@ -328,6 +330,12 @@ export interface ThreadRow {
   subject: string | null;
   boards: string[];
   created_at: number;
+  /**
+   * When the thing happens, for a happening (unix seconds); null for an
+   * ordinary thread. Read straight off the event's `when` tag, so a rebuild
+   * reproduces it — see migration 008.
+   */
+  happening_at: number | null;
 }
 
 /**
@@ -339,6 +347,10 @@ export interface ThreadRow {
  * subject and an empty board array rather than dropped. `content` and the
  * NIP-40 `expires_at` deliberately stay in `events`, which every thread read
  * joins anyway — one copy, no drift.
+ *
+ * `happening_at` comes from the event's own `when` tag (a happening is a thread
+ * with a date; see migration 008), so it is as derived as the boards are: no
+ * clock is read here and a rebuild reproduces the column exactly.
  */
 export function toThreadRow(event: SignedEvent): ThreadRow {
   return {
@@ -347,6 +359,7 @@ export function toThreadRow(event: SignedEvent): ThreadRow {
     subject: tagValue(event.tags, 'subject') ?? null,
     boards: boardsOf(event),
     created_at: event.created_at,
+    happening_at: parseWhen(event),
   };
 }
 
@@ -459,6 +472,9 @@ export function boardKindOf(slug: string): string {
   if (slug.startsWith('surface-')) return 'surface';
   if (slug.startsWith('region-')) return 'region';
   if (slug === 'legal-permission') return 'legal';
+  // `happening` is unprefixed on purpose (it rides the board machinery), so it
+  // has to be named here or the happenings marker registers itself as a city.
+  if (slug === HAPPENING_BOARD) return 'happening';
   return 'city';
 }
 

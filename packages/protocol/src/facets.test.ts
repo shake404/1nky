@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { HAPPENING_BOARD } from './builders.js';
 import {
   GRAF_TYPES,
   legalPermissionTag,
@@ -111,6 +112,28 @@ describe('parseFacets', () => {
 
   it('reports legalPermission false when the tag is absent', () => {
     expect(parseFacets([['t', 'sf-bay']]).legalPermission).toBe(false);
+  });
+
+  it('never reports a bare system marker as a city', () => {
+    // `happening` is unprefixed on purpose (it rides the board machinery), so
+    // the "any unprefixed t tag is a city" rule has to know about it.
+    expect(parseFacets([['t', HAPPENING_BOARD]]).city).toBeNull();
+    expect(parseFacets([['t', 'legal-permission']]).city).toBeNull();
+  });
+
+  it('still finds the city when a happening marker sits before it', () => {
+    const parsed = parseFacets([
+      ['t', HAPPENING_BOARD],
+      ['t', 'oakland'],
+      ['when', '1800000000'],
+    ]);
+    expect(parsed).toEqual({
+      city: 'oakland',
+      region: null,
+      types: [],
+      surfaces: [],
+      legalPermission: false,
+    });
   });
 
   it('a round trip through the helpers parses back to the same facets', () => {

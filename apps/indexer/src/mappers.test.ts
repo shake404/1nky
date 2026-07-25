@@ -325,6 +325,7 @@ describe('toThreadRow (kind 1)', () => {
       subject: 'Who buffed the Alameda wall?',
       boards: ['sf-bay', 'oakland'],
       created_at: 1_700_000_000,
+      happening_at: null,
     });
   });
 
@@ -354,7 +355,14 @@ describe('toThreadRow (kind 1)', () => {
     });
     const row = toThreadRow(makeEvent({ ...template }));
 
-    expect(Object.keys(row).sort()).toEqual(['boards', 'created_at', 'event_id', 'pubkey', 'subject']);
+    expect(Object.keys(row).sort()).toEqual([
+      'boards',
+      'created_at',
+      'event_id',
+      'happening_at',
+      'pubkey',
+      'subject',
+    ]);
     expect(JSON.stringify(row)).not.toContain('secret sauce');
   });
 
@@ -372,6 +380,54 @@ describe('toThreadRow (kind 1)', () => {
       }),
     );
     expect(row.boards).toEqual(['sf', 'oakland']);
+  });
+});
+
+describe('toThreadRow: happenings', () => {
+  const WHEN = 1_800_000_000;
+
+  it('reads happening_at off a happening built by the protocol builder', () => {
+    const template = buildThreadOp({
+      subject: 'Yard jam',
+      content: 'bring paint',
+      boards: ['oakland'],
+      happeningAt: WHEN,
+      createdAt: 1_700_000_000,
+    });
+    const row = toThreadRow(makeEvent({ ...template, id: hex('58'), pubkey: AUTHOR }));
+
+    expect(row.happening_at).toBe(WHEN);
+    // The marker is a board slug like any other, so it lands in `boards` too.
+    expect(row.boards).toEqual(['oakland', 'happening']);
+  });
+
+  it('is null for an ordinary thread', () => {
+    const template = buildThreadOp({ content: 'no date on this', boards: ['sf'] });
+    expect(toThreadRow(makeEvent({ ...template, id: hex('59') })).happening_at).toBeNull();
+  });
+
+  it('reads the date even when the happening marker is missing', () => {
+    // The column is derived from the `when` tag alone — a hand-rolled event with
+    // a date but no marker is still a dated thread, and the API's
+    // `happening_at is not null` filter is what decides it shows up.
+    const row = toThreadRow(
+      makeEvent({ kind: KINDS.NOTE, id: hex('5a'), tags: [['when', String(WHEN)]] }),
+    );
+    expect(row.happening_at).toBe(WHEN);
+    expect(row.boards).toEqual([]);
+  });
+
+  it('ignores a malformed when tag rather than storing junk', () => {
+    for (const value of ['', 'soon', '-1', '0', '17e8']) {
+      const row = toThreadRow(makeEvent({ kind: KINDS.NOTE, id: hex('5b'), tags: [['when', value]] }));
+      expect(row.happening_at).toBeNull();
+    }
+  });
+
+  it('reads no clock: the same event always maps to the same row', () => {
+    const template = buildThreadOp({ content: 'jam', happeningAt: WHEN, createdAt: 1_700_000_000 });
+    const event = makeEvent({ ...template, id: hex('5c') });
+    expect(toThreadRow(event)).toEqual(toThreadRow(event));
   });
 });
 
@@ -513,6 +569,12 @@ describe('boards', () => {
     expect(boardKindOf('surface-freight')).toBe('surface');
     expect(boardKindOf('region-pnw')).toBe('region');
     expect(boardKindOf('legal-permission')).toBe('legal');
+  });
+
+  it('boardKindOf keeps the happening marker out of the city list', () => {
+    // Threads auto-register their board slugs, so without this a happening
+    // would register a *city* called "happening" in GET /boards?kind=city.
+    expect(boardKindOf('happening')).toBe('happening');
   });
 
   it('reads a region per registry entry', () => {
