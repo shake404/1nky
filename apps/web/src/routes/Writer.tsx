@@ -2,6 +2,7 @@ import { COPY, fingerprint } from '@1nky/protocol';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AgeDots } from '../components/AgeDots.js';
+import { Avatar } from '../components/Avatar.js';
 import { FlickCard } from '../components/FlickCard.js';
 import { Identicon } from '../components/Identicon.js';
 import { IgnoreWriter, useIgnoredWriters } from '../components/IgnoreWriter.js';
@@ -92,6 +93,7 @@ export function Writer(): JSX.Element {
   const { tag } = useTag();
   const [name, setName] = useState<string>('');
   const [bio, setBio] = useState<string>('');
+  const [avatar, setAvatar] = useState<string | null>(null);
   const [flicks, setFlicks] = useState<Flick[]>([]);
   const [summary, setSummary] = useState<WriterSummary | null>(null);
   const [crews, setCrews] = useState<string[]>([]);
@@ -139,7 +141,9 @@ export function Writer(): JSX.Element {
     if (isMe && tag) {
       setName(tag.name);
       void fetchProfile(tag.pubkey).then((meta) => {
-        if (live) setBio(meta?.bio ?? '');
+        if (!live) return;
+        setBio(meta?.bio ?? '');
+        setAvatar(meta?.avatarSha256 ?? null);
       });
       return () => {
         live = false;
@@ -149,6 +153,7 @@ export function Writer(): JSX.Element {
       if (!live || !meta) return;
       setName(meta.name?.trim() || '');
       setBio(meta.bio ?? '');
+      setAvatar(meta.avatarSha256 ?? null);
     });
     return () => {
       live = false;
@@ -166,7 +171,7 @@ export function Writer(): JSX.Element {
   return (
     <div className="shell pad stack stack--wide">
       <div className="row" style={{ gap: 14 }}>
-        <Identicon pubkey={pubkey} size={64} />
+        <Avatar pubkey={pubkey} avatarSha256={avatar ?? summary?.avatarSha256} size={64} alt={name || summary?.tag || ''} />
         <div>
           <h2>{name || summary?.tag || 'unnamed'}</h2>
           <p className="mono muted" style={{ marginTop: 4 }}>
@@ -227,6 +232,7 @@ export function MyWall(): JSX.Element {
   const [flicks, setFlicks] = useState<Flick[]>([]);
   const [summary, setSummary] = useState<WriterSummary | null>(null);
   const [bio, setBio] = useState('');
+  const [avatar, setAvatar] = useState<string | null>(null);
   const [crews, setCrews] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -241,7 +247,9 @@ export function MyWall(): JSX.Element {
       }
     });
     void fetchProfile(tag.pubkey).then((meta) => {
-      if (live) setBio(meta?.bio ?? '');
+      if (!live) return;
+      setBio(meta?.bio ?? '');
+      setAvatar(meta?.avatarSha256 ?? null);
     });
     void fetchWriterCrews(tag.pubkey).then((found) => {
       if (live) setCrews(found);
@@ -256,7 +264,7 @@ export function MyWall(): JSX.Element {
   return (
     <div className="shell pad stack stack--wide">
       <div className="row" style={{ gap: 14 }}>
-        <Identicon pubkey={tag.pubkey} size={64} />
+        <Avatar pubkey={tag.pubkey} avatarSha256={avatar ?? summary?.avatarSha256} size={64} alt={tag.name} />
         <div>
           <h2>{tag.name}</h2>
           <p className="mono muted" style={{ marginTop: 4 }}>

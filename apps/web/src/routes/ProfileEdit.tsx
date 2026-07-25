@@ -1,9 +1,10 @@
 import { fingerprint, PROFILE_BIO_MAX } from '@1nky/protocol';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Identicon } from '../components/Identicon.js';
+import { Avatar } from '../components/Avatar.js';
 import { Spraying } from '../components/Spraying.js';
 import { fetchWriterCrews } from '../lib/crews.js';
+import { prepareImage, uploadBlob, type PreparedImage } from '../lib/flicks.js';
 import { fetchProfile } from '../lib/profiles.js';
 import { publishProfile, type Stage } from '../lib/publish.js';
 import { useTag } from '../state/TagProvider.js';
@@ -12,11 +13,18 @@ import { useToast } from '../state/ToastProvider.js';
 const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
- * `/profile/edit` — change your bio and which crews you are repping.
+ * `/profile/edit` — change your picture, your bio and which crews you are
+ * repping.
  *
  * Crews here are a CLAIM, not a roster: a writer can list any crew handle or
  * pubkey the way they can pick any tag name. The crew page is where the
  * crew-signed roster (and the badge) lives.
+ *
+ * The picture reuses the flick pipeline exactly — {@link prepareImage} strips
+ * every trace of metadata on-device (a canvas re-encode), {@link uploadBlob}
+ * signs the upload with this tag's own secret. The address the server hands
+ * back rides on the kind-0 as the writer's avatar; clearing it re-publishes the
+ * tag with no picture at all.
  */
 export function ProfileEdit(): JSX.Element {
   const { tag, refresh } = useTag();
@@ -29,12 +37,20 @@ export function ProfileEdit(): JSX.Element {
   const [loaded, setLoaded] = useState(false);
   const [stage, setStage] = useState<Stage | null>(null);
 
+  // The picture. `avatarSha256` is what is on the wall now; `picked` is a fresh
+  // one the writer chose that has not gone up yet; `preview` is its object URL.
+  const [avatarSha256, setAvatarSha256] = useState<string | null>(null);
+  const [picked, setPicked] = useState<PreparedImage | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (!tag) return;
     let live = true;
     void fetchProfile(tag.pubkey).then((meta) => {
       if (!live) return;
       setBio(meta?.bio ?? '');
+      setAvatarSha256(meta?.avatarSha256 ?? null);
       setLoaded(true);
     });
     void fetchWriterCrews(tag.pubkey).then((found) => {
@@ -45,12 +61,48 @@ export function ProfileEdit(): JSX.Element {
     };
   }, [tag]);
 
+  // Never leak the object URL the preview was drawn from.
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
+
   if (!tag) return <div className="shell empty" />;
 
-  const save = async (): Promise<void> => {
-    setStage('spraying');
+  const pickPicture = async (file: File): Promise<void> => {
     try {
-      await publishProfile(tag, { first: false, bio, crews, onStage: setStage });
+      const prepared = await prepareImage(file);
+      if (preview) URL.revokeObjectURL(preview);
+      setPicked(prepared);
+      setPreview(URL.createObjectURL(prepared.full));
+    } catch (error) {
+      say(error instanceof Error ? error.message : 'Could not read that picture.', 'hazard');
+    }
+  };
+
+  const removePicture = (): void => {
+    if (preview) URL.revokeObjectURL(preview);
+    setPicked(null);
+    setPreview(null);
+    setAvatarSha256(null);
+    if (fileInput.current) fileInput.current.value = '';
+  };
+
+  const save = async (): Promise<void> => {
+    try {
+      // A fresh pick goes up first, so the kind-0 can point at its address.
+      // Otherwise keep whatever is there, or '' to clear it — publishProfile
+      // drops an empty one from the tag entirely.
+      let sha = avatarSha256 ?? '';
+      if (picked) {
+        setStage('uploading');
+        const upload = await uploadBlob(picked.full, tag.secret);
+        sha = upload.sha256;
+      } else {
+        setStage('spraying');
+      }
+      await publishProfile(tag, { first: false, bio, crews, avatarSha256: sha, onStage: setStage });
       void refresh();
       say('Up.');
       navigate('/me', { replace: true });
@@ -80,6 +132,7 @@ export function ProfileEdit(): JSX.Element {
   };
 
   const remaining = PROFILE_BIO_MAX - bio.length;
+  const hasPicture = picked !== null || (avatarSha256 !== null && HEX64.test(avatarSha256));
 
   return (
     <div className="shell pad stack stack--wide">
@@ -91,13 +144,38 @@ export function ProfileEdit(): JSX.Element {
       </div>
 
       <div className="row" style={{ gap: 14 }}>
-        <Identicon pubkey={tag.pubkey} size={56} />
+        {picked && preview ? (
+          <img className="avatar" src={preview} alt="" width={56} height={56} style={{ width: 56, height: 56 }} />
+        ) : (
+          <Avatar pubkey={tag.pubkey} avatarSha256={avatarSha256} size={56} alt={tag.name} />
+        )}
         <div>
           <p className="display" style={{ fontSize: '1.5rem' }}>
             {tag.name}
           </p>
           <p className="mono muted">{fingerprint(tag.pubkey)}</p>
         </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="avatar">Put a face on it</label>
+        <input
+          ref={fileInput}
+          id="avatar"
+          type="file"
+          accept="image/*"
+          disabled={!loaded || stage !== null}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void pickPicture(file);
+          }}
+        />
+        <p className="help muted">A picture for your tag. Optional — the block-mark stands in without one.</p>
+        {hasPicture ? (
+          <button type="button" className="btn btn--ghost btn--sm" onClick={removePicture} disabled={stage !== null}>
+            Take it off
+          </button>
+        ) : null}
       </div>
 
       <hr className="rule" />

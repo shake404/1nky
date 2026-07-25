@@ -208,7 +208,12 @@ export function Thread(): JSX.Element {
               busy={stage !== null}
               onOpen={(replyId) => {
                 setReplyingTo(replyId);
-                setReplyDraft('');
+                // Open the box already aimed at whoever you tapped, so it is
+                // obvious who the reply answers. Their tag if it has one, else
+                // their mark.
+                const target = replyId ? byId.get(replyId) : undefined;
+                const handle = target ? target.writer.tag?.trim() || target.writer.mark : '';
+                setReplyDraft(handle ? `@${handle} ` : '');
               }}
               onDraft={setReplyDraft}
               onSend={(parentId) => void send(parentId, replyDraft)}

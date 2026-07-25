@@ -1,8 +1,8 @@
 import { COPY, fingerprint } from '@1nky/protocol';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { Avatar } from '../components/Avatar.js';
 import { FlickCard } from '../components/FlickCard.js';
-import { Identicon } from '../components/Identicon.js';
 import { Spraying } from '../components/Spraying.js';
 import { getCrewKey, hasCrewKey } from '../lib/crew-keys.js';
 import {
@@ -171,7 +171,7 @@ export function Crew(): JSX.Element {
     <div className="shell shell--wide pad stack stack--wide">
       {stage ? <Spraying stage={stage} /> : null}
       <div className="row" style={{ gap: 14 }}>
-        <Identicon pubkey={pubkey} size={64} />
+        <Avatar pubkey={pubkey} avatarSha256={crew.avatarSha256} size={64} alt={crew.tag || ''} />
         <div style={{ minWidth: 0 }}>
           <h2>{crew.tag || 'unnamed crew'}</h2>
           <p className="mono muted" style={{ marginTop: 4 }}>
@@ -254,7 +254,7 @@ export function Crew(): JSX.Element {
             {repping.map((m) => (
               <div key={m.pubkey} className="writer" style={{ gap: 8 }}>
                 <Link to={`/w/${m.pubkey}`} className="row" style={{ gap: 8, alignItems: 'center', minWidth: 0 }}>
-                  <Identicon pubkey={m.pubkey} size={22} />
+                  <Avatar pubkey={m.pubkey} avatarSha256={m.avatarSha256} size={22} alt={m.tag || ''} />
                   <span className="writer__name">{m.tag || 'unnamed'}</span>
                   <span className="writer__mark">{m.mark}</span>
                 </Link>
@@ -306,7 +306,7 @@ interface FounderRosterRowProps {
 function FounderRosterRow({ member, isFounder, onRemove }: FounderRosterRowProps): JSX.Element {
   return (
     <Link to={`/w/${member.pubkey}`} className="writer" style={{ gap: 8 }}>
-      <Identicon pubkey={member.pubkey} size={22} />
+      <Avatar pubkey={member.pubkey} avatarSha256={member.avatarSha256} size={22} alt={member.tag || ''} />
       <span className="writer__name">{member.tag || 'unnamed'}</span>
       <span className="writer__mark">{member.mark}</span>
       {isFounder ? (
@@ -341,7 +341,7 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
 
   // Put someone on.
   const [addInput, setAddInput] = useState('');
-  const [addResolved, setAddResolved] = useState<{ pubkey: string; name: string | null; mark: string } | null>(null);
+  const [addResolved, setAddResolved] = useState<{ pubkey: string; name: string | null; mark: string; avatarSha256: string | null } | null>(null);
   const [addError, setAddError] = useState('');
 
   // Edit crew info.
@@ -365,7 +365,7 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
     }
     setAddError('');
     const meta = await fetchProfile(id).catch(() => null);
-    setAddResolved({ pubkey: id, name: meta?.name?.trim() || null, mark: fingerprint(id) });
+    setAddResolved({ pubkey: id, name: meta?.name?.trim() || null, mark: fingerprint(id), avatarSha256: meta?.avatarSha256 ?? null });
   };
 
   const confirmAdd = async (): Promise<void> => {
@@ -385,7 +385,7 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
       }, { onStage });
       await onRosterChange([
         ...members,
-        { pubkey: addResolved.pubkey, tag: addResolved.name, mark: addResolved.mark, avatarSha256: null },
+        { pubkey: addResolved.pubkey, tag: addResolved.name, mark: addResolved.mark, avatarSha256: addResolved.avatarSha256 },
       ]);
       setAddInput('');
       setAddResolved(null);
@@ -454,7 +454,7 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
 
         {addResolved ? (
           <div className="row" style={{ gap: 10, marginTop: 8, alignItems: 'center' }}>
-            <Identicon pubkey={addResolved.pubkey} size={36} />
+            <Avatar pubkey={addResolved.pubkey} avatarSha256={addResolved.avatarSha256} size={36} alt={addResolved.name || ''} />
             <div style={{ minWidth: 0 }}>
               <span className="writer__name">{addResolved.name || 'unnamed'}</span>{' '}
               <span className="writer__mark">{addResolved.mark}</span>

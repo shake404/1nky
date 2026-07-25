@@ -932,6 +932,17 @@ main {
   image-rendering: pixelated;
 }
 
+/* A writer's chosen picture sits in the identicon's exact footprint — same
+   keyline, same hard drop shadow, same square edges. No border-radius: the app
+   is hard-edged everywhere and a rounded avatar would read as a foreign part. */
+.avatar {
+  border: 1px solid var(--keyline);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.55);
+  flex: none;
+  object-fit: cover;
+  background: var(--ink, #0c0a11);
+}
+
 /* --- Spraying --------------------------------------------------------------
  * The wait is a can being shaken, not a spinner. Ball bearing and all.
  */
