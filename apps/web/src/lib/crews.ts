@@ -11,6 +11,10 @@ import {
 } from '@1nky/protocol';
 import { API_BASE } from './config.js';
 import { fetchWriterFlicks, parseFeedResponse, type Flick } from './feed.js';
+import { getPref, setPref } from './db.js';
+import type { Tag } from './identity.js';
+import { fetchProfile } from './profiles.js';
+import { publishProfile } from './publish.js';
 import { relay } from './relay.js';
 
 /**
@@ -315,6 +319,70 @@ export function crewTemplates(name: string, founderPubkey: string, mark: string)
     profile: buildProfile({ tag: name }),
     definition: buildCrewDefinition({ name, mark, members: [founderPubkey], founderPubkey }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Founded crews — the local, offline-first record of crews this device minted.
+// ---------------------------------------------------------------------------
+
+/**
+ * A locally-saved pointer to a crew this device founded.
+ *
+ * The crew SECRET is never stored here (or anywhere on this device) — post-as
+ * -crew stays the blackbook-swap flow. This is just enough to make the Crews
+ * hub instant and reachable offline: the pubkey, the name, and the fact that
+ * this device is the founder.
+ */
+export interface FoundedCrew {
+  pubkey: string;
+  name: string;
+  foundedByMe: true;
+}
+
+const FOUNDED_CREWS_KEY = 'founded-crews';
+
+export async function loadFoundedCrews(): Promise<FoundedCrew[]> {
+  return getPref<FoundedCrew[]>(FOUNDED_CREWS_KEY, []);
+}
+
+export async function saveFoundedCrew(crew: FoundedCrew): Promise<void> {
+  const current = await loadFoundedCrews();
+  if (current.some((c) => c.pubkey === crew.pubkey)) return;
+  await setPref(FOUNDED_CREWS_KEY, [...current, crew]);
+}
+
+export async function forgetFoundedCrews(): Promise<void> {
+  await setPref(FOUNDED_CREWS_KEY, []);
+}
+
+// ---------------------------------------------------------------------------
+// Link a freshly-founded crew onto the founder's kind-0 (`content.crews`).
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a crew pubkey to the founder's own profile crews list and re-publish the
+ * kind-0 so the crew is portable and shows up on the founder's page.
+ *
+ * Used by the CreateCrew success path: AFTER the crew blackbook is exported, we
+ * link (export first, then link — but do link). The founder is already seen so
+ * this mines at the POST tier. `fetchWriterCrews` failing is tolerated (treated
+ * as "no existing crews") so a flaky read never blocks the link.
+ */
+export async function linkCrewToFounder(
+  founder: Pick<Tag, 'secret' | 'pubkey' | 'name'>,
+  crewPubkey: string,
+): Promise<void> {
+  const existing = await fetchWriterCrews(founder.pubkey).catch(() => [] as string[]);
+  // Already linked — nothing to do (saves a needless round of work).
+  if (existing.includes(crewPubkey)) return;
+  const meta = await fetchProfile(founder.pubkey).catch(() => null);
+  await publishProfile(founder, {
+    first: false,
+    ...(meta?.bio !== undefined ? { bio: meta.bio } : {}),
+    ...(meta?.city ? { city: meta.city } : {}),
+    ...(meta?.avatarSha256 ? { avatarSha256: meta.avatarSha256 } : {}),
+    crews: [...existing, crewPubkey],
+  });
 }
 
 // Re-export the facet vocabularies for the post-flow picker so callers import

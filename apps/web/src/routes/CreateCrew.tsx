@@ -8,6 +8,8 @@ import { POW_BITS } from '../lib/config.js';
 import {
   createCrew,
   crewTemplates,
+  linkCrewToFounder,
+  saveFoundedCrew,
   type CreateCrewResult,
 } from '../lib/crews.js';
 import { exportBlackbook } from '../lib/identity.js';
@@ -45,6 +47,7 @@ export function CreateCrew(): JSX.Element {
   const [blackbookPayload, setBlackbookPayload] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [linking, setLinking] = useState(false);
 
   if (!tag) return <div className="shell empty" />;
 
@@ -73,6 +76,20 @@ export function CreateCrew(): JSX.Element {
       setBlackbookPayload(exported.payload);
       downloadText(exported.filename, exported.contents);
       say('Crew is up. Hand off the blackbook.');
+
+      // Link the crew onto the founder's kind-0 so it sticks to their tag and is
+      // portable (shows on their profile / Crews hub). Export first — the
+      // blackbook is the thing that must never be blocked — then link. Best
+      // effort: a failure here does not undo a crew that is already up.
+      setLinking(true);
+      try {
+        await linkCrewToFounder(tag, created.pubkey);
+        await saveFoundedCrew({ pubkey: created.pubkey, name: created.name, foundedByMe: true });
+      } catch {
+        /* linking is best effort */
+      } finally {
+        setLinking(false);
+      }
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'That did not go up.');
       setStage(null);
@@ -106,6 +123,10 @@ export function CreateCrew(): JSX.Element {
             the same way you would hand a marker.
           </p>
         </div>
+
+        {linking ? (
+          <p className="kicker" style={{ color: 'var(--sodium)' }}>linking your tag…</p>
+        ) : null}
 
         {blackbookPayload ? (
           <>

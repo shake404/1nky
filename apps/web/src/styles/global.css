@@ -133,8 +133,9 @@
   --body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
-  /* The hand-style lean. One angle, used everywhere something leans. */
-  --lean: -8deg;
+  /* The hand-style lean. Zeroed: boxes sit straight — the hard offset shadow
+     and chrome still carry the throwie character without the tilt. */
+  --lean: 0deg;
   --drop: 4px 4px 0 var(--keyline);
   --drop-sm: 3px 3px 0 var(--keyline);
 
@@ -462,7 +463,6 @@ main {
   background: #e6dfcd;
   color: var(--soot);
   box-shadow: var(--drop-sm);
-  transform: rotate(-1deg);
 }
 
 /* At 1.7rem the display ramp's dark band cuts straight through the x-height.
@@ -649,7 +649,8 @@ main {
 }
 
 .sticker {
-  transform: rotate(-0.7deg);
+  /* Boxes sit straight; the chrome face and hard drop carry the throwie. */
+  transform: none;
 }
 
 /* --- Fields --------------------------------------------------------------- */
@@ -1026,7 +1027,6 @@ main {
   font-weight: 600;
   border: 2px solid var(--keyline);
   box-shadow: var(--drop);
-  transform: rotate(-0.5deg);
 }
 
 .toast--hazard {
@@ -1089,7 +1089,7 @@ main {
   letter-spacing: 0.18em;
   font-size: 0.75rem;
   padding: 4px 10px;
-  transform: rotate(-1.4deg);
+  transform: rotate(-0.4deg);
   box-shadow: var(--drop-sm);
 }
 
@@ -1411,7 +1411,6 @@ main {
   background: #e6dfcd;
   color: var(--soot);
   box-shadow: var(--drop-sm);
-  transform: rotate(-0.6deg);
 }
 
 .filter-pill button {

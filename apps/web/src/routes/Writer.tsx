@@ -149,6 +149,7 @@ export function MyWall(): JSX.Element {
   const { tag } = useTag();
   const [flicks, setFlicks] = useState<Flick[]>([]);
   const [bio, setBio] = useState('');
+  const [crews, setCrews] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -162,6 +163,9 @@ export function MyWall(): JSX.Element {
     });
     void fetchProfile(tag.pubkey).then((meta) => {
       if (live) setBio(meta?.bio ?? '');
+    });
+    void fetchWriterCrews(tag.pubkey).then((found) => {
+      if (live) setCrews(found);
     });
     return () => {
       live = false;
@@ -183,6 +187,23 @@ export function MyWall(): JSX.Element {
           {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>
+
+      {crews.length > 0 ? (
+        <section className="stack" style={{ gap: 8 }}>
+          <span className="kicker">Reppin&apos;</span>
+          <div className="chips" style={{ gap: 8 }}>
+            {crews.map((crewPubkey) => (
+              <Link key={crewPubkey} to={`/crew/${crewPubkey}`} className="chip">
+                <Identicon pubkey={crewPubkey} size={16} />
+                <span className="mono">{fingerprint(crewPubkey)}</span>
+              </Link>
+            ))}
+          </div>
+          <p className="help" style={{ fontSize: '0.78rem' }}>
+            A claim, not a roster — crews confirm their own line-up on their crew page.
+          </p>
+        </section>
+      ) : null}
 
       <Link to="/profile/edit" className="btn btn--ghost btn--sm sticker">
         Edit your tag

@@ -27,7 +27,7 @@ const TOPNAV = [
   { to: '/explore', label: 'Explore', end: false },
   { to: '/post', label: 'Post', end: false },
   { to: '/me', label: 'Mine', end: false },
-  { to: '/crew/new', label: 'Crew', end: false },
+  { to: '/crews', label: 'Crew', end: false },
 ] as const;
 
 export function TopBar(): JSX.Element {
@@ -78,6 +78,7 @@ const TABS = [
   { to: '/post', glyph: '✚', label: 'Post', end: false },
   { to: '/messages', glyph: '✉', label: 'Word', end: false },
   { to: '/me', glyph: '◱', label: 'Mine', end: false },
+  { to: '/crews', glyph: '⬢', label: 'Crew', end: false },
   { to: '/settings', glyph: '⚙', label: 'Setup', end: false },
 ] as const;
 
