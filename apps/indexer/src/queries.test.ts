@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest';
 import {
   buffDelete,
   buffPlan,
+  deleteBan,
   DERIVED_TABLES,
   expirationSweep,
   incrementReportCount,
+  selectBanList,
   touchPubkeyStats,
   truncateDerived,
+  upsertBan,
   upsertBoard,
   upsertEvent,
   writeWatermark,
@@ -15,6 +18,8 @@ import {
 import { hex } from './testing/fixtures.js';
 
 const AUTHOR = hex('ab');
+const MOD = hex('7f');
+const TARGET = hex('be');
 
 describe('buff (kind 5) deletion logic', () => {
   it('keeps only well-formed event ids and counts the rest', () => {
@@ -44,6 +49,49 @@ describe('buff (kind 5) deletion logic', () => {
     const sql = buffDelete(buffPlan({ pubkey: AUTHOR, targets: [hex('11')] }));
     expect(sql.text).toContain('delete from events');
     expect(sql.text).not.toContain('flicks');
+  });
+
+  it('defaults to a self-buff — mod power is opt-in, never implicit', () => {
+    expect(buffPlan({ pubkey: AUTHOR, targets: [hex('11')] }).mod).toBe(false);
+  });
+
+  it('drops the ownership predicate for a moderator takedown only', () => {
+    const plan = buffPlan({ pubkey: MOD, targets: [hex('11')] }, true);
+    expect(plan.mod).toBe(true);
+    const sql = buffDelete(plan);
+    expect(sql.text).toContain('delete from events');
+    expect(sql.text).not.toContain('pubkey = $2');
+    expect(sql.params).toEqual([[hex('11')]]);
+  });
+});
+
+describe('banned_pubkeys', () => {
+  const row = { pubkey: TARGET, reason: 'illegal', banned_at: 1_700_000_000, banned_by: MOD };
+
+  it('binds every value rather than interpolating a pubkey into SQL', () => {
+    const sql = upsertBan(row);
+    expect(sql.text).not.toContain(TARGET);
+    expect(sql.text).not.toContain(MOD);
+    expect(sql.params).toEqual([TARGET, 'illegal', 1_700_000_000, MOD]);
+  });
+
+  it('refuses to regress to an older mod action (parameterized-replaceable)', () => {
+    expect(upsertBan(row).text).toContain('where excluded.banned_at >= banned_pubkeys.banned_at');
+  });
+
+  it('scopes an unban so it cannot delete a newer ban', () => {
+    const sql = deleteBan(TARGET, 1_700_000_000);
+    expect(sql.text).toBe(`delete from banned_pubkeys where pubkey = $1 and banned_at <= $2`);
+    expect(sql.params).toEqual([TARGET, 1_700_000_000]);
+  });
+
+  it('exports only what the relay can use, in a stable order', () => {
+    const sql = selectBanList();
+    expect(sql.text).toContain('select pubkey, reason');
+    expect(sql.text).toContain('order by pubkey');
+    // banned_by is operator provenance and stays in Postgres.
+    expect(sql.text).not.toContain('banned_by');
+    expect(sql.params).toEqual([]);
   });
 });
 

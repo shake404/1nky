@@ -4,6 +4,7 @@ import {
   buildCrewBadgeRegistry,
   buildCrewDefinition,
   buildFlick,
+  buildModBan,
   buildProfile,
   buildReport,
   buildVideo,
@@ -22,6 +23,7 @@ import {
   crewDefinitionRowFromEvent,
   expirationOf,
   isExpired,
+  modBanActionFromEvent,
   parseImeta,
   routeOf,
   tagValue,
@@ -554,6 +556,65 @@ describe('crewBadgeRowsFromRegistry (kind 30078 d:crew-badges)', () => {
         makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'crew-badges']], content: '{' }),
       ),
     ).toEqual([]);
+  });
+});
+
+describe('modBanActionFromEvent', () => {
+  const target = hex('be');
+
+  it('reads a ban, stamping banned_at from the event not the clock', () => {
+    const event = makeEvent({
+      ...buildModBan(target, 'ban', { reason: 'illegal', createdAt: 777 }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+    });
+    expect(modBanActionFromEvent(event)).toEqual({
+      action: 'ban',
+      row: { pubkey: target, reason: 'illegal', banned_at: 777, banned_by: AUTHOR },
+    });
+  });
+
+  it('reads an unban, with no reason', () => {
+    const event = makeEvent({
+      ...buildModBan(target, 'unban', { createdAt: 778 }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+    });
+    expect(modBanActionFromEvent(event)?.action).toBe('unban');
+    expect(modBanActionFromEvent(event)?.row.reason).toBeNull();
+  });
+
+  it('lowercases the signer so the moderator check is case-insensitive', () => {
+    const event = makeEvent({
+      ...buildModBan(target, 'ban', { createdAt: 1 }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR.toUpperCase(),
+    });
+    expect(modBanActionFromEvent(event)?.row.banned_by).toBe(AUTHOR);
+  });
+
+  it('lets every other kind-30078 event through untouched', () => {
+    expect(
+      modBanActionFromEvent(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'crew']], content: '{"name":"FASE"}' }),
+      ),
+    ).toBeNull();
+    expect(
+      modBanActionFromEvent(makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'boards']] })),
+    ).toBeNull();
+    expect(modBanActionFromEvent(makeEvent({ kind: KINDS.FLICK }))).toBeNull();
+  });
+
+  it('refuses a d-tag whose target is not a pubkey', () => {
+    expect(
+      modBanActionFromEvent(
+        makeEvent({
+          kind: KINDS.APP_DATA,
+          tags: [['d', 'ban:nope']],
+          content: '{"action":"ban"}',
+        }),
+      ),
+    ).toBeNull();
   });
 });
 

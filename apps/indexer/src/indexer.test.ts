@@ -1,7 +1,17 @@
-import { buildFlick, finalizeEvent, generateSecretKey } from '@1nky/protocol';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  buildFlick,
+  buildModBan,
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+} from '@1nky/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { backoffDelay, loadConfig } from './config.js';
+import { backoffDelay, loadConfig, parseModPubkeys } from './config.js';
 import { INDEXED_KINDS, run, startExpirationSweep } from './indexer.js';
 import type { WebSocketLike } from './relay.js';
 import { fakeDb, hex } from './testing/fixtures.js';
@@ -65,6 +75,52 @@ describe('config', () => {
         SWEEP_INTERVAL_MS: 'soon',
       } as NodeJS.ProcessEnv),
     ).toThrow(/SWEEP_INTERVAL_MS/);
+  });
+
+  it('has no moderators and no ban export unless told', () => {
+    expect(CONFIG.modPubkeys.size).toBe(0);
+    expect(CONFIG.banListExportPath).toBeUndefined();
+  });
+
+  it('reads the ban export path, treating blank as disabled', () => {
+    const withPath = loadConfig({
+      DATABASE_URL: 'x',
+      RELAY_WS_URL: 'y',
+      BAN_LIST_EXPORT_PATH: ' /strfry-plugin/banlist.json ',
+    } as NodeJS.ProcessEnv);
+    expect(withPath.banListExportPath).toBe('/strfry-plugin/banlist.json');
+
+    const blank = loadConfig({
+      DATABASE_URL: 'x',
+      RELAY_WS_URL: 'y',
+      BAN_LIST_EXPORT_PATH: '   ',
+    } as NodeJS.ProcessEnv);
+    expect(blank.banListExportPath).toBeUndefined();
+  });
+
+  it('parses SITE_MOD_PUBKEYS into a lowercase set', () => {
+    const mod = hex('7f');
+    const config = loadConfig({
+      DATABASE_URL: 'x',
+      RELAY_WS_URL: 'y',
+      SITE_MOD_PUBKEYS: ` ${mod.toUpperCase()} , ${hex('be')}`,
+    } as NodeJS.ProcessEnv);
+    expect([...config.modPubkeys]).toEqual([mod, hex('be')]);
+  });
+});
+
+describe('parseModPubkeys', () => {
+  it('drops anything that is not a 32-byte hex pubkey', () => {
+    // A truncated or malformed entry must never half-match its way into
+    // moderator powers — and it is a pubkey, so it is dropped, not logged.
+    expect([...parseModPubkeys('nope, 7f7f7f, , deadbeef')]).toEqual([]);
+    expect([...parseModPubkeys(undefined)]).toEqual([]);
+    expect([...parseModPubkeys('')]).toEqual([]);
+  });
+
+  it('dedupes across case', () => {
+    const mod = hex('7f');
+    expect([...parseModPubkeys(`${mod},${mod.toUpperCase()}`)]).toEqual([mod]);
   });
 });
 
@@ -144,6 +200,60 @@ describe('run', () => {
     });
     expect(counters.errors).toBe(1);
     expect(counters.events).toBe(0);
+  });
+
+  it('applies a moderator ban and publishes the relay ban list', async () => {
+    // The whole pipeline in one test: SITE_MOD_PUBKEYS -> config -> store ->
+    // banned_pubkeys -> the JSON file strfry's write policy hot-reloads.
+    const dir = await mkdtemp(join(tmpdir(), '1nky-indexer-ban-'));
+    const path = join(dir, 'banlist.json');
+    try {
+      const modSk = generateSecretKey();
+      const mod = getPublicKey(modSk);
+      const target = hex('be');
+
+      const config = loadConfig({
+        DATABASE_URL: 'postgres://x/y',
+        RELAY_WS_URL: 'ws://relay.invalid',
+        SITE_MOD_PUBKEYS: mod,
+        BAN_LIST_EXPORT_PATH: path,
+      } as NodeJS.ProcessEnv);
+
+      const db = fakeDb((text) =>
+        text.includes('from banned_pubkeys') && text.includes('select')
+          ? { rows: [{ pubkey: target, reason: 'illegal' }], rowCount: 1 }
+          : undefined,
+      );
+      const socket = new FakeSocket();
+      const ban = finalizeEvent(
+        buildModBan(target, 'ban', { reason: 'illegal', createdAt: 1_700_000_500 }),
+        modSk,
+      );
+
+      const counters = await run({
+        db,
+        config,
+        once: true,
+        now: () => 1_700_000_600,
+        createSocket: () => {
+          queueMicrotask(() => {
+            socket.emit('open');
+            socket.emit('message', JSON.stringify(['EVENT', 'sub', ban]));
+            socket.emit('message', JSON.stringify(['EOSE', 'sub']));
+          });
+          return socket;
+        },
+      });
+
+      expect(counters.bans).toBe(1);
+      expect(db.matching('insert into banned_pubkeys')).toHaveLength(1);
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual([
+        { pubkey: target, reason: 'illegal' },
+      ]);
+      expect(await readdir(dir)).toEqual(['banlist.json']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('retries with backoff when the relay is down', async () => {

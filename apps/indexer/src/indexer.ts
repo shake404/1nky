@@ -1,5 +1,6 @@
 import { ALL_KINDS, KINDS, type SignedEvent } from '@1nky/protocol';
 
+import { exportBanListSafe } from './banlist-export.js';
 import { backoffDelay, type IndexerConfig } from './config.js';
 import * as log from './log.js';
 import { type RelayClientOptions, runConnection } from './relay.js';
@@ -84,9 +85,21 @@ export async function run(options: RunOptions): Promise<Counters> {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
+  // Re-export the strfry ban list whenever a mod action changed it. Swallows
+  // filesystem failures by design: a missing bind mount or a full disk must not
+  // stop the firehose. No-ops when BAN_LIST_EXPORT_PATH is unset.
+  const onBanChange = async (): Promise<void> => {
+    await exportBanListSafe(db, config.banListExportPath);
+  };
+
   const onEvent = async (event: SignedEvent): Promise<void> => {
     try {
-      await indexEvent(db, event, counters, { now: nowSeconds(), sitePubkey: options.sitePubkey });
+      await indexEvent(db, event, counters, {
+        now: nowSeconds(),
+        sitePubkey: options.sitePubkey,
+        modPubkeys: config.modPubkeys,
+        onBanChange,
+      });
     } catch (err) {
       counters.errors += 1;
       // Kind is safe to name (hard rule #1 permits event ids and kinds).

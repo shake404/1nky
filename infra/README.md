@@ -9,7 +9,7 @@ infra/
 ├── strfry/
 │   ├── strfry.conf             64KB events, NIP-40 expiry, write-policy hookup
 │   ├── write-policy.mjs        stdio plugin: kinds, size, NIP-13 PoW, ban list
-│   └── banlist.json            hot-reloaded array of banned hex pubkeys (starts empty)
+│   └── banlist.json            hot-reloaded ban list; WRITTEN BY THE INDEXER (starts empty)
 ├── docker/
 │   ├── strfry.Dockerfile       official strfry image + a node runtime for the plugin
 │   ├── api.Dockerfile          Node 22 multi-stage, pnpm workspace
@@ -178,9 +178,13 @@ all. `cp ../.env.example .env` to override.
 
 These come straight from the root `.env.example`: `DATABASE_URL`,
 `RELAY_WS_URL`, `API_PORT`, `MEDIA_PORT`, `R2_*`, `MEDIA_PUBLIC_BASE`,
-`SITE_MOD_PUBKEYS`, `SITE_PUBKEY`, `POW_BITS_NEW`, `POW_BITS_POST`,
-`POW_BITS_REACTION`, `MAX_UPLOAD_MB`, `NEWBIE_POSTS_PER_DAY`,
+`SITE_MOD_PUBKEYS`, `SITE_PUBKEY`, `MOD_API_KEY`, `POW_BITS_NEW`,
+`POW_BITS_POST`, `POW_BITS_REACTION`, `MAX_UPLOAD_MB`, `NEWBIE_POSTS_PER_DAY`,
 `NEWBIE_WINDOW_HOURS`.
+
+`SITE_MOD_PUBKEYS` is read by both `api` and `indexer` — see
+[the ban pipeline](#the-ban-pipeline). `MOD_API_KEY` gates `/mod/*` on the api;
+unset leaves those endpoints disabled rather than open.
 
 These are **infra-local knobs** — not secrets, not needed by any app, defaulted
 in `docker-compose.yml`, and therefore deliberately *not* added to the root
@@ -194,7 +198,8 @@ documented at the root, these are the ones:
 | `POW_ENABLED` | `1` | `0` disables the PoW gate. **Local dev only.** |
 | `POW_NEW_KINDS` | `0` | Kinds always charged the `POW_BITS_NEW` tier |
 | `POW_REACTION_KINDS` | `1984,10000` | Kinds charged the `POW_BITS_REACTION` tier |
-| `BAN_LIST_PATH` | `/app/plugin/banlist.json` | Hot-reloaded ban list, container path |
+| `BAN_LIST_PATH` | `/app/plugin/banlist.json` | Hot-reloaded ban list, as the **strfry** container reads it (`:ro`) |
+| `BAN_LIST_EXPORT_PATH` | `/strfry-plugin/banlist.json` | The same file, as the **indexer** writes it. Not overridable from `.env` — it is the container-side half of a bind mount. Unset disables the export |
 | `STRFRY_VERBOSITY` | `WARNING` | strfry log level. **Do not raise to `INFO`** — see below |
 | `PNPM_INSTALL_FLAGS` | `--frozen-lockfile` | Build arg for the app Dockerfiles |
 
@@ -258,8 +263,67 @@ replaces it with the indexer's pubkey-reputation table (handoff Part 6).
 
 Save the file. The plugin stats it at most once a second and reloads on change;
 no restart, no reconnect. A half-written or invalid file is ignored and retried
-rather than treated as "nobody is banned". Phase 2 wires the mod queue's
-takedown+ban button to rewrite this file from Postgres.
+rather than treated as "nobody is banned".
+
+Editing the file by hand still works and is the break-glass path, but it is not
+the normal one — the indexer owns this file. See below.
+
+### The ban pipeline
+
+A ban is a signed event, not an ssh session. End to end:
+
+```text
+  moderator signs kind 30078, d = "ban:<target pubkey>"
+      content {"action":"ban","reason":"illegal"}   (or {"action":"unban"})
+            │
+            ▼  published to strfry like any other event
+  indexer firehose  ──▶  @1nky/indexer store.ts
+            │            signer must be in SITE_MOD_PUBKEYS, else it is inert
+            ▼            app data and nothing is written
+  postgres  banned_pubkeys  (pubkey, reason, banned_at, banned_by)
+            │
+            ▼  banlist-export.ts, on every applied change and at startup
+  /strfry-plugin/banlist.json     [{"pubkey":"…","reason":"illegal"}]
+            │  (same host dir the relay mounts read-only at /app/plugin)
+            ▼  write-policy.mjs stats it ≤1s after the mtime moves
+  banned pubkey rejected at the relay door — "blocked: this tag is banned"
+```
+
+Notes that matter when you touch any part of it:
+
+* **Authority is `SITE_MOD_PUBKEYS`** (comma-separated hex, root `.env.example`).
+  Both the `api` and the `indexer` service get it. From any other signer a
+  kind-30078 ban is ordinary app data: it stays in `events` and moves no rows.
+* **Two powers, one list.** The same set also lets a moderator's kind-5 take
+  down another writer's event. A non-moderator kind-5 stays scoped to the
+  signer's own events, which is the "buff this" rule and does not change.
+* **`banned_pubkeys` is operator state.** It is deliberately absent from
+  `DERIVED_TABLES`, so `pnpm --filter @1nky/indexer rebuild` never unbans
+  anyone.
+* **Order-independent.** `banned_at` is the event's `created_at`, and both the
+  ban upsert and the unban delete carry a SQL guard, so a replayed or
+  out-of-order action cannot resurrect a lifted ban or lift a newer one. The
+  indexer replays a 300s overlap window on every reconnect, so this is routine,
+  not theoretical.
+* **Atomic writes.** The exporter writes `banlist.json.tmp` and renames it over
+  the target, so the relay never reads a half-written list. This is why the
+  indexer bind-mounts the **directory** `./strfry:/strfry-plugin` read-write —
+  you cannot rename onto a bind-mounted single file. strfry keeps its own `:ro`
+  mount of the same directory at `/app/plugin`.
+* **`BAN_LIST_EXPORT_PATH` unset disables the export entirely** (no queries, no
+  file). That is the default outside compose, so a dev box without the mount is
+  not an error.
+* **No pubkeys are logged, ever.** An export failure prints
+  `error banlist export failed: <fs error>` and is otherwise swallowed — a full
+  disk must not stop the firehose. Applied bans show up only as counts
+  (`bans=`/`unbans=`) on the periodic tally.
+
+To confirm it end to end on a running stack:
+
+```bash
+docker compose --profile full logs indexer | tail -5   # -> "indexed … bans=1"
+cat infra/strfry/banlist.json                          # -> the exported array
+```
 
 **Plugin *code* changes need a container restart** (`docker compose restart
 strfry`). strfry's mtime-based auto-reload only applies when the plugin command

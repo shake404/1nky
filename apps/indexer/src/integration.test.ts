@@ -1,4 +1,4 @@
-import { buildBuff, buildFlick, buildProfile, finalizeEvent, generateSecretKey, getPublicKey } from '@1nky/protocol';
+import { buildBuff, buildFlick, buildModBan, buildProfile, finalizeEvent, generateSecretKey, getPublicKey } from '@1nky/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { connect, type Database } from './db.js';
@@ -158,6 +158,129 @@ describe.skipIf(!enabled)('schema against a live Postgres', () => {
 
     const events = await db.query(`select id from events where id = $1`, [victim.id]);
     expect(events.rows).toHaveLength(1);
+  });
+
+  /**
+   * The moderation guards live in SQL — an `on conflict ... where` and a scoped
+   * `delete` — precisely so a forged or out-of-order action cannot win a race
+   * against a read-then-write. A fake db cannot check either, so this is the
+   * only place they actually execute.
+   */
+  it('applies, refuses to regress, and lifts a moderator ban', async () => {
+    const counters = newCounters();
+    const modSk = generateSecretKey();
+    const mod = getPublicKey(modSk);
+    const mods: ReadonlySet<string> = new Set([mod]);
+    const target = 'b'.repeat(64);
+    const options = { now, modPubkeys: mods };
+
+    const banAt = async (createdAt: number, reason: string) =>
+      indexEvent(
+        db,
+        finalizeEvent(buildModBan(target, 'ban', { reason, createdAt }), modSk),
+        counters,
+        options,
+      );
+    const row = async () =>
+      (
+        await db.query<{ reason: string | null; banned_at: string; banned_by: string }>(
+          'select reason, banned_at::text, banned_by from banned_pubkeys where pubkey = $1',
+          [target],
+        )
+      ).rows[0];
+
+    await db.query('delete from banned_pubkeys where pubkey = $1', [target]);
+
+    await banAt(now - 100, 'illegal');
+    expect((await row())?.reason).toBe('illegal');
+    expect((await row())?.banned_by).toBe(mod);
+
+    // A newer action wins.
+    await banAt(now - 10, 'spam');
+    expect((await row())?.reason).toBe('spam');
+
+    // An older one does not: no regression on a replayed firehose overlap.
+    await banAt(now - 50, 'stale');
+    expect((await row())?.reason).toBe('spam');
+
+    // Neither does an unban signed before the ban in force.
+    await indexEvent(
+      db,
+      finalizeEvent(buildModBan(target, 'unban', { createdAt: now - 50 }), modSk),
+      counters,
+      options,
+    );
+    expect(await row()).toBeDefined();
+
+    // A current unban lifts it.
+    await indexEvent(
+      db,
+      finalizeEvent(buildModBan(target, 'unban', { createdAt: now }), modSk),
+      counters,
+      options,
+    );
+    expect(await row()).toBeUndefined();
+  });
+
+  it('ignores a ban from a pubkey that is not a moderator', async () => {
+    const counters = newCounters();
+    const target = 'c'.repeat(64);
+    await db.query('delete from banned_pubkeys where pubkey = $1', [target]);
+
+    await indexEvent(
+      db,
+      finalizeEvent(buildModBan(target, 'ban', { reason: 'illegal', createdAt: now }), sk),
+      counters,
+      { now, modPubkeys: new Set([getPublicKey(generateSecretKey())]) },
+    );
+
+    const { rows } = await db.query('select 1 from banned_pubkeys where pubkey = $1', [target]);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('keeps bans through a rebuild', async () => {
+    const target = 'd'.repeat(64);
+    await db.query(
+      `insert into banned_pubkeys (pubkey, reason, banned_at, banned_by)
+       values ($1, 'illegal', $2, $3) on conflict (pubkey) do nothing`,
+      [target, now, getPublicKey(sk)],
+    );
+
+    await truncateDerived(db);
+
+    const { rows } = await db.query('select 1 from banned_pubkeys where pubkey = $1', [target]);
+    expect(rows).toHaveLength(1);
+    await db.query('delete from banned_pubkeys where pubkey = $1', [target]);
+  });
+
+  it('lets a moderator take down another writer event, and nobody else', async () => {
+    const counters = newCounters();
+    const modSk = generateSecretKey();
+    const mods: ReadonlySet<string> = new Set([getPublicKey(modSk)]);
+
+    const victim = finalizeEvent(
+      buildFlick({
+        url: 'https://cdn.example/mod.webp',
+        sha256: '9'.repeat(64),
+        dims: { width: 10, height: 20 },
+      }),
+      generateSecretKey(),
+    );
+    await indexEvent(db, victim, counters, { now });
+
+    // A stranger cannot.
+    await indexEvent(db, finalizeEvent(buildBuff([victim.id], {}), sk), counters, {
+      now,
+      modPubkeys: mods,
+    });
+    expect((await db.query('select 1 from events where id = $1', [victim.id])).rows).toHaveLength(1);
+
+    // A moderator can.
+    await indexEvent(db, finalizeEvent(buildBuff([victim.id], {}), modSk), counters, {
+      now,
+      modPubkeys: mods,
+    });
+    expect((await db.query('select 1 from events where id = $1', [victim.id])).rows).toHaveLength(0);
   });
 
   it('sweeps expired events (NIP-40)', async () => {

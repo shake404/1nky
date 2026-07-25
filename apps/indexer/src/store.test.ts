@@ -3,6 +3,7 @@ import {
   buildCrewBadgeRegistry,
   buildCrewDefinition,
   buildFlick,
+  buildModBan,
   buildProfile,
   buildReport,
   buildVideo,
@@ -305,6 +306,199 @@ describe('indexEvent', () => {
 
     expect(counters.events).toBe(1);
     expect(db.calls.map((c) => c.text).filter((t) => t.includes('insert into'))).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Moderator bans — kind 30078, d = "ban:<target>"
+// ---------------------------------------------------------------------------
+
+const MOD = hex('7f');
+const TARGET = hex('be');
+const MODS: ReadonlySet<string> = new Set([MOD]);
+
+function modBan(
+  action: 'ban' | 'unban',
+  overrides: Parameters<typeof makeEvent>[0] = {},
+  reason?: string,
+) {
+  const template = buildModBan(TARGET, action, {
+    createdAt: NOW,
+    ...(reason === undefined ? {} : { reason }),
+  });
+  return makeEvent({ ...template, kind: KINDS.APP_DATA, pubkey: MOD, id: hex('44'), ...overrides });
+}
+
+describe('moderator bans (kind 30078, d:ban:<pubkey>)', () => {
+  it('applies a ban signed by a moderator', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('ban', {}, 'illegal'), counters, { now: NOW, modPubkeys: MODS });
+
+    expect(counters.bans).toBe(1);
+    const upsert = db.matching('insert into banned_pubkeys')[0];
+    expect(upsert?.params).toEqual([TARGET, 'illegal', NOW, MOD]);
+  });
+
+  it('ignores a ban from a pubkey that is not a moderator', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('ban', { pubkey: hex('99') }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    expect(counters.bans).toBe(0);
+    expect(db.matching('banned_pubkeys')).toHaveLength(0);
+    // Inert app data, not an error: the raw event is still kept.
+    expect(db.matching('insert into events')).toHaveLength(1);
+  });
+
+  it('ignores every ban when no moderators are configured', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('ban'), counters, { now: NOW });
+
+    expect(counters.bans).toBe(0);
+    expect(db.matching('banned_pubkeys')).toHaveLength(0);
+  });
+
+  it('matches the moderator pubkey case-insensitively', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('ban', { pubkey: MOD.toUpperCase() }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    expect(counters.bans).toBe(1);
+  });
+
+  it('lifts a ban on unban, scoped so a stale unban cannot regress it', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('unban', { created_at: NOW + 10 }), counters, {
+      now: NOW + 10,
+      modPubkeys: MODS,
+    });
+
+    expect(counters.unbans).toBe(1);
+    const del = db.matching('delete from banned_pubkeys')[0];
+    // The delete carries the action's own timestamp, so Postgres — not the
+    // indexer — refuses an unban older than the ban in force.
+    expect(del?.text).toContain('banned_at <= $2');
+    expect(del?.params).toEqual([TARGET, NOW + 10]);
+  });
+
+  it('does not count or export a stale unban the database refused', async () => {
+    // rowCount 0 is exactly what `delete ... and banned_at <= $2` returns when
+    // the ban in force is newer than this unban.
+    const db = fakeDb((text) =>
+      text.includes('delete from banned_pubkeys') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    const exports: number[] = [];
+
+    await indexEvent(db, modBan('unban', { created_at: NOW - 100 }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+      onBanChange: async () => {
+        exports.push(1);
+      },
+    });
+
+    expect(counters.unbans).toBe(0);
+    expect(exports).toEqual([]);
+  });
+
+  it('does not count or export a stale ban the database refused', async () => {
+    const db = fakeDb((text) =>
+      text.includes('insert into banned_pubkeys') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    const exports: number[] = [];
+
+    await indexEvent(db, modBan('ban', { created_at: NOW - 100 }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+      onBanChange: async () => {
+        exports.push(1);
+      },
+    });
+
+    expect(counters.bans).toBe(0);
+    expect(exports).toEqual([]);
+  });
+
+  it('re-exports the relay ban list after an applied change', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    let exported = 0;
+
+    await indexEvent(db, modBan('ban'), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+      onBanChange: async () => {
+        exported += 1;
+      },
+    });
+
+    expect(exported).toBe(1);
+  });
+
+  it('leaves crew definitions alone — a ban is not a registry entry', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('ban'), counters, { now: NOW, modPubkeys: MODS });
+
+    expect(db.matching('insert into crews')).toHaveLength(0);
+    expect(db.matching('insert into boards')).toHaveLength(0);
+    expect(counters.crews).toBe(0);
+  });
+});
+
+describe('moderator takedowns (kind 5)', () => {
+  it('lets a moderator buff another writer event', async () => {
+    const db = fakeDb((text) =>
+      text.startsWith('delete from events') ? { rows: [], rowCount: 1 } : undefined,
+    );
+    const counters = newCounters();
+    const template = buildBuff([hex('11')], { kinds: [20] });
+    await indexEvent(db, makeEvent({ ...template, pubkey: MOD }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    expect(counters.buffed).toBe(1);
+    const del = db.matching('delete from events')[0];
+    // No ownership predicate: the takedown reaches whoever authored it.
+    expect(del?.text).not.toContain('pubkey = $2');
+    expect(del?.params).toEqual([[hex('11')]]);
+  });
+
+  it('still scopes a non-moderator kind 5 to the signer own events', async () => {
+    const db = fakeDb((text) =>
+      text.startsWith('delete from events') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    const template = buildBuff([hex('11')], { kinds: [20] });
+    await indexEvent(db, makeEvent({ ...template, pubkey: AUTHOR }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    const del = db.matching('delete from events')[0];
+    expect(del?.text).toContain('and pubkey = $2');
+    expect(del?.params).toEqual([[hex('11')], AUTHOR]);
+  });
+
+  it('grants nobody takedown power when no moderators are configured', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    const template = buildBuff([hex('11')], {});
+    await indexEvent(db, makeEvent({ ...template, pubkey: MOD }), counters, { now: NOW });
+
+    expect(db.matching('delete from events')[0]?.text).toContain('and pubkey = $2');
   });
 });
 

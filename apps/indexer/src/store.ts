@@ -7,6 +7,7 @@ import {
   crewBadgeRowsFromRegistry,
   crewDefinitionRowFromEvent,
   isExpired,
+  modBanActionFromEvent,
   routeOf,
   tagValue,
   toCommentRow,
@@ -31,6 +32,10 @@ export interface Counters {
   boards: number;
   crews: number;
   crewBadges: number;
+  /** Moderator bans applied to `banned_pubkeys`. Counts only, never who. */
+  bans: number;
+  /** Moderator bans lifted. */
+  unbans: number;
   buffed: number;
   duplicates: number;
   expired: number;
@@ -54,6 +59,8 @@ export function newCounters(): Counters {
     boards: 0,
     crews: 0,
     crewBadges: 0,
+    bans: 0,
+    unbans: 0,
     buffed: 0,
     duplicates: 0,
     expired: 0,
@@ -78,6 +85,22 @@ export interface IndexOptions {
    * board list depends on it.
    */
   sitePubkey?: string | undefined;
+  /**
+   * Site moderators, lowercase hex (`config.modPubkeys`). Two things depend on
+   * it and nothing else does: a kind-30078 ban/unban is applied to
+   * `banned_pubkeys` only from one of these signers, and a kind-5 from one of
+   * these signers is a takedown that reaches another writer's events. Unset
+   * (local dev) means nobody is a moderator, which is the safe default: bans
+   * stay inert app data and every kind-5 is an ordinary self-buff.
+   */
+  modPubkeys?: ReadonlySet<string> | undefined;
+  /**
+   * Called after a ban or unban actually changed `banned_pubkeys`, so the
+   * strfry ban list can be re-exported. It MUST NOT throw — the indexer passes
+   * a wrapper that swallows filesystem failures, because a full disk is not a
+   * reason to stop indexing.
+   */
+  onBanChange?: (() => Promise<void>) | undefined;
 }
 
 /**
@@ -188,8 +211,12 @@ export async function indexEvent(
       await run(db, q.upsertDeletion(deletion));
       counters.deletions += 1;
 
-      // "Buff": hard-delete the named events, but only the signer's own.
-      const plan = q.buffPlan(deletion);
+      // "Buff": hard-delete the named events, but only the signer's own —
+      // unless the signer is a site moderator, in which case this is a takedown
+      // and reaches any author's event. Everyone else's kind-5 keeps the
+      // ownership predicate, so nothing about self-buffing changes.
+      const isMod = options.modPubkeys?.has(event.pubkey.toLowerCase()) === true;
+      const plan = q.buffPlan(deletion, isMod);
       if (plan.targets.length > 0) {
         counters.buffed += await run(db, q.buffDelete(plan));
       }
@@ -197,6 +224,33 @@ export async function indexEvent(
     }
 
     case 'registry': {
+      // A moderator ban/unban rides on kind 30078 with d = "ban:<target>".
+      // Checked before the `d` switch below so it can never be confused with a
+      // crew definition or a board registry.
+      //
+      // From a pubkey that is NOT in SITE_MOD_PUBKEYS this is inert app data:
+      // the raw event stays in `events` (the relay accepted it, and the relay is
+      // the source of truth) and not one row of `banned_pubkeys` moves. The
+      // signer is lowercased for the comparison; the configured set already is.
+      const ban = modBanActionFromEvent(event);
+      if (ban) {
+        if (options.modPubkeys?.has(event.pubkey.toLowerCase()) !== true) return;
+
+        // Parameterized-replaceable semantics live in the SQL guards, so an
+        // out-of-order or replayed action cannot regress the applied state.
+        // `changed === 0` means the guard refused it — nothing to export.
+        const changed =
+          ban.action === 'ban'
+            ? await run(db, q.upsertBan(ban.row))
+            : await run(db, q.deleteBan(ban.row.pubkey, ban.row.banned_at));
+        if (changed === 0) return;
+
+        if (ban.action === 'ban') counters.bans += 1;
+        else counters.unbans += 1;
+        if (options.onBanChange) await options.onBanChange();
+        return;
+      }
+
       const d = tagValue(event.tags, 'd');
       // A crew definition is signed by the crew's own key (anyone may define
       // their own crew). Membership is the crew-signed roster — the strong

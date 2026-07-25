@@ -1,4 +1,5 @@
 import type {
+  BanRow,
   BoardRow,
   CommentRow,
   CrewBadgeRow,
@@ -262,6 +263,58 @@ export function incrementReportCount(targetPubkey: string, createdAt: number): S
 }
 
 // ---------------------------------------------------------------------------
+// banned_pubkeys — operator state, written only from a moderator's kind 30078
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply a ban.
+ *
+ * The `where` clause is the parameterized-replaceable rule, in SQL rather than
+ * in a read-then-write: a mod action whose `created_at` is OLDER than the one
+ * already applied to this target loses. Relays hand events back slightly out of
+ * order and the indexer replays an overlap window on every reconnect, so
+ * without this a stale ban could resurrect a lifted one. `rowCount` is 0 when
+ * the guard rejects the update, which is also how the caller knows there is
+ * nothing new to export.
+ */
+export function upsertBan(row: BanRow): Sql {
+  return {
+    text: `insert into banned_pubkeys (pubkey, reason, banned_at, banned_by)
+           values ($1, $2, $3, $4)
+           on conflict (pubkey) do update set
+             reason    = excluded.reason,
+             banned_at = excluded.banned_at,
+             banned_by = excluded.banned_by
+           where excluded.banned_at >= banned_pubkeys.banned_at`,
+    params: [row.pubkey, row.reason, row.banned_at, row.banned_by],
+  };
+}
+
+/**
+ * Lift a ban. `banned_at <= $2` is the same no-regression rule from the other
+ * side: an unban signed BEFORE the ban currently in force must not delete it.
+ */
+export function deleteBan(pubkey: string, createdAt: number): Sql {
+  return {
+    text: `delete from banned_pubkeys where pubkey = $1 and banned_at <= $2`,
+    params: [pubkey, createdAt],
+  };
+}
+
+/**
+ * Every ban, for the strfry ban-list export. Ordered so the exported file is
+ * byte-stable and a no-op export does not churn the write policy's mtime check.
+ * Only the two columns the relay can use — nothing about who banned whom leaves
+ * Postgres.
+ */
+export function selectBanList(): Sql {
+  return {
+    text: `select pubkey, reason from banned_pubkeys order by pubkey`,
+    params: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // buff (kind 5)
 // ---------------------------------------------------------------------------
 
@@ -272,29 +325,50 @@ export interface BuffPlan {
   targets: string[];
   /** Ids that were named but rejected as malformed. Counted, never logged. */
   rejected: number;
+  /**
+   * True when the signer is a site moderator — a takedown rather than a
+   * self-buff, so the ownership check is dropped. Only the store sets this, and
+   * only after comparing the signer against `SITE_MOD_PUBKEYS`.
+   */
+  mod: boolean;
 }
 
 /**
  * The buff rule, in one place: a writer may delete their own events and
  * nobody else's. Ownership is enforced in SQL (`pubkey = $2`) rather than by
  * a read-then-write, so a forged deletion cannot race a legitimate one.
+ *
+ * `isMod` is the single exception, and it is off by default: a moderator's
+ * kind-5 is a takedown and reaches any author's event.
  */
-export function buffPlan(deletion: Pick<DeletionRow, 'pubkey' | 'targets'>): BuffPlan {
+export function buffPlan(
+  deletion: Pick<DeletionRow, 'pubkey' | 'targets'>,
+  isMod = false,
+): BuffPlan {
   const targets: string[] = [];
   let rejected = 0;
   for (const id of new Set(deletion.targets)) {
     if (HEX64.test(id)) targets.push(id);
     else rejected += 1;
   }
-  return { pubkey: deletion.pubkey, targets, rejected };
+  return { pubkey: deletion.pubkey, targets, rejected, mod: isMod };
 }
 
 /**
  * Hard-delete. `flicks`, `comments`, `reports` and `deletions` all reference
  * `events(id) on delete cascade`, so removing the event row removes every
  * derived row with it.
+ *
+ * A moderator takedown omits the ownership predicate. Nothing else does, and
+ * the only caller that can set `plan.mod` has already checked the signer.
  */
 export function buffDelete(plan: BuffPlan): Sql {
+  if (plan.mod) {
+    return {
+      text: `delete from events where id = any($1::text[])`,
+      params: [plan.targets],
+    };
+  }
   return {
     text: `delete from events where id = any($1::text[]) and pubkey = $2`,
     params: [plan.targets, plan.pubkey],

@@ -1,4 +1,10 @@
-import { KINDS, normalizeBoard, REPORT_REASONS, type SignedEvent } from '@1nky/protocol';
+import {
+  KINDS,
+  normalizeBoard,
+  parseModBan,
+  REPORT_REASONS,
+  type SignedEvent,
+} from '@1nky/protocol';
 
 /**
  * Pure event -> row mappers.
@@ -588,6 +594,50 @@ export function crewBadgeRowsFromRegistry(event: SignedEvent): CrewBadgeRow[] {
     rows.push({ crew_pubkey: rawPk, verified_at: verifiedAt, verified_by: event.pubkey });
   }
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Moderator bans — kind 30078 with d = "ban:<target pubkey>"
+// ---------------------------------------------------------------------------
+
+/** A row of `banned_pubkeys`, the one table a rebuild never truncates. */
+export interface BanRow {
+  pubkey: string;
+  reason: string | null;
+  banned_at: number;
+  banned_by: string;
+}
+
+export interface ModBanAction {
+  action: 'ban' | 'unban';
+  row: BanRow;
+}
+
+/**
+ * Kind 30078 with `d = "ban:<target>"` — a moderator ban or unban.
+ *
+ * Returns null for every other kind-30078 event, so crew definitions, crew
+ * badges and the board registry fall through untouched.
+ *
+ * Authorisation is deliberately NOT checked here. This file is pure mapping;
+ * the store is where `event.pubkey` is compared against the configured
+ * moderator set, because that is where the decision has consequences.
+ * `banned_at` is the event's `created_at` rather than the wall clock, which is
+ * what makes the parameterized-replaceable no-regression rule in `queries.ts`
+ * work on a replayed or out-of-order firehose.
+ */
+export function modBanActionFromEvent(event: SignedEvent): ModBanAction | null {
+  const parsed = parseModBan(event);
+  if (parsed === null) return null;
+  return {
+    action: parsed.action,
+    row: {
+      pubkey: parsed.targetPubkey,
+      reason: parsed.reason,
+      banned_at: event.created_at,
+      banned_by: event.pubkey.toLowerCase(),
+    },
+  };
 }
 
 /** Which derived table an event feeds, by kind. */

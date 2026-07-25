@@ -229,6 +229,9 @@ services:
       MEDIA_PUBLIC_BASE: "${MEDIA_PUBLIC_BASE:-http://localhost/media}"
       SITE_MOD_PUBKEYS: "${SITE_MOD_PUBKEYS:-}"
       SITE_PUBKEY: "${SITE_PUBKEY:-}"
+      # Shared secret for /mod/*. Unset leaves the mod queue endpoints disabled
+      # (the api says so once on startup) rather than open.
+      MOD_API_KEY: "${MOD_API_KEY:-}"
     expose:
       - "3001"
     healthcheck:
@@ -244,6 +247,13 @@ services:
     networks: [oneinky]
 
   # Firehose consumer (@1nky/indexer). No listening port by design.
+  #
+  # It is also the writer of the relay's ban list. A moderator signs a kind-30078
+  # ban, the indexer applies it to `banned_pubkeys` and re-exports
+  # /strfry-plugin/banlist.json, which is infra/strfry/ mounted READ-WRITE here.
+  # The strfry service mounts the same host directory read-only at /app/plugin,
+  # so the write policy sees the new file and hot-reloads it within ~1s. Only
+  # this service may write it; the relay only ever reads it.
   indexer:
     profiles: ["full"]
     build:
@@ -266,6 +276,22 @@ services:
       NEWBIE_WINDOW_HOURS: "${NEWBIE_WINDOW_HOURS:-48}"
       # Without this, any signer can define boards via kind-30078.
       SITE_PUBKEY: "${SITE_PUBKEY:-}"
+      # Moderators. Two powers hang off this list and nothing else does: a
+      # kind-30078 ban/unban is applied to `banned_pubkeys` only from one of
+      # these signers, and a kind-5 from one of them is a takedown that reaches
+      # another writer's event. Unset means nobody is a moderator.
+      SITE_MOD_PUBKEYS: "${SITE_MOD_PUBKEYS:-}"
+      # Where `banned_pubkeys` is exported for the relay's write policy. Unset
+      # disables the export; the path below is the read-write mount of
+      # infra/strfry/ declared under `volumes`.
+      BAN_LIST_EXPORT_PATH: "/strfry-plugin/banlist.json"
+    volumes:
+      # infra/strfry/, read-WRITE — this is the one service that writes
+      # banlist.json. Mount the DIRECTORY so the atomic write (write .tmp,
+      # rename over the target) works: renaming onto a bind-mounted single FILE
+      # is not possible, and a non-atomic in-place write would let the relay read
+      # a half-written list.
+      - ./strfry:/strfry-plugin
     networks: [oneinky]
 
   # Blossom-compatible media service (@1nky/media). Streams to R2.
