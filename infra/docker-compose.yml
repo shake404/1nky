@@ -17,6 +17,15 @@
 #                    ids, no IPs, no sourceInfo. Ever.
 #     - api/media  : Express 5 with no morgan / no access-log middleware.
 #     - postgres   : no IP columns exist anywhere in the schema by design.
+#     - tor        : `Log notice stderr` + `SafeLogging 1` in infra/tor/torrc.
+#                    A hidden service never learns a client address; the
+#                    per-circuit detail lives at `info`, which torrc forbids.
+#                    Caveat, stated honestly: tor's own warnings can name a Tor
+#                    directory authority or relay by IP. Public infrastructure,
+#                    never a visitor. infra/README.md covers the audit grep.
+#     - backup     : accepts no connections, so it cannot log a request. Its
+#                    script prints object names and byte counts, and filters its
+#                    own output for IP-shaped strings as defence in depth.
 #
 #   * We deliberately do NOT set `logging: { driver: "none" }`. That would also
 #     suppress crash traces and startup errors, which we need to operate the
@@ -333,6 +342,123 @@ services:
       start_period: 20s
     networks: [oneinky]
 
+  # -------------------------------------------------------------------------
+  # tor — .onion mirror of this origin (handoff item F, Phase 4).
+  #
+  # A single v3 onion service forwarding to caddy's plain-HTTP :8080 vhost. It
+  # is the sovereign path: no Cloudflare, no CA, no DNS, and the box sees a Tor
+  # circuit rather than a visitor. The clearnet vhosts are untouched by it.
+  #
+  # NO-LOGS: torrc sets `Log notice stderr` + `SafeLogging 1`. A hidden service
+  # never learns a client address, and the per-circuit detail that would be
+  # interesting to an attacker only appears at `info`, which torrc forbids.
+  # tor's own *warnings* may name a Tor directory authority or relay by IP —
+  # public infrastructure, never a 1NKY visitor. See infra/README.md.
+  #
+  # NO HOST PORTS, deliberately: nothing about this service should be reachable
+  # except through the Tor network. Publishing a port here would create a second
+  # unauthenticated way into caddy's plain-HTTP vhost.
+  # -------------------------------------------------------------------------
+  tor:
+    profiles: ["full"]
+    build:
+      context: ./tor
+      dockerfile: Dockerfile
+    image: 1nky/tor:local
+    restart: unless-stopped
+    depends_on:
+      caddy:
+        condition: service_healthy
+    volumes:
+      # The hidden-service keys ARE the .onion address. Losing this volume
+      # changes the address forever and kills every published link, so it is a
+      # named volume that `docker compose down` (without -v) will not touch.
+      - tor_keys:/var/lib/tor/onion
+    healthcheck:
+      # Two things, because two things can be wrong: the service has an address
+      # (hostname file written => keys exist, HS published), and caddy is still
+      # answering on :8080. The second half is what catches the one real gotcha
+      # here — tor resolves `caddy` once at startup, so recreating the caddy
+      # container leaves tor pointed at a stale address until it is restarted.
+      test:
+        - CMD-SHELL
+        - test -s /var/lib/tor/onion/hostname && wget -q -O /dev/null http://caddy:8080/
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # Bootstrapping a circuit and publishing the descriptor takes a while.
+      start_period: 90s
+    networks: [oneinky]
+
+  # -------------------------------------------------------------------------
+  # backup — nightly pg_dump + strfry LMDB snapshot to the S3 bucket
+  # (handoff item G, Phase 4). busybox crond; see backup/backup.sh.
+  #
+  # Reuses the existing R2_* credentials from infra/.env. No new secrets exist
+  # for this service and none should be invented for it: it writes to a
+  # `backups/` prefix in the same bucket the media service already owns.
+  #
+  # NO-LOGS: it accepts no connections, so it cannot log a request. backup.sh
+  # prints object names and byte counts, and filters its own output for
+  # IP-shaped strings as defence in depth.
+  #
+  # One-shot / restore drill:
+  #     docker compose run --rm backup /backup.sh
+  # -------------------------------------------------------------------------
+  backup:
+    profiles: ["full"]
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    image: 1nky/backup:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "${DATABASE_URL:-postgres://oneinky:oneinky@postgres:5432/oneinky}"
+      # The existing bucket credentials, unchanged. R2_* is a historical name:
+      # the bucket is a cloud host Spaces today (sfo3), R2 later.
+      R2_ENDPOINT: "${R2_ENDPOINT:-}"
+      R2_ACCESS_KEY_ID: "${R2_ACCESS_KEY_ID:-}"
+      R2_SECRET_ACCESS_KEY: "${R2_SECRET_ACCESS_KEY:-}"
+      R2_BUCKET: "${R2_BUCKET:-1nky-media}"
+      # rclone's S3 provider profile. `a cloud host` matches the current
+      # bucket; set `Cloudflare` when the bucket moves to R2, `Other` for
+      # anything else. Not a secret, so it is defaulted here rather than added
+      # to the root .env.example (which infra/ may not edit).
+      BACKUP_S3_PROVIDER: "${BACKUP_S3_PROVIDER:-a cloud host}"
+      # Usually unnecessary — the endpoint carries the region. Set it only if
+      # the provider rejects the signature.
+      BACKUP_S3_REGION: "${BACKUP_S3_REGION:-}"
+      BACKUP_PREFIX: "${BACKUP_PREFIX:-backups}"
+      BACKUP_RETAIN_DAYS: "${BACKUP_RETAIN_DAYS:-14}"
+      # UTC. 09:10 is deep in the night for the seed cities and well clear of
+      # the hour boundary every other cron on earth fires on.
+      BACKUP_CRON: "${BACKUP_CRON:-10 9 * * *}"
+      STRFRY_DB_DIR: "/strfry-db"
+      BACKUP_STATE_DIR: "/var/lib/1nky-backup"
+    volumes:
+      # The relay's LMDB, READ-ONLY. This service must never be able to write to
+      # the source of truth. Consequence: mdb_copy cannot open the environment
+      # (it needs lock.mdb), so backup.sh tars the live directory — see the
+      # tradeoff note in backup.sh and infra/README.md. To take consistent
+      # snapshots instead, drop the `:ro` here and accept a writable mount.
+      - strfry_db:/strfry-db:ro
+      # Last-run status, so "are backups actually running?" has an answer that
+      # is not "scroll the logs":
+      #     docker compose exec backup cat /var/lib/1nky-backup/status
+      - backup_state:/var/lib/1nky-backup
+    healthcheck:
+      # A dead crond is a silent backup outage, which is the only kind of
+      # backup outage that matters.
+      test: ["CMD-SHELL", "pgrep crond >/dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks: [oneinky]
+
 networks:
   oneinky:
     driver: bridge
@@ -342,3 +468,8 @@ volumes:
   strfry_db:
   caddy_data:
   caddy_config:
+  # The .onion identity. Back this up out of band if the address matters (see
+  # infra/README.md) — it is the one piece of state here that cannot be rebuilt.
+  tor_keys:
+  # Last-run status for the nightly backup. Disposable.
+  backup_state:

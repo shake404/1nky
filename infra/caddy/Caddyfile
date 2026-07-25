@@ -230,31 +230,74 @@ api.1nky.com, REDACTED-HOST.sslip.io {
 # 	}
 # }
 #
-# -----------------------------------------------------------------------------
-# .onion MIRROR (Phase 4)
-# -----------------------------------------------------------------------------
-# The sovereign path: bypasses Cloudflare entirely, so nothing but this box
-# ever sees the connection. Add a `tor` service to compose whose hidden service
-# forwards to caddy:8080, then mirror the routing above on a plain :8080 site.
-# No TLS there — Tor already authenticates and encrypts to the hidden service.
+# =============================================================================
+# .onion MIRROR — plain :8080  (ACTIVE)
+# =============================================================================
 #
-# :8080 {
-# 	import scrub_headers
-# 	@relay path /relay /relay/*
-# 	handle @relay {
-# 		reverse_proxy strfry:7777
-# 	}
-# 	handle_path /api/* {
-# 		reverse_proxy api:3001
-# 	}
-# 	handle_path /media/* {
-# 		import immutable_media
-# 		reverse_proxy media:3002
-# 	}
-# 	handle {
-# 		root * /srv/web
-# 		try_files {path} /index.html
-# 		file_server
-# 	}
-# }
+# The sovereign path. This vhost is reached only through the `tor` service's
+# hidden service (`HiddenServicePort 80 caddy:8080` in infra/tor/torrc), which
+# is on the compose network with no published host port. Nothing but this box
+# and the Tor network is ever in the path: no Cloudflare, no CA, no DNS.
+#
+# Why there is no TLS here, and why that is not a downgrade:
+#   The .onion address IS the service's public key. Tor authenticates the
+#   service and encrypts end to end before this vhost sees a byte, so a
+#   certificate would only add a CA to a trust path that deliberately has none.
+#   Browsers treat .onion as a secure context for exactly this reason.
+#
+# Rules that carry over from the clearnet vhosts:
+#   * NO `log` block. Same rule, no exceptions — see the header of this file.
+#   * NO CORS headers. api and media each set their own and handle their own
+#     preflight; a second Access-Control-Allow-Origin breaks uploads.
+#   * NO HSTS. It is meaningless over plain HTTP and browsers ignore it.
+#   * NO redirect to the clearnet host. A `redir https://1nky.com{uri}` here
+#     would walk a Tor visitor straight out of Tor, which is the one thing this
+#     vhost exists to prevent. The interim-TLS vhost above does redirect; this
+#     one must not.
+#
+# Bring it up:  docker compose --profile full up -d --build   (then see
+# infra/README.md for how to read the generated address)
+# =============================================================================
+
+:8080 {
+	import scrub_headers
+
+	# Tor bandwidth is the scarce resource on this path, so compression earns
+	# more here than it does on the clearnet vhost.
+	encode zstd gzip
+
+	# --- Relay websocket -----------------------------------------------------
+	# Same target, same deliberate absence of X-Forwarded-For / X-Real-IP
+	# plumbing as every other vhost in this file.
+	@relay path /relay /relay/*
+	handle @relay {
+		reverse_proxy strfry:7777
+	}
+
+	# --- Read-only REST API --------------------------------------------------
+	handle_path /api/* {
+		reverse_proxy api:3001
+	}
+
+	# --- Blossom media service ----------------------------------------------
+	handle_path /media/* {
+		request_body {
+			max_size 6MB
+		}
+		import immutable_media
+		reverse_proxy media:3002
+	}
+
+	# --- Root ----------------------------------------------------------------
+	# The PWA is served from Vercel today, not from this box, so there is no
+	# /srv/web to fall back to. Placeholder rather than a clearnet redirect
+	# (see the header). Once apps/web's dist is mounted into the caddy
+	# container, replace this with the same root/try_files/file_server trio the
+	# commented 1nky.com block uses — that is the point at which the onion
+	# becomes a full mirror instead of a backend mirror.
+	handle {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "1NKY" 200
+	}
+}
 # =============================================================================

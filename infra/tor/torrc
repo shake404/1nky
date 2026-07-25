@@ -1,0 +1,67 @@
+# =============================================================================
+# 1NKY — torrc for the .onion mirror
+# =============================================================================
+#
+# What this is: one v3 onion service that forwards to caddy's plain-HTTP :8080
+# vhost inside the compose network. The onion path is the sovereign path — it
+# never crosses Cloudflare, and the box in front of it sees a Tor circuit, not
+# a visitor. Nothing here needs an account, an email, or a certificate.
+#
+# NO-LOGS (CLAUDE.md hard rule #1). Two things keep that true:
+#
+#   * `Log notice stderr` below. At notice level tor emits its version, its
+#     bootstrap progress, and warnings — never a client address, because a
+#     hidden service does not learn one. Per-circuit and per-rendezvous detail
+#     starts at `info`, so DO NOT raise this to `info` or `debug`, not even
+#     "just to debug something". Lower it to `warn` if you want less.
+#   * `SafeLogging 1` (also the default, stated for the avoidance of doubt)
+#     scrubs sensitive strings out of anything tor does print.
+#
+#   Honest caveat for the auditor: tor's own *warnings* can name a Tor network
+#     relay or directory authority by IP ("Problem bootstrapping ... host <fp>
+#     at <addr>:<port>"). Those are public infrastructure addresses, never a
+#     1NKY visitor. infra/README.md documents how the no-logs audit grep
+#     accounts for it.
+# =============================================================================
+
+# --- Not a proxy, not a relay -----------------------------------------------
+# This container makes no outbound requests on anyone's behalf, so there is no
+# SOCKS listener to abuse and nothing on the network can borrow this Tor client.
+SocksPort 0
+
+# No ORPort / no DirPort / no ExitPolicy: publishing an onion service does not
+# make this box part of the Tor network's routing, and we do not want it to be.
+
+# --- State ------------------------------------------------------------------
+# Only the onion subdirectory is persisted (the tor_keys volume). Consensus and
+# guard state under /var/lib/tor are deliberately ephemeral: they are cheap to
+# re-fetch (~30s of bootstrap on restart) and nothing is gained by keeping them.
+DataDirectory /var/lib/tor
+RunAsDaemon 0
+
+# --- The onion service ------------------------------------------------------
+# The keys in this directory ARE the address. Lose them and the .onion changes
+# forever and every published link dies, which is why it is a named volume
+# (tor_keys) and not a bind mount into the repo tree.
+HiddenServiceDir /var/lib/tor/onion/
+HiddenServiceVersion 3
+
+# Virtual port 80 on the onion -> caddy's plain :8080 vhost. No TLS on that hop
+# and none wanted: the .onion address IS the service's public key, so Tor has
+# already authenticated and encrypted end to end. A certificate here would add
+# a CA to a trust path that deliberately has none.
+#
+# GOTCHA: tor resolves this hostname ONCE, at startup. If caddy is *recreated*
+# (not just restarted) it gets a new container IP and tor keeps talking to the
+# old one. `docker compose restart tor` after any caddy recreate — the
+# healthcheck in docker-compose.yml is what tells you it happened.
+HiddenServicePort 80 caddy:8080
+
+# Rate-limit introduction requests at the introduction points (tor >= 0.4.7),
+# so a flood aimed at the onion is absorbed by the Tor network rather than
+# arriving at a $6 droplet.
+HiddenServiceEnableIntroDoSDefense 1
+
+# --- Logging (read the header before changing this) -------------------------
+Log notice stderr
+SafeLogging 1
