@@ -7,7 +7,18 @@ import {
   type SignedEvent,
 } from '@1nky/protocol';
 import { POW_BITS } from './config.js';
-import { flickTemplate, prepareImage, uploadBlob, type FlickDetails, type UploadResult } from './flicks.js';
+import {
+  flickTemplate,
+  prepareImage,
+  probeVideo,
+  uploadBlob,
+  uploadVideo,
+  videoTemplate,
+  type FlickDetails,
+  type MediaDetails,
+  type UploadResult,
+  type VideoDescriptor,
+} from './flicks.js';
 import { markHasPosted, rememberOwnPost, type Tag } from './identity.js';
 import { mineAndSign } from './pow.js';
 import { profileTemplate } from './profiles.js';
@@ -58,12 +69,19 @@ function friendly(message: string): string {
 /** Kind 0 — the writer's tag. First event from a fresh tag pays full freight. */
 export function publishProfile(
   tag: Pick<Tag, 'secret' | 'pubkey' | 'name'>,
-  options: PublishOptions & { first?: boolean; city?: string; bio?: string; avatarSha256?: string } = {},
+  options: PublishOptions & {
+    first?: boolean;
+    city?: string;
+    bio?: string;
+    avatarSha256?: string;
+    crews?: readonly string[];
+  } = {},
 ): Promise<SignedEvent> {
   const template = profileTemplate(tag, {
     ...(options.city ? { city: options.city } : {}),
     ...(options.bio !== undefined ? { bio: options.bio } : {}),
     ...(options.avatarSha256 ? { avatarSha256: options.avatarSha256 } : {}),
+    ...(options.crews ? { crews: options.crews } : {}),
   });
   return send(template, tag, options.first === false ? POW_BITS.post : POW_BITS.new, options);
 }
@@ -104,6 +122,43 @@ export async function postFlick(tag: Tag, input: PostFlickInput): Promise<Signed
   return event;
 }
 
+export interface PostVideoInput extends MediaDetails, PublishOptions {
+  file: File;
+}
+
+/**
+ * The video pipeline, end to end — same shape as {@link postFlick}.
+ *
+ * The client probes the clip (duration + dimensions, rejection >60s or over
+ * the size ceiling) BEFORE any bytes leave the device. The raw file is then
+ * uploaded; the media service transcodes and returns the transcoded bytes'
+ * address plus a poster still, which becomes the kind-22 `imeta`. PoW is
+ * ground at the POST tier the same way a flick's is. The `spraying...` wait
+ * the writer sees covers both the server transcode and the work.
+ */
+export async function postVideo(tag: Tag, input: PostVideoInput): Promise<SignedEvent> {
+  const { file, onStage, ...details } = input;
+
+  onStage?.('preparing');
+  const probe = await probeVideo(file);
+
+  onStage?.('uploading');
+  let descriptor: VideoDescriptor;
+  try {
+    descriptor = await uploadVideo(file, tag.secret);
+  } catch (error) {
+    throw new PublishError(error instanceof Error ? error.message : 'The clip did not go up. Try again.');
+  }
+
+  const template = videoTemplate(descriptor, { ...details });
+  const bits = tag.hasPosted ? POW_BITS.post : POW_BITS.new;
+  const event = await send(template, tag, bits, { ...(onStage ? { onStage } : {}) });
+
+  await rememberOwnPost(event.id);
+  await markHasPosted();
+  return event;
+}
+
 /** Kind 1111 — a comment under a flick. */
 export async function postComment(
   tag: Tag,
@@ -127,4 +182,32 @@ export function buffEvents(
   options: PublishOptions = {},
 ): Promise<SignedEvent> {
   return send(buildBuff(ids, { kinds }), tag, POW_BITS.reaction, options);
+}
+
+/**
+ * Sign and publish an arbitrary template with an arbitrary secret/pubkey.
+ *
+ * The device's own tag flows through {@link send} (which pays the newcomer or
+ * post tier based on the tag's history). This lower-level entry point is for
+ * identities that are NOT the device tag — most importantly a freshly-minted
+ * crew keypair, which signs its own kind-0 and kind-30078 definition. The
+ * caller picks the difficulty, since a brand-new crew pubkey has no history of
+ * its own and pays the newcomer's freight on its very first event.
+ */
+export async function publishTemplate(
+  secret: Uint8Array,
+  pubkey: string,
+  template: EventTemplate,
+  bits: number,
+  options: PublishOptions = {},
+): Promise<SignedEvent> {
+  options.onStage?.('spraying');
+  const event = await mineAndSign(template, secret, pubkey, bits);
+  options.onStage?.('posting');
+  const result = await relay.publish(event);
+  if (!result.accepted) {
+    throw new PublishError(friendly(result.message));
+  }
+  options.onStage?.('done');
+  return event;
 }

@@ -1,6 +1,31 @@
 /*
  * 1NKY — hand-rolled. No framework, no CDN fonts, no third-party anything.
  *
+
+ * NOTE on Bodega: the two woff2 files in /fonts are the ONLY display face this
+ * app ships. They are self-hosted from /public/fonts so nothing about a reader
+ * ever leaves the site for a stylesheet. Body and UI text stay in the readable
+ * system stack — Bodega is a display face and never sets body copy.
+ */
+
+/* --- Fonts ---------------------------------------------------------------- */
+@font-face {
+  font-family: 'Bodega Plain';
+  src: url('/fonts/Bodega-Plain.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Bodega Striped';
+  src: url('/fonts/Bodega-Striped.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
  * THE DIRECTION: chrome, buff, and ink.
  *
  * Three materials out of a writer's actual world, each doing exactly one job,
@@ -97,8 +122,14 @@
     transparent 16px 27px
   );
 
-  --display: 'Arial Narrow', 'Helvetica Neue Condensed', 'Liberation Sans Narrow',
-    'Haettenschweiler', Impact, 'Franklin Gothic Bold', sans-serif;
+  /* Bodega Plain is the shipped display face; the condensed system stack is
+     the fallback before the woff2 lands (font-display: swap). Body and UI text
+     never use this. */
+  --display: 'Bodega Plain', 'Arial Narrow', 'Helvetica Neue Condensed',
+    'Liberation Sans Narrow', 'Haettenschweiler', Impact, 'Franklin Gothic Bold', sans-serif;
+  /* Bodega Striped is reserved for the big wordmark accent only — small sizes
+     lose the stripe detail, so section headings stay on Bodega Plain. */
+  --display-striped: 'Bodega Striped', 'Bodega Plain', 'Arial Narrow', Impact, sans-serif;
   --body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
@@ -110,6 +141,8 @@
   --tap: 52px;
   --gutter: 14px;
   --shell: 1180px;
+  /* Wider content rail for media-heavy grids on a real desktop. */
+  --shell-wide: 1360px;
 
   color-scheme: dark;
 }
@@ -296,6 +329,11 @@ h3 {
   padding: 0 var(--gutter);
 }
 
+/* Media-heavy pages use the wider rail so the grid actually gets its columns. */
+.shell--wide {
+  max-width: var(--shell-wide);
+}
+
 .app {
   min-height: 100dvh;
   display: flex;
@@ -368,6 +406,63 @@ main {
   letter-spacing: -0.02em;
   text-transform: uppercase;
   transform: skewX(var(--lean));
+}
+
+/* --- Desktop top nav -------------------------------------------------------- *
+ * Persistent route links in the topbar, visible from 980px up so a desktop
+ * reader has hoverable, focusable nav alongside the mobile bottom dock (which
+ * stays — the brief is explicit: keep the mobile bottom nav).
+ */
+.topnav {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+@media (min-width: 980px) {
+  .topnav {
+    display: flex;
+  }
+}
+
+.topnav a {
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+  color: var(--buff-deep);
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.topnav a:hover {
+  color: var(--chalk);
+  border-color: var(--line-strong);
+}
+
+.topnav a.is-active {
+  color: var(--chalk);
+  border-color: var(--line-strong);
+}
+
+/* Speaking-as indicator: shown in the bar when the active tag is not the
+   writer's own (the crew blackbook-swap, Part 4.5). It is a strip of tape, not
+   an error — switching contexts is a deliberate act. */
+.speaking-as {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem;
+  padding: 6px 10px;
+  background: #e6dfcd;
+  color: var(--soot);
+  box-shadow: var(--drop-sm);
+  transform: rotate(-1deg);
 }
 
 /* At 1.7rem the display ramp's dark band cuts straight through the x-height.
@@ -664,24 +759,33 @@ main {
 
 /* --- Feed ------------------------------------------------------------------
  * Flicks are prints put up on a wall: hard keyline, hard shadow, no radius.
+ *
+ * A genuine CSS-grid multi-column wall: 1 col on a phone, 2 from 640px, 3 from
+ * 1024px, 4 once there is room to breathe. The grid (not a masonry `columns`
+ * flow) keeps every tile the same column width and lets hover state lift a
+ * card without reflowing its neighbours.
  */
 .wall {
-  columns: 1;
-  column-gap: 14px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
   padding: 12px 0 24px;
 }
 
 @media (min-width: 640px) {
-  .wall { columns: 2; }
+  .wall { grid-template-columns: repeat(2, 1fr); gap: 16px; }
 }
 
-@media (min-width: 980px) {
-  .wall { columns: 3; }
+@media (min-width: 1024px) {
+  .wall { grid-template-columns: repeat(3, 1fr); gap: 18px; }
+}
+
+@media (min-width: 1400px) {
+  .wall { grid-template-columns: repeat(4, 1fr); }
 }
 
 .flick {
-  break-inside: avoid;
-  margin: 0 0 16px;
+  margin: 0;
   display: block;
   position: relative;
   background: var(--soot-2);
@@ -696,10 +800,26 @@ main {
   box-shadow: 6px 6px 0 var(--keyline);
 }
 
-.flick img {
+.flick img,
+.flick video {
   width: 100%;
   height: auto;
+  display: block;
   background: var(--soot-3);
+}
+
+/* A clip's duration, stencilled into the corner of its poster like a
+   reporting mark on the side of a boxcar. Sits over the top-right of the
+   poster, clear of the caption and meta bar beneath it. */
+.flick__badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  background: rgba(6, 5, 10, 0.82);
+  color: var(--chalk);
+  letter-spacing: 0.12em;
+  pointer-events: none;
 }
 
 .flick__meta {
@@ -949,7 +1069,9 @@ main {
 }
 
 .hero__mark {
-  font-family: var(--display);
+  /* The big wordmark accent: Bodega Striped for the can-stripe read. The
+     chrome gradient and hard drop-shadow below are preserved verbatim. */
+  font-family: var(--display-striped);
   font-size: clamp(4.6rem, 26vw, 10rem);
   line-height: 0.8;
   letter-spacing: -0.03em;
@@ -1206,4 +1328,127 @@ main {
   min-height: 52px;
   max-height: 160px;
   resize: none;
+}
+
+/* --- Chips / facets --------------------------------------------------------
+ * Explore and the post-flow facet picker share this. A chip is a can cap: flat
+ * when unpressed, chromed (pressed-into-the-can indent) when active.
+ */
+.facets {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.facet-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.facet-group__label {
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.72rem;
+  color: var(--buff);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 14px;
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.82rem;
+  color: var(--buff);
+  border: 1px solid var(--line-strong);
+  background: var(--soot-2);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.chip:hover {
+  color: var(--chalk);
+  border-color: var(--buff);
+}
+
+.chip--active {
+  color: var(--keyline);
+  border-color: var(--keyline);
+  background-color: #dfe4e9;
+  background-image: var(--spray-speck), var(--chrome-face);
+  background-size: 90px 90px, auto;
+  background-blend-mode: overlay, normal;
+}
+
+.chip__count {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+}
+
+/* A removable active-filter pill, torn-tape style. */
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.74rem;
+  background: #e6dfcd;
+  color: var(--soot);
+  box-shadow: var(--drop-sm);
+  transform: rotate(-0.6deg);
+}
+
+.filter-pill button {
+  min-width: 18px;
+  min-height: 18px;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--soot);
+}
+
+/* A hanging toggle switch for the opt-in "had permission" facet. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.82rem;
+  color: var(--buff);
+}
+
+.toggle__box {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--line-strong);
+  background: var(--soot-2);
+  display: inline-block;
+}
+
+.toggle--on .toggle__box {
+  border-color: var(--keyline);
+  background-color: #dfe4e9;
+  background-image: var(--chrome-face);
+}
+
+.toggle--on {
+  color: var(--chalk);
 }

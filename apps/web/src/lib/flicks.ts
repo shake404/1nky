@@ -1,18 +1,24 @@
 import {
   buildFlick,
+  buildVideo,
   finalizeEvent,
   KINDS,
   type BuildFlickInput,
+  type BuildVideoInput,
   type EventTemplate,
   type FlickDims,
+  type GrafType,
   type SignedEvent,
+  type Surface,
 } from '@1nky/protocol';
 import imageCompression from 'browser-image-compression';
 import {
   FULL_MAX_EDGE,
   MAX_UPLOAD_BYTES,
+  MAX_VIDEO_BYTES,
   MEDIA_BASE,
   THUMB_MAX_EDGE,
+  VIDEO_MAX_DURATION_SEC,
   WEBP_QUALITY,
 } from './config.js';
 
@@ -218,6 +224,20 @@ export interface FlickDetails {
   contentWarning?: string;
 }
 
+/** Facets shared by flicks and videos — the Explore `t`-tag vocabularies. */
+export interface MediaFacets {
+  /** Graffiti type facets, emitted as `type-*` `t` tags. */
+  types?: readonly GrafType[];
+  /** Surface facets, emitted as `surface-*` `t` tags. */
+  surfaces?: readonly Surface[];
+  /** Region facet, emitted as a single `region-*` `t` tag. */
+  region?: string;
+  /** When true, emits a `legal-permission` `t` tag (the only legal facet). */
+  legalPermission?: boolean;
+}
+
+export interface MediaDetails extends FlickDetails, MediaFacets {}
+
 /**
  * Assemble the kind-20 input from the server's upload receipt.
  *
@@ -227,7 +247,7 @@ export interface FlickDetails {
 export function flickInput(
   upload: UploadResult,
   dims: FlickDims,
-  details: FlickDetails = {},
+  details: MediaDetails = {},
 ): BuildFlickInput {
   return {
     url: upload.url,
@@ -238,6 +258,10 @@ export function flickInput(
     ...(details.caption ? { caption: details.caption } : {}),
     ...(details.alt ? { alt: details.alt } : {}),
     ...(details.boards?.length ? { boards: details.boards } : {}),
+    ...(details.types?.length ? { types: details.types } : {}),
+    ...(details.surfaces?.length ? { surfaces: details.surfaces } : {}),
+    ...(details.region ? { region: details.region } : {}),
+    ...(details.legalPermission ? { legalPermission: true } : {}),
     ...(details.contentWarning ? { contentWarning: details.contentWarning } : {}),
   };
 }
@@ -248,4 +272,230 @@ export function flickTemplate(
   details: FlickDetails = {},
 ): EventTemplate {
   return buildFlick(flickInput(upload, dims, details));
+}
+
+// ---------------------------------------------------------------------------
+// Video (kind 22, NIP-71) — same pipeline shape, different media.
+// ---------------------------------------------------------------------------
+
+/** What the client probes from a picked clip before it ever uploads. */
+export interface VideoProbe {
+  durationSec: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Load a video file into a detached `<video>` element to read its true
+ * duration and dimensions. This is the load-bearing gate: a clip longer than
+ * `VIDEO_MAX_DURATION_SEC` or bigger than `MAX_VIDEO_BYTES` is refused here,
+ * before any bytes leave the device.
+ *
+ * @throws copy-deck-safe messages — never protocol vocabulary.
+ */
+export function probeVideo(file: File): Promise<VideoProbe> {
+  return new Promise<VideoProbe>((resolve, reject) => {
+    if (!file.type.startsWith('video/')) {
+      reject(new Error('Clips only.'));
+      return;
+    }
+    if (file.size > MAX_VIDEO_BYTES) {
+      reject(new Error('Clip too big.'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    let settled = false;
+    const cleanup = (): void => {
+      settled = true;
+      URL.revokeObjectURL(url);
+      try {
+        video.removeAttribute('src');
+        video.load?.();
+      } catch {
+        /* some test DOMs have no media element implementation */
+      }
+    };
+    const fail = (message: string): void => {
+      if (settled) return;
+      cleanup();
+      reject(new Error(message));
+    };
+    video.onerror = () => fail('Could not read that clip.');
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (!Number.isFinite(duration) || duration <= 0) {
+        fail('Could not read that clip.');
+        return;
+      }
+      if (duration > VIDEO_MAX_DURATION_SEC) {
+        fail(`Too long. ${VIDEO_MAX_DURATION_SEC} seconds max.`);
+        return;
+      }
+      if (!width || !height) {
+        fail('Could not read that clip.');
+        return;
+      }
+      cleanup();
+      resolve({ durationSec: duration, width, height });
+    };
+    // A safety net: some engines never fire onerror for a corrupt file.
+    setTimeout(() => fail('Could not read that clip.'), 15_000);
+    video.src = url;
+  });
+}
+
+/** Sub-shape of {@link parseUploadResponse}, kept narrow for video. */
+export interface VideoPosterResult {
+  sha256: string;
+  url: string;
+}
+
+/**
+ * The media service's video receipt. The raw clip is uploaded (the service
+ * transcodes and returns the transcoded bytes' address), plus a separate
+ * poster still — both addressed by the SERVER's hash, since it re-encodes.
+ */
+export interface VideoDescriptor {
+  url: string;
+  sha256: string;
+  /** Byte length of the stored (transcoded) video. */
+  size?: number;
+  type: 'video/mp4';
+  duration: number;
+  width: number;
+  height: number;
+  poster: VideoPosterResult;
+}
+
+/**
+ * Normalise a video upload response into a {@link VideoDescriptor}.
+ *
+ * The server routes by Content-Type and answers with the fields above. We are
+ * deliberately defensive: a missing poster or duration makes a kind-22 event
+ * unusable, so we refuse rather than emit a half-descriptor.
+ */
+export function parseVideoUploadResponse(
+  payload: unknown,
+  mediaBase: string = MEDIA_BASE,
+): VideoDescriptor {
+  if (typeof payload !== 'object' || payload === null) {
+    throw new Error('The clip did not go up. Try again.');
+  }
+  const body = payload as Record<string, unknown>;
+  const sha256 = typeof body['sha256'] === 'string' ? body['sha256'].toLowerCase() : '';
+  if (!HEX64.test(sha256)) throw new Error('The clip did not go up. Try again.');
+
+  const url =
+    typeof body['url'] === 'string' && body['url']
+      ? body['url']
+      : `${mediaBase.replace(/\/+$/, '')}/${sha256}`;
+
+  const duration = typeof body['duration'] === 'number' ? body['duration'] : NaN;
+  const width = typeof body['width'] === 'number' ? body['width'] : 0;
+  const height = typeof body['height'] === 'number' ? body['height'] : 0;
+  if (!Number.isFinite(duration) || duration <= 0 || !width || !height) {
+    throw new Error('The clip did not go up. Try again.');
+  }
+
+  const posterRaw = body['poster'];
+  const poster =
+    typeof posterRaw === 'object' && posterRaw !== null ? (posterRaw as Record<string, unknown>) : null;
+  const posterSha =
+    typeof poster?.['sha256'] === 'string' ? poster['sha256'].toLowerCase() : '';
+  const posterUrl =
+    typeof poster?.['url'] === 'string' && poster['url']
+      ? poster['url']
+      : posterSha
+        ? `${mediaBase.replace(/\/+$/, '')}/${posterSha}`
+        : '';
+  if (!posterUrl || !HEX64.test(posterSha)) {
+    throw new Error('The clip did not go up. Try again.');
+  }
+
+  const rawSize = body['size'];
+  return {
+    url,
+    sha256,
+    type: 'video/mp4',
+    duration,
+    width,
+    height,
+    poster: { sha256: posterSha, url: posterUrl },
+    ...(typeof rawSize === 'number' && Number.isFinite(rawSize) ? { size: rawSize } : {}),
+  };
+}
+
+/**
+ * Assemble the kind-22 input from the server's video descriptor.
+ *
+ * Split out from the network so the wiring between "what the server said" and
+ * "what goes in the event" is testable on its own — exactly like
+ * {@link flickInput} for kind 20.
+ */
+export function videoInput(
+  descriptor: VideoDescriptor,
+  details: MediaDetails = {},
+): BuildVideoInput {
+  return {
+    url: descriptor.url,
+    sha256: descriptor.sha256,
+    dims: { width: descriptor.width, height: descriptor.height },
+    durationSec: descriptor.duration,
+    poster: descriptor.poster.url,
+    mime: 'video/mp4',
+    ...(descriptor.size !== undefined ? { size: descriptor.size } : {}),
+    ...(details.caption ? { caption: details.caption } : {}),
+    ...(details.alt ? { alt: details.alt } : {}),
+    ...(details.boards?.length ? { boards: details.boards } : {}),
+    ...(details.types?.length ? { types: details.types } : {}),
+    ...(details.surfaces?.length ? { surfaces: details.surfaces } : {}),
+    ...(details.region ? { region: details.region } : {}),
+    ...(details.legalPermission ? { legalPermission: true } : {}),
+    ...(details.contentWarning ? { contentWarning: details.contentWarning } : {}),
+  };
+}
+
+export function videoTemplate(
+  descriptor: VideoDescriptor,
+  details: MediaDetails = {},
+): EventTemplate {
+  return buildVideo(videoInput(descriptor, details));
+}
+
+/**
+ * Upload a raw video clip. Reuses the EXISTING image upload-auth code path:
+ * the kind-24242 auth event and `Authorization: Nostr …` header are produced
+ * by {@link uploadBlob}; the media service routes by Content-Type and returns
+ * a {@link VideoDescriptor}-shaped body, which {@link parseVideoUploadResponse}
+ * normalises.
+ */
+export async function uploadVideo(
+  file: File,
+  secret: Uint8Array,
+  signal?: AbortSignal,
+): Promise<VideoDescriptor> {
+  const hash = await sha256Hex(file);
+  const auth = finalizeEvent(buildUploadAuth(hash, file.size), secret);
+
+  const response = await fetch(`${MEDIA_BASE}/upload`, {
+    method: 'PUT',
+    headers: {
+      Authorization: authHeader(auth),
+      'Content-Type': file.type || 'video/mp4',
+    },
+    body: file,
+    ...(signal ? { signal } : {}),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      response.status === 413 ? 'Clip too big.' : 'The clip did not go up. Try again.',
+    );
+  }
+  return parseVideoUploadResponse(await response.json());
 }

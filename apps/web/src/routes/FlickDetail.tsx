@@ -66,7 +66,10 @@ export function FlickDetail(): JSX.Element {
   }, [id]);
 
   const parent = useMemo<EventRef | null>(
-    () => (flick ? { id: flick.id, pubkey: flick.pubkey, kind: KINDS.FLICK } : null),
+    () =>
+      flick
+        ? { id: flick.id, pubkey: flick.pubkey, kind: flick.mediaType === 'video' ? KINDS.VIDEO : KINDS.FLICK }
+        : null,
     [flick],
   );
 
@@ -90,7 +93,7 @@ export function FlickDetail(): JSX.Element {
     setConfirmBuff(false);
     setStage('spraying');
     try {
-      await buffEvents(tag, [flick.id], [KINDS.FLICK], { onStage: setStage });
+      await buffEvents(tag, [flick.id], [flick.mediaType === 'video' ? KINDS.VIDEO : KINDS.FLICK], { onStage: setStage });
       // Optimistic: the relay drops it, but the local wall should not wait.
       const hidden = await getPref<string[]>('buffed', []);
       await setPref('buffed', [flick.id, ...hidden]);
@@ -127,13 +130,24 @@ export function FlickDetail(): JSX.Element {
     <div className="shell pad stack stack--wide">
       {stage ? <Spraying stage={stage} /> : null}
 
-      <img
-        className="preview"
-        src={flick.url}
-        alt={flick.alt ?? flick.caption}
-        width={flick.width}
-        height={flick.height}
-      />
+      {flick.mediaType === 'video' && flick.posterUrl ? (
+        <video
+          className="preview"
+          src={flick.url}
+          poster={flick.posterUrl}
+          controls
+          playsInline
+          preload="metadata"
+        />
+      ) : (
+        <img
+          className="preview"
+          src={flick.url}
+          alt={flick.alt ?? flick.caption}
+          width={flick.width}
+          height={flick.height}
+        />
+      )}
 
       <div className="row spread">
         <WriterChip pubkey={flick.pubkey} name={flick.writer} size={28} />

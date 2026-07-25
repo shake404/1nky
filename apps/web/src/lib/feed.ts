@@ -2,7 +2,10 @@ import { fingerprint, KINDS, type SignedEvent } from '@1nky/protocol';
 import { API_BASE } from './config.js';
 import { relay } from './relay.js';
 
-/** A flick, flattened for rendering. */
+/** What kind of media a feed row carries — picks an `<img>` or a `<video>`. */
+export type MediaType = 'flick' | 'video';
+
+/** A flick or a video clip, flattened for rendering. */
 export interface Flick {
   id: string;
   pubkey: string;
@@ -17,6 +20,14 @@ export interface Flick {
   /** Tag name, when the indexer joined it in or we have it cached. */
   writer?: string;
   contentWarning?: string;
+  /** `flick` (kind 20, picture) or `video` (kind 22, NIP-71). */
+  mediaType: MediaType;
+  /** Poster still URL for a video; undefined for a flick. */
+  posterUrl?: string;
+  /** Duration in seconds for a video; undefined for a flick. */
+  duration?: number;
+  /** Board / facet slugs this post is tagged with. */
+  boards?: string[];
 }
 
 export interface FeedPage {
@@ -50,9 +61,26 @@ function firstTagValue(tags: readonly string[][], name: string): string | undefi
   return undefined;
 }
 
-/** Turn a kind-20 event into something renderable. Returns null if unusable. */
+/** All `t` tags on an event — used to surface board/facet slugs on a feed row. */
+function boardValues(tags: readonly string[][]): string[] | undefined {
+  const out: string[] = [];
+  for (const tag of tags) {
+    if (tag[0] === 't' && tag[1]) out.push(tag[1]);
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Turn a kind-20 (flick) or kind-22 (video) event into something renderable.
+ *
+ * A video is told apart by its kind plus an `image <url>` (poster) line on the
+ * `imeta` tag (NIP-92 + NIP-71); a flick has neither. Returns null if unusable.
+ */
 export function flickFromEvent(event: SignedEvent, writer?: string): Flick | null {
-  if (event.kind !== KINDS.FLICK) return null;
+  const isFlick = event.kind === KINDS.FLICK;
+  const isVideo = event.kind === KINDS.VIDEO;
+  if (!isFlick && !isVideo) return null;
+
   const imeta = parseImeta(event.tags);
   const sha256 = (imeta['x'] ?? firstTagValue(event.tags, 'x') ?? '').toLowerCase();
   const url = imeta['url'] ?? '';
@@ -61,6 +89,33 @@ export function flickFromEvent(event: SignedEvent, writer?: string): Flick | nul
   const dim = /^(\d+)x(\d+)$/.exec(imeta['dim'] ?? '');
   const alt = imeta['alt'] ?? firstTagValue(event.tags, 'alt');
   const contentWarning = firstTagValue(event.tags, 'content-warning');
+  const boards = boardValues(event.tags);
+
+  if (isVideo) {
+    const poster = imeta['image'] ?? firstTagValue(event.tags, 'image');
+    const durationRaw = imeta['duration'] ?? firstTagValue(event.tags, 'duration');
+    const duration = Number.parseFloat(durationRaw ?? '');
+    // A video with no poster or no duration is not playable as a kind-22.
+    if (!poster || !Number.isFinite(duration) || duration <= 0) return null;
+    return {
+      id: event.id,
+      pubkey: event.pubkey,
+      mark: fingerprint(event.pubkey),
+      createdAt: event.created_at,
+      url,
+      sha256,
+      width: Number.parseInt(dim?.[1] ?? '0', 10) || 1280,
+      height: Number.parseInt(dim?.[2] ?? '0', 10) || 720,
+      caption: event.content ?? '',
+      mediaType: 'video',
+      posterUrl: poster,
+      duration,
+      ...(alt ? { alt } : {}),
+      ...(writer ? { writer } : {}),
+      ...(contentWarning ? { contentWarning } : {}),
+      ...(boards ? { boards } : {}),
+    };
+  }
 
   return {
     id: event.id,
@@ -72,49 +127,94 @@ export function flickFromEvent(event: SignedEvent, writer?: string): Flick | nul
     width: Number.parseInt(dim?.[1] ?? '0', 10) || 1200,
     height: Number.parseInt(dim?.[2] ?? '0', 10) || 1600,
     caption: event.content ?? '',
+    mediaType: 'flick',
     ...(alt ? { alt } : {}),
     ...(writer ? { writer } : {}),
     ...(contentWarning ? { contentWarning } : {}),
+    ...(boards ? { boards } : {}),
   };
 }
 
 /**
  * Read one row of whatever shape the indexer settles on.
  *
- * The API is not built yet, so this accepts both a raw event and a
- * denormalised row and refuses to care which.
+ * The unified feed item carries a `mediaType`, a nested `writer` object, and
+ * (for videos) `posterUrl` / `duration`. We still accept the older flat row
+ * shape and a raw event, so neither the relay-direct fallback nor any older
+ * cached client breaks.
  */
 function flickFromRow(row: unknown): Flick | null {
   if (typeof row !== 'object' || row === null) return null;
   const record = row as Record<string, unknown>;
 
+  // Raw event (kind 20 / 22) coming back from the relay.
   if (Array.isArray(record['tags']) && typeof record['kind'] === 'number') {
     const writer = typeof record['name'] === 'string' ? record['name'] : undefined;
     return flickFromEvent(record as unknown as SignedEvent, writer);
   }
 
   const id = typeof record['id'] === 'string' ? record['id'] : '';
-  const pubkey = typeof record['pubkey'] === 'string' ? record['pubkey'].toLowerCase() : '';
   const url = typeof record['url'] === 'string' ? record['url'] : '';
   const sha256 = typeof record['sha256'] === 'string' ? record['sha256'].toLowerCase() : '';
-  if (!HEX64.test(id) || !HEX64.test(pubkey) || !url || !HEX64.test(sha256)) return null;
+  if (!HEX64.test(id) || !url || !HEX64.test(sha256)) return null;
 
-  const writer = typeof record['name'] === 'string' ? record['name'] : undefined;
+  // The writer's pubkey is nested under `writer.pubkey` in the unified shape,
+  // or flat as `pubkey` in the older shape.
+  const writerRaw = record['writer'];
+  const writerRecord = typeof writerRaw === 'object' && writerRaw !== null ? (writerRaw as Record<string, unknown>) : null;
+  const pubkeyRaw =
+    typeof writerRecord?.['pubkey'] === 'string'
+      ? writerRecord['pubkey']
+      : typeof record['pubkey'] === 'string'
+        ? record['pubkey']
+        : '';
+  const pubkey = pubkeyRaw.toLowerCase();
+  if (!HEX64.test(pubkey)) return null;
+
+  // The writer's tag name is nested under `writer.tag` in the unified shape,
+  // or flat as `name` in the older shape.
+  const writerNestedTag = writerRecord?.['tag'];
+  const writer = typeof writerNestedTag === 'string' ? writerNestedTag : typeof record['name'] === 'string' ? record['name'] : undefined;
   const alt = typeof record['alt'] === 'string' ? record['alt'] : undefined;
 
-  return {
+  const mediaType: MediaType = record['mediaType'] === 'video' || record['media_type'] === 'video' ? 'video' : 'flick';
+
+  const posterUrl =
+    typeof record['posterUrl'] === 'string' ? record['posterUrl'] : typeof record['poster_url'] === 'string' ? record['poster_url'] : undefined;
+  const rawDuration = record['duration'];
+  const duration =
+    typeof rawDuration === 'number' ? rawDuration : typeof rawDuration === 'string' ? Number.parseFloat(rawDuration) : NaN;
+
+  const boardsRaw = record['boards'];
+  const boards = Array.isArray(boardsRaw) ? (boardsRaw as string[]) : undefined;
+
+  const base: Flick = {
     id,
     pubkey,
     mark: fingerprint(pubkey),
-    createdAt: typeof record['created_at'] === 'number' ? record['created_at'] : 0,
+    createdAt: typeof record['createdAt'] === 'number' ? record['createdAt'] : typeof record['created_at'] === 'number' ? record['created_at'] : 0,
     url,
     sha256,
     width: typeof record['width'] === 'number' ? record['width'] : 1200,
     height: typeof record['height'] === 'number' ? record['height'] : 1600,
     caption: typeof record['caption'] === 'string' ? record['caption'] : '',
+    mediaType,
     ...(alt ? { alt } : {}),
     ...(writer ? { writer } : {}),
+    ...(boards ? { boards } : {}),
   };
+
+  if (mediaType === 'video' && posterUrl && Number.isFinite(duration) && duration > 0) {
+    base.posterUrl = posterUrl;
+    base.duration = duration;
+  } else if (mediaType === 'video') {
+    // A video row missing its poster/duration cannot be rendered as a
+    // kind-22 client-side; fall back to treating it as a flick picture so
+    // the wall still shows something rather than dropping the post.
+    base.mediaType = 'flick';
+  }
+
+  return base;
 }
 
 export function parseFeedResponse(payload: unknown): { flicks: Flick[]; cursor: string | null } {
@@ -154,7 +254,7 @@ async function fallbackFeed(cursor: string | null): Promise<FeedPage> {
   const until = cursor ? Number.parseInt(cursor, 10) : undefined;
   const events = await relay.query([
     {
-      kinds: [KINDS.FLICK],
+      kinds: [KINDS.FLICK, KINDS.VIDEO],
       limit: PAGE_SIZE,
       ...(Number.isFinite(until) ? { until: (until as number) - 1 } : {}),
     },
@@ -181,7 +281,7 @@ export async function fetchWriterFlicks(pubkey: string): Promise<Flick[]> {
   } catch {
     /* fall through to the wall */
   }
-  const events = await relay.query([{ kinds: [KINDS.FLICK], authors: [pubkey], limit: 60 }]);
+  const events = await relay.query([{ kinds: [KINDS.FLICK, KINDS.VIDEO], authors: [pubkey], limit: 60 }]);
   return events
     .map((event) => flickFromEvent(event))
     .filter((f): f is Flick => f !== null)

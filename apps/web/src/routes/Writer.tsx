@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FlickCard } from '../components/FlickCard.js';
 import { Identicon } from '../components/Identicon.js';
+import { fetchWriterCrews } from '../lib/crews.js';
 import { fetchWriterFlicks, type Flick } from '../lib/feed.js';
 import { fetchProfile } from '../lib/profiles.js';
 import { useTag } from '../state/TagProvider.js';
@@ -16,10 +17,23 @@ export function Writer(): JSX.Element {
   const [name, setName] = useState<string>('');
   const [bio, setBio] = useState<string>('');
   const [flicks, setFlicks] = useState<Flick[]>([]);
+  const [crews, setCrews] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const valid = HEX64.test(pubkey);
   const isMe = tag?.pubkey === pubkey;
+
+  // Crews a writer is repping — a self-declared claim, not a verified roster.
+  useEffect(() => {
+    if (!valid) return;
+    let live = true;
+    void fetchWriterCrews(pubkey).then((found) => {
+      if (live) setCrews(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, [pubkey, valid]);
 
   useEffect(() => {
     if (!valid) return;
@@ -80,6 +94,23 @@ export function Writer(): JSX.Element {
           {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>
+
+      {crews.length > 0 ? (
+        <section className="stack" style={{ gap: 8 }}>
+          <span className="kicker">Reppin&apos;</span>
+          <div className="chips" style={{ gap: 8 }}>
+            {crews.map((crewPubkey) => (
+              <Link key={crewPubkey} to={`/crew/${crewPubkey}`} className="chip">
+                <Identicon pubkey={crewPubkey} size={16} />
+                <span className="mono">{fingerprint(crewPubkey)}</span>
+              </Link>
+            ))}
+          </div>
+          <p className="help" style={{ fontSize: '0.78rem' }}>
+            A claim, not a roster — crews confirm their own line-up on their crew page.
+          </p>
+        </section>
+      ) : null}
 
       {isMe ? (
         <Link to="/profile/edit" className="btn btn--ghost btn--sm sticker">

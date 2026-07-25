@@ -113,6 +113,23 @@ export function Settings(): JSX.Element {
       <hr className="rule" />
 
       <section className="stack">
+        <h3>{COPY.crew.label}</h3>
+        <p className="muted">{COPY.blackbook.warning}</p>
+        <div className="settings-row">
+          <span className="muted">Make a crew to post under a shared tag.</span>
+          <Link to="/crew/new" className="btn btn--go btn--sm sticker">
+            {COPY.crew.action}
+          </Link>
+        </div>
+        <p className="help">
+          To <em>post as</em> a crew later, import its blackbook through &ldquo;{COPY.tag.restore}&rdquo; — that swaps
+          this device&apos;s single active tag to the crew. Restore your own blackbook when you are done.
+        </p>
+      </section>
+
+      <hr className="rule" />
+
+      <section className="stack">
         <h3>This device</h3>
         <div className="settings-row">
           <span className="muted">Storage held onto</span>

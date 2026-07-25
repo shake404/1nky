@@ -15,18 +15,21 @@ export interface ProfileMeta {
   bio?: string;
   city?: string;
   avatarSha256?: string;
+  /** Self-declared crew affiliations — a claim, not a verified roster. */
+  crews?: string[];
 }
 
 /** Build a kind-0 template from the editable fields. Pure — no mining, no send. */
 export function profileTemplate(
   tag: Pick<Tag, 'name'>,
-  opts: { city?: string; bio?: string; avatarSha256?: string } = {},
+  opts: { city?: string; bio?: string; avatarSha256?: string; crews?: readonly string[] } = {},
 ): EventTemplate {
   return buildProfile({
     tag: tag.name,
     ...(opts.city ? { city: opts.city } : {}),
     ...(opts.bio !== undefined ? { bio: opts.bio } : {}),
     ...(opts.avatarSha256 ? { avatarSha256: opts.avatarSha256 } : {}),
+    ...(opts.crews ? { crews: opts.crews } : {}),
   });
 }
 
@@ -44,6 +47,10 @@ function parseProfileContent(content: string): ProfileMeta | null {
   if (typeof record['about'] === 'string') meta.bio = record['about'];
   if (typeof record['city'] === 'string') meta.city = record['city'];
   if (typeof record['avatar_sha256'] === 'string') meta.avatarSha256 = record['avatar_sha256'];
+  if (Array.isArray(record['crews'])) {
+    const crews = (record['crews'] as unknown[]).filter((c): c is string => typeof c === 'string');
+    if (crews.length) meta.crews = crews;
+  }
   return meta;
 }
 

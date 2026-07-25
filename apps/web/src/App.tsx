@@ -2,6 +2,9 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Shell } from './components/Shell.js';
 import { Backup } from './routes/Backup.js';
 import { Conversation } from './routes/Conversation.js';
+import { CreateCrew } from './routes/CreateCrew.js';
+import { Crew } from './routes/Crew.js';
+import { Explore } from './routes/Explore.js';
 import { Feed } from './routes/Feed.js';
 import { FlickDetail } from './routes/FlickDetail.js';
 import { HangItUp } from './routes/HangItUp.js';
@@ -56,8 +59,11 @@ export function App(): JSX.Element {
     <Shell>
       <Routes>
         <Route path="/" element={<Feed />} />
+        <Route path="/explore" element={<Explore />} />
         <Route path="/f/:id" element={<FlickDetail />} />
         <Route path="/w/:pubkey" element={<Writer />} />
+        <Route path="/crew/:pubkey" element={<Crew />} />
+        <Route path="/crew/new" element={<CreateCrew />} />
         <Route path="/me" element={<MyWall />} />
         <Route path="/post" element={<PostFlick />} />
         <Route path="/messages" element={<Messages />} />
