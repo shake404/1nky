@@ -14,12 +14,30 @@ import {
 import type { Queryable } from './types.js';
 
 /**
- * Everything 1NKY indexes. Blossom upload authorisations (kind 24242) are
- * request credentials for the media service, not content — they are not
- * stored and never reach Postgres.
+ * Everything 1NKY indexes.
+ *
+ * Two kinds are excluded, for different reasons:
+ *
+ *   24242 — Blossom upload authorisations. Request credentials for the media
+ *           service, not content. Never stored.
+ *
+ *    1059 — NIP-59 gift wraps: private messages. THIS EXCLUSION IS A PRIVACY
+ *           GUARANTEE, NOT AN OPTIMISATION. Postgres is served to the world
+ *           through the read-only REST API, and `events` is queried by kind,
+ *           by pubkey and by full-text search. Copying wraps in would publish
+ *           the shape of every private conversation on the site — who was
+ *           messaged, how often, when, how much — to anyone who can call the
+ *           API, even though the bodies stay encrypted. Wraps live in the
+ *           relay only, where a client fetches its own with a `#p` filter and
+ *           nothing is queryable by anyone else. Do not "just index the
+ *           metadata"; the metadata is the leak.
+ *
+ * The filter below keeps them out of the firehose subscription. `indexEvent`
+ * refuses 1059 a second time, so a rebuild, a wider filter or a hand-fed
+ * event cannot get one into the database by another route.
  */
 export const INDEXED_KINDS: readonly number[] = ALL_KINDS.filter(
-  (kind) => kind !== KINDS.BLOSSOM_AUTH,
+  (kind) => kind !== KINDS.BLOSSOM_AUTH && kind !== KINDS.GIFT_WRAP,
 );
 
 /** Persist the watermark at most this often, in events. */

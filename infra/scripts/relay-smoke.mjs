@@ -19,12 +19,15 @@
  *   5. REQ by id round-trips the kind 1 back  -> EVENT then EOSE
  *   6. kind 1 with no proof of work           -> REJECTED (pow gate works)
  *   7. kind 9999 mined to full difficulty     -> REJECTED (kind allowlist works)
+ *   8. kind 14 / kind 13 unwrapped            -> REJECTED (no plaintext DMs)
+ *   9. kind 1059 gift wrap at the reaction tier -> accepted
  *
  * ENV
  *   RELAY_WS_URL       default ws://127.0.0.1:7777
  *                      through Caddy instead: RELAY_WS_URL=ws://127.0.0.1/relay
  *   POW_BITS_NEW       default 18   must match the strfry container's env
  *   POW_BITS_POST      default 13
+ *   POW_BITS_REACTION  default 8
  *   POW_ENABLED        default 1    set 0 if you disabled the gate in compose
  *
  * Exits 0 on success, 1 on any failure.
@@ -39,6 +42,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey, getEventHash } from 'no
 const RELAY_WS_URL = process.env.RELAY_WS_URL || 'ws://127.0.0.1:7777';
 const POW_BITS_NEW = Number.parseInt(process.env.POW_BITS_NEW || '18', 10);
 const POW_BITS_POST = Number.parseInt(process.env.POW_BITS_POST || '13', 10);
+const POW_BITS_REACTION = Number.parseInt(process.env.POW_BITS_REACTION || '8', 10);
 const POW_ENABLED = (process.env.POW_ENABLED || '1') !== '0';
 const TIMEOUT_MS = Number.parseInt(process.env.SMOKE_TIMEOUT_MS || '20000', 10);
 
@@ -259,7 +263,7 @@ async function checkNip11(wsUrl) {
 async function main() {
   console.log('1NKY relay smoke test');
   console.log(`  relay      ${RELAY_WS_URL}`);
-  console.log(`  pow        ${POW_ENABLED ? `enabled (new=${POW_BITS_NEW} post=${POW_BITS_POST})` : 'DISABLED'}`);
+  console.log(`  pow        ${POW_ENABLED ? `enabled (new=${POW_BITS_NEW} post=${POW_BITS_POST} reaction=${POW_BITS_REACTION})` : 'DISABLED'}`);
   console.log('');
 
   const sk = generateSecretKey();
@@ -285,6 +289,7 @@ async function main() {
 
   // --- 2. kind 1 note at the POST tier ---------------------------------------
   const postBits = POW_ENABLED ? POW_BITS_POST : 0;
+  const reactionBits = POW_ENABLED ? POW_BITS_REACTION : 0;
   const note = build(sk, pk, 1, 'phase 0 smoke test', postBits, [['t', 'smoketest']]);
   const noteOk = await relay.publish(note);
   check('kind 1 note accepted', noteOk.accepted === true, noteOk.message || note.id.slice(0, 12));
@@ -323,6 +328,43 @@ async function main() {
     badKindOk.message || '(no reason given)',
   );
 
+  // --- 6. write policy: private messages must be gift-wrapped ------------------
+  // A kind 14 on the wire is a private message in plaintext. Mined to the
+  // reaction tier so the ONLY thing that can refuse it is the wrap-internal
+  // rule. If this check ever passes-as-accepted, the relay is storing DMs.
+  const nakedDm = build(sk, pk, 14, 'this should never be storable', reactionBits, [
+    ['p', pk],
+  ]);
+  const nakedDmOk = await relay.publish(nakedDm);
+  check(
+    'write policy rejects an unwrapped private message (kind 14)',
+    nakedDmOk.accepted === false,
+    nakedDmOk.message || '(no reason given)',
+  );
+
+  const nakedSeal = build(sk, pk, 13, 'this should never be storable', reactionBits);
+  const nakedSealOk = await relay.publish(nakedSeal);
+  check(
+    'write policy rejects an unwrapped seal (kind 13)',
+    nakedSealOk.accepted === false,
+    nakedSealOk.message || '(no reason given)',
+  );
+
+  // --- 7. write policy: the gift wrap itself IS accepted -----------------------
+  // Signed by a throwaway key, as a real wrap is, and mined only to the
+  // reaction tier — which is the whole point of putting 1059 in that tier.
+  const wrapSk = generateSecretKey();
+  const wrapPk = getPublicKey(wrapSk);
+  const wrap = build(wrapSk, wrapPk, 1059, 'AsK0KGvfrmHy+not+real+ciphertext', reactionBits, [
+    ['p', pk],
+  ]);
+  const wrapOk = await relay.publish(wrap);
+  check(
+    'write policy accepts a gift-wrapped message (kind 1059)',
+    wrapOk.accepted === true,
+    wrapOk.message || wrap.id.slice(0, 12),
+  );
+
   relay.close();
 
   console.log('');
@@ -331,7 +373,7 @@ async function main() {
     console.log('\ntroubleshooting:');
     console.log('  docker compose logs strfry        # write-policy prints "kind=<n> accept|reject"');
     console.log('  docker compose ps                 # all three should be healthy');
-    console.log('  POW_BITS_NEW / POW_BITS_POST here must match the strfry service env');
+    console.log('  POW_BITS_* here must match the strfry service env');
     process.exit(1);
   }
   console.log(`${results.length}/${results.length} checks passed — Phase 0 relay acceptance OK`);

@@ -13,6 +13,7 @@ import {
   buildThreadOp,
   imetaTag,
   normalizeBoard,
+  PROFILE_BIO_MAX,
 } from './builders.js';
 import { KINDS } from './kinds.js';
 import type { EventRef, Tag } from './types.js';
@@ -88,6 +89,36 @@ describe('buildProfile', () => {
     expect(JSON.parse(buildProfile({ tag: 'ZERO' }).content)).toEqual({ name: 'ZERO' });
     expect(() => buildProfile({ tag: '   ' })).toThrow(TypeError);
     expect(() => buildProfile({ tag: 'X', avatarSha256: 'nope' })).toThrow(TypeError);
+  });
+
+  it('serialises the bio as `about` for ecosystem compatibility', () => {
+    const ev = buildProfile({ tag: 'SEKT', bio: '  panels only  ', createdAt: FIXED });
+    expect(JSON.parse(ev.content)).toEqual({ name: 'SEKT', about: 'panels only' });
+  });
+
+  it('keeps the bio alongside every other field', () => {
+    const ev = buildProfile({
+      tag: 'SEKT',
+      city: 'SF Bay',
+      bio: 'rooftops',
+      avatarSha256: HEX_A,
+      createdAt: FIXED,
+    });
+    expect(JSON.parse(ev.content)).toEqual({
+      name: 'SEKT',
+      city: 'sf-bay',
+      about: 'rooftops',
+      avatar_sha256: HEX_A,
+    });
+  });
+
+  it('omits an empty bio and refuses an oversized one', () => {
+    expect(JSON.parse(buildProfile({ tag: 'X', bio: '   ' }).content)).toEqual({ name: 'X' });
+    expect(JSON.parse(buildProfile({ tag: 'X', bio: '' }).content)).toEqual({ name: 'X' });
+    expect(() => buildProfile({ tag: 'X', bio: 'y'.repeat(PROFILE_BIO_MAX + 1) })).toThrow(TypeError);
+    expect(() =>
+      buildProfile({ tag: 'X', bio: 'y'.repeat(PROFILE_BIO_MAX) }),
+    ).not.toThrow();
   });
 });
 

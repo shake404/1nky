@@ -116,17 +116,26 @@ services:
     environment:
       # --- write-policy knobs (all read by strfry/write-policy.mjs) ---
       # Kind allowlist: 0 profile, 1 thread OP, 5 delete/"buff", 20 flick,
-      # 1111 NIP-22 reply, 1984 report/"flag it", 10000 NIP-51 mute,
-      # 30078 app-specific (board registry / mod list, signed by the site key).
-      ALLOWED_KINDS: "${ALLOWED_KINDS:-0,1,5,20,1111,1984,10000,30078}"
+      # 1059 NIP-59 gift wrap (private messages), 1111 NIP-22 reply,
+      # 1984 report/"flag it", 10000 NIP-51 mute, 30078 app-specific
+      # (board registry / mod list, signed by the site key).
+      #
+      # Kinds 13 (seal) and 14 (private message) are deliberately absent and
+      # cannot be added back here: write-policy.mjs rejects them by number
+      # before it looks at this list. They only ever exist encrypted inside a
+      # 1059, so one arriving at the relay is a plaintext DM leak.
+      ALLOWED_KINDS: "${ALLOWED_KINDS:-0,1,5,20,1059,1111,1984,10000,30078}"
       MAX_EVENT_BYTES: "${MAX_EVENT_BYTES:-65536}"
       # NIP-13 tiers. Defaults mirror the root .env.example.
       POW_BITS_NEW: "${POW_BITS_NEW:-18}"
       POW_BITS_POST: "${POW_BITS_POST:-13}"
       POW_BITS_REACTION: "${POW_BITS_REACTION:-8}"
-      # Which kinds fall into which PoW tier.
+      # Which kinds fall into which PoW tier. 1059 sits in the reaction tier
+      # because every gift wrap is signed by a fresh throwaway key — the
+      # "first event from this pubkey" rule would charge POW_BITS_NEW for
+      # every single private message.
       POW_NEW_KINDS: "${POW_NEW_KINDS:-0}"
-      POW_REACTION_KINDS: "${POW_REACTION_KINDS:-1984,10000}"
+      POW_REACTION_KINDS: "${POW_REACTION_KINDS:-1059,1984,10000}"
       # Hot-reloaded ban list (JSON array of 32-byte hex pubkeys).
       BAN_LIST_PATH: "${BAN_LIST_PATH:-/app/plugin/banlist.json}"
       # Set to "0" to disable the PoW gate entirely (local dev only).

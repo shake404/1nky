@@ -28,15 +28,23 @@
  *   None. Node core only, and only Node 18+ APIs, because the relay image is
  *   Alpine 3.18 (nodejs 18.x). See infra/docker/strfry.Dockerfile.
  *
+ * PRIVATE MESSAGES (NIP-17 / NIP-59)
+ *   Kind 1059 (gift wrap) is accepted: it is an opaque envelope signed by a
+ *   throwaway key and `p`-tagged to its recipient. Kinds 13 (seal) and 14
+ *   (private message) are refused BY NUMBER and can never be allowlisted back
+ *   in via ALLOWED_KINDS — see WRAP_INTERNAL_KINDS below. Those two only ever
+ *   exist encrypted inside a 1059, so one arriving here is a private message
+ *   in the clear, and storing it would publish it.
+ *
  * CONFIG (env, inherited from the strfry container)
- *   ALLOWED_KINDS       csv of integer kinds. default 0,1,5,20,1111,1984,10000,30078
+ *   ALLOWED_KINDS       csv of integer kinds. default 0,1,5,20,1059,1111,1984,10000,30078
  *   MAX_EVENT_BYTES     default 65536
  *   POW_ENABLED         "0" disables the PoW gate entirely (local dev). default on
  *   POW_BITS_NEW        default 18  — first event seen from a pubkey, and POW_NEW_KINDS
  *   POW_BITS_POST       default 13  — everything else
  *   POW_BITS_REACTION   default 8   — POW_REACTION_KINDS
  *   POW_NEW_KINDS       default 0
- *   POW_REACTION_KINDS  default 1984,10000
+ *   POW_REACTION_KINDS  default 1059,1984,10000
  *   BAN_LIST_PATH       default /app/plugin/banlist.json — JSON array of hex pubkeys
  */
 
@@ -61,9 +69,24 @@ const kindSet = (name, fallback) => {
   return out;
 };
 
-const ALLOWED_KINDS = kindSet('ALLOWED_KINDS', '0,1,5,20,1111,1984,10000,30078');
+const ALLOWED_KINDS = kindSet('ALLOWED_KINDS', '0,1,5,20,1059,1111,1984,10000,30078');
 const NEW_KINDS = kindSet('POW_NEW_KINDS', '0');
-const REACTION_KINDS = kindSet('POW_REACTION_KINDS', '1984,10000');
+const REACTION_KINDS = kindSet('POW_REACTION_KINDS', '1059,1984,10000');
+
+/**
+ * NIP-59 wrap-internal kinds: 13 (seal) and 14 (private direct message).
+ *
+ * NOT configurable, and checked BEFORE the allowlist so a fat-fingered
+ * ALLOWED_KINDS cannot re-enable them. Both kinds are defined to exist only
+ * nip44-encrypted inside a kind-1059 gift wrap. If one shows up at a relay
+ * socket it was never wrapped, which means its content is somebody's private
+ * message in plaintext. Accepting it would store that message and serve it to
+ * anyone who asks. Rejecting it is the privacy-preserving answer, and it is
+ * also what tells a buggy client that it is leaking.
+ *
+ * Mirrors WRAP_INTERNAL_KINDS in packages/protocol/src/kinds.ts.
+ */
+const WRAP_INTERNAL_KINDS = new Set([13, 14]);
 
 const MAX_EVENT_BYTES = num('MAX_EVENT_BYTES', 65536);
 const POW_ENABLED = (process.env.POW_ENABLED ?? '1') !== '0';
@@ -205,6 +228,12 @@ const seen = new Set();
 const SEEN_CAP = 200000; // bounded so a spam flood cannot grow us unbounded
 
 function requiredBits(kind, pubkey) {
+  // The reaction tier is checked FIRST, and that is what keeps gift wraps
+  // (1059) affordable. Every wrap is signed by a one-shot ephemeral key, so
+  // the "first event from this pubkey" rule below would otherwise charge
+  // POW_BITS_NEW (18 bits) for every single private message — minutes of
+  // grinding per line of conversation. 1059 is in POW_REACTION_KINDS by
+  // default for exactly this reason.
   if (REACTION_KINDS.has(kind)) return POW_BITS_REACTION;
   if (NEW_KINDS.has(kind)) return POW_BITS_NEW;
   if (!seen.has(pubkey)) return POW_BITS_NEW;
@@ -222,13 +251,25 @@ function decide(req) {
   const kind = Number(event.kind);
   const pubkey = typeof event.pubkey === 'string' ? event.pubkey.toLowerCase() : '';
 
-  // 1. Kind allowlist. Everything the product does not use is refused at the
+  // 1. Wrap-internal kinds, refused unconditionally and ahead of everything
+  //    else. See WRAP_INTERNAL_KINDS: a naked kind 13 or 14 is a leaked
+  //    private message, and the fastest way to stop leaking it is to not
+  //    store it. The NIP-20 message says so plainly, because the only party
+  //    who can act on it is the client that got its wrapping wrong.
+  if (WRAP_INTERNAL_KINDS.has(kind)) {
+    return {
+      action: 'reject',
+      msg: `blocked: kind ${kind} must be gift-wrapped (kind 1059); sending it in the clear is not allowed`,
+    };
+  }
+
+  // 2. Kind allowlist. Everything the product does not use is refused at the
   //    door so the relay never becomes a general-purpose dumping ground.
   if (!ALLOWED_KINDS.has(kind)) {
     return { action: 'reject', msg: `blocked: kind ${kind} is not accepted here` };
   }
 
-  // 2. Ban list, hot-reloaded. Checked before PoW so a banned pubkey's mined
+  // 3. Ban list, hot-reloaded. Checked before PoW so a banned pubkey's mined
   //    work is wasted and the rejection is instant (Phase 2 acceptance: banned
   //    pubkey rejected at relay in <1s).
   refreshBanList();
@@ -236,7 +277,7 @@ function decide(req) {
     return { action: 'reject', msg: 'blocked: this tag is banned' };
   }
 
-  // 3. Size cap. strfry enforces events.maxEventSize itself, but doing it here
+  // 4. Size cap. strfry enforces events.maxEventSize itself, but doing it here
   //    too keeps the client-facing message consistent and covers the case where
   //    the two limits drift apart.
   const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
@@ -244,7 +285,7 @@ function decide(req) {
     return { action: 'reject', msg: `invalid: event is ${bytes} bytes, limit is ${MAX_EVENT_BYTES}` };
   }
 
-  // 4. NIP-13 proof of work. This is the CAPTCHA — there are no accounts, so
+  // 5. NIP-13 proof of work. This is the CAPTCHA — there are no accounts, so
   //    there is no signup friction for bots either.
   if (POW_ENABLED) {
     const need = requiredBits(kind, pubkey);
@@ -252,7 +293,11 @@ function decide(req) {
     if (failure) return { action: 'reject', msg: failure };
   }
 
-  if (pubkey) {
+  // A gift wrap's pubkey is a one-shot ephemeral key that will never be seen
+  // again, so recording it teaches `seen` nothing and costs it an entry. Left
+  // in, a busy DM day would push the real pubkeys past SEEN_CAP and clear the
+  // whole set, silently charging every returning writer the newcomer tier.
+  if (pubkey && kind !== 1059) {
     if (seen.size >= SEEN_CAP) seen.clear();
     seen.add(pubkey);
   }

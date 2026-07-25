@@ -116,9 +116,20 @@ export interface BuildProfileInput extends BuilderOptions {
   tag: string;
   /** Home city / board slug. */
   city?: string;
+  /**
+   * Short free-text blurb the writer types about themselves.
+   *
+   * Serialised as `about` in the kind-0 JSON — that is the field every other
+   * Nostr client reads — but it is called `bio` on this side of the API
+   * because "about" means nothing to anyone.
+   */
+  bio?: string;
   /** Blossom address of the avatar blob. */
   avatarSha256?: string;
 }
+
+/** Maximum bio length, in characters. Kept well under the 64KB relay cap. */
+export const PROFILE_BIO_MAX = 500;
 
 /** Kind 0 — profile metadata. */
 export function buildProfile(input: BuildProfileInput): EventTemplate {
@@ -127,6 +138,14 @@ export function buildProfile(input: BuildProfileInput): EventTemplate {
 
   const content: Record<string, string> = { name: tag };
   if (input.city) content['city'] = normalizeBoard(input.city);
+  if (input.bio !== undefined) {
+    const bio = input.bio.trim();
+    if (bio.length > PROFILE_BIO_MAX) {
+      throw new TypeError(`buildProfile: bio must be at most ${PROFILE_BIO_MAX} characters`);
+    }
+    // Ecosystem-compatible field name. An empty bio is simply omitted.
+    if (bio) content['about'] = bio;
+  }
   if (input.avatarSha256) {
     content['avatar_sha256'] = assertHex32(input.avatarSha256, 'buildProfile(avatarSha256)');
   }

@@ -52,6 +52,46 @@ describe.skipIf(!enabled)('schema against a live Postgres', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('leaves not one row behind for a gift wrap', async () => {
+    const counters = newCounters();
+    const before = await db.query<{ n: string }>('select count(*)::text as n from events');
+
+    const wrap = finalizeEvent(
+      {
+        kind: 1059,
+        created_at: now - 4000,
+        tags: [['p', 'e'.repeat(64)]],
+        content: 'AsK0KGvfrmHy',
+      },
+      generateSecretKey(),
+    );
+    await indexEvent(db, wrap, counters, { now });
+
+    expect(counters.skipped).toBe(1);
+    const after = await db.query<{ n: string }>('select count(*)::text as n from events');
+    expect(after.rows[0]?.n).toBe(before.rows[0]?.n);
+
+    const anywhere = await db.query('select 1 from events where kind = 1059');
+    expect(anywhere.rows).toEqual([]);
+    const stats = await db.query('select 1 from pubkey_stats where pubkey = $1', [wrap.pubkey]);
+    expect(stats.rows).toEqual([]);
+  });
+
+  it('stores a writer bio in profiles.about', async () => {
+    const counters = newCounters();
+    const profile = finalizeEvent(
+      buildProfile({ tag: 'SMOG', city: 'sf', bio: 'panels and rooftops' }),
+      sk,
+    );
+    await indexEvent(db, profile, counters, { now });
+
+    const { rows } = await db.query<{ about: string | null }>(
+      'select about from profiles where pubkey = $1',
+      [pubkey],
+    );
+    expect(rows[0]?.about).toBe('panels and rooftops');
+  });
+
   it('stores a flick and finds it by full-text search', async () => {
     const counters = newCounters();
     const profile = finalizeEvent(buildProfile({ tag: 'SMOG', city: 'sf' }), sk);

@@ -69,7 +69,7 @@ export function drawIdenticon(canvas: HTMLCanvasElement, pubkey: string, pixels:
   const cell = canvas.width / size;
 
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = '#0d0d0d';
+  context.fillStyle = '#0c0a11';
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.fillStyle = colour;
   for (let i = 0; i < cells.length; i++) {

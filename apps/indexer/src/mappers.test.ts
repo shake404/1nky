@@ -90,22 +90,52 @@ describe('toEventRow', () => {
 
 describe('toProfileRow (kind 0)', () => {
   it('maps a profile built by @1nky/protocol', () => {
-    const template = buildProfile({ tag: 'SMOG', city: 'SF Bay', avatarSha256: SHA });
+    const template = buildProfile({
+      tag: 'SMOG',
+      city: 'SF Bay',
+      bio: 'panels and rooftops',
+      avatarSha256: SHA,
+    });
     const row = toProfileRow(makeEvent({ ...template, pubkey: AUTHOR, kind: KINDS.PROFILE }));
 
     expect(row).toMatchObject({
       pubkey: AUTHOR,
       tag_name: 'SMOG',
       city: 'sf-bay',
+      about: 'panels and rooftops',
       avatar_sha256: SHA,
     });
     expect(row.first_seen).toBe(row.updated_at);
+  });
+
+  it('leaves `about` null when the writer has no bio', () => {
+    const template = buildProfile({ tag: 'SMOG' });
+    expect(toProfileRow(makeEvent({ ...template, kind: KINDS.PROFILE })).about).toBeNull();
+    expect(toProfileRow(makeEvent({ kind: 0, content: '{"about":"   "}' })).about).toBeNull();
+    expect(toProfileRow(makeEvent({ kind: 0, content: '{"about":42}' })).about).toBeNull();
+  });
+
+  it('reads an `about` written by any other Nostr client', () => {
+    // The field name is the ecosystem's, not ours — a profile made elsewhere
+    // has to land in the same column.
+    const row = toProfileRow(
+      makeEvent({ kind: 0, content: JSON.stringify({ name: 'SMOG', about: ' from elsewhere ' }) }),
+    );
+    expect(row.about).toBe('from elsewhere');
+  });
+
+  it('truncates a hostile 60KB bio', () => {
+    const row = toProfileRow(
+      makeEvent({ kind: 0, content: JSON.stringify({ about: 'y'.repeat(60_000) }) }),
+    );
+    expect(row.about).toHaveLength(500);
   });
 
   it('survives unparseable content', () => {
     const row = toProfileRow(makeEvent({ kind: 0, content: 'not json' }));
     expect(row.tag_name).toBeNull();
     expect(row.city).toBeNull();
+    expect(row.about).toBeNull();
   });
 
   it('survives content that is a JSON array', () => {

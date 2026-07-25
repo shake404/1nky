@@ -97,15 +97,20 @@ export interface ProfileRow {
   pubkey: string;
   tag_name: string | null;
   city: string | null;
+  /** The writer's bio. Named for the kind-0 JSON field, not for the UI. */
+  about: string | null;
   avatar_sha256: string | null;
   first_seen: number;
   updated_at: number;
 }
 
+/** Longest bio stored. Matches PROFILE_BIO_MAX in @1nky/protocol. */
+const ABOUT_MAX = 500;
+
 /**
  * Kind 0. The content is JSON written by `buildProfile`: `{ name, city,
- * avatar_sha256 }`. Unparseable content still produces a row so the writer
- * exists in the index — they just have no tag name yet.
+ * about, avatar_sha256 }`. Unparseable content still produces a row so the
+ * writer exists in the index — they just have no tag name yet.
  */
 export function toProfileRow(event: SignedEvent): ProfileRow {
   let parsed: Record<string, unknown> = {};
@@ -124,10 +129,15 @@ export function toProfileRow(event: SignedEvent): ProfileRow {
   };
 
   const city = str('city');
+  // `about` is the ecosystem-standard field; the relay caps an event at 64KB,
+  // so a hostile kind 0 could otherwise park 60KB of prose in every profile
+  // row. Truncate to the same limit the builder enforces.
+  const about = str('about');
   return {
     pubkey: event.pubkey,
     tag_name: str('name') ?? str('display_name'),
     city: city === null ? null : normalizeBoard(city) || null,
+    about: about === null ? null : about.slice(0, ABOUT_MAX),
     avatar_sha256: str('avatar_sha256') ?? str('picture_sha256'),
     first_seen: event.created_at,
     updated_at: event.created_at,

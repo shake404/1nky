@@ -50,6 +50,14 @@ describe('reqFrame', () => {
     expect(INDEXED_KINDS).not.toContain(24242);
     expect(INDEXED_KINDS).toContain(20);
   });
+
+  it('never subscribes to gift wraps — private messages stay in the relay', () => {
+    // Asking for kind 1059 at all would pull every private message on the site
+    // through this process. The index is served by a public read API; wraps
+    // are fetched by their own recipient, from the relay, with a `#p` filter.
+    expect(INDEXED_KINDS).not.toContain(1059);
+    expect(reqFrame({ kinds: INDEXED_KINDS, since: 0 })).not.toContain('1059');
+  });
 });
 
 describe('parseMessage', () => {

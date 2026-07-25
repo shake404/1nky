@@ -6,14 +6,32 @@
  * numeric kind anywhere else.
  */
 export const KINDS = {
-  /** NIP-01 profile metadata — the writer's tag, city, avatar hash. */
+  /** NIP-01 profile metadata — the writer's tag, city, bio, avatar hash. */
   PROFILE: 0,
   /** NIP-01 text note — thread OPs on boards. */
   NOTE: 1,
   /** NIP-09 deletion request — user-facing copy: "buff". */
   DELETE: 5,
+  /**
+   * NIP-59 seal. WRAP-INTERNAL: the sender-signed envelope that lives
+   * *encrypted inside* a gift wrap. It is never transmitted on its own and the
+   * relay must refuse it — see `WRAP_INTERNAL_KINDS`.
+   */
+  SEAL: 13,
+  /**
+   * NIP-17 private direct message ("rumor"). WRAP-INTERNAL: an unsigned event
+   * that only ever exists encrypted inside a seal, inside a gift wrap. A naked
+   * kind 14 arriving at the relay is a plaintext DM leak, not a message.
+   */
+  DM: 14,
   /** NIP-68 picture event — user-facing copy: "flick". */
   FLICK: 20,
+  /**
+   * NIP-59 gift wrap. This is the ONLY private-message kind that goes on the
+   * wire: signed by a throwaway ephemeral key, `p`-tagged to the recipient,
+   * with a randomised/backdated `created_at`.
+   */
+  GIFT_WRAP: 1059,
   /** NIP-22 comment — replies on flicks and thread posts. */
   COMMENT: 1111,
   /** NIP-56 report — user-facing copy: "flag it". */
@@ -31,10 +49,61 @@ export type KindName = keyof typeof KINDS;
 /** Union of every kind number 1NKY knows about. */
 export type Kind = (typeof KINDS)[KindName];
 
-/** Every kind 1NKY publishes or accepts, for relay write-policy allowlists. */
-export const ALL_KINDS: readonly number[] = Object.freeze(Object.values(KINDS));
+/**
+ * Kinds that exist ONLY encrypted inside a NIP-59 gift wrap.
+ *
+ * These are deliberately absent from `ALL_KINDS`. The relay write-policy
+ * rejects them outright: a kind 13 or kind 14 that reached a relay socket was
+ * never wrapped, which means its content is a private message in the clear.
+ * Rejecting is the privacy-preserving behaviour, not the strict one.
+ */
+export const WRAP_INTERNAL_KINDS: readonly number[] = Object.freeze([KINDS.SEAL, KINDS.DM]);
 
-/** True when `kind` is one of the kinds 1NKY understands. */
+/**
+ * Every kind 1NKY publishes or accepts **on the wire**, anywhere.
+ *
+ * Wrap-internal kinds are excluded by construction: they are not wire kinds.
+ * Gift wraps (1059) are included because the relay really does store and serve
+ * them. Blossom auth (24242) is included because clients really do produce it
+ * — but it travels in an HTTP `Authorization` header to the media service, not
+ * to the relay, which is why `RELAY_ACCEPTED_KINDS` is a narrower list.
+ */
+export const ALL_KINDS: readonly number[] = Object.freeze(
+  Object.values(KINDS).filter((kind) => !WRAP_INTERNAL_KINDS.includes(kind)),
+);
+
+/**
+ * The relay write-policy allowlist: exactly the kinds strfry accepts from a
+ * client. Mirrored by `ALLOWED_KINDS` in infra/strfry/write-policy.mjs, and
+ * held to it by `relay-policy.test.ts`.
+ *
+ * Two deliberate differences from `ALL_KINDS`:
+ *   - 13 / 14 are absent (see `WRAP_INTERNAL_KINDS`) — accepting either would
+ *     mean storing a private message in the clear.
+ *   - 24242 is absent: a Blossom upload authorisation is a request credential
+ *     for the media service, not content, and has no business being published.
+ */
+export const RELAY_ACCEPTED_KINDS: readonly number[] = Object.freeze(
+  ALL_KINDS.filter((kind) => kind !== KINDS.BLOSSOM_AUTH),
+);
+
+/** True when `kind` only ever appears inside a gift wrap (13, 14). */
+export function isWrapInternalKind(kind: number): boolean {
+  return WRAP_INTERNAL_KINDS.includes(kind);
+}
+
+/**
+ * True when `kind` is one of the kinds 1NKY understands.
+ *
+ * Includes the wrap-internal kinds: the DM helpers have to recognise a seal
+ * and a rumor after decrypting them. Use `isRelayAcceptedKind` for the
+ * "may this arrive at the relay?" question.
+ */
 export function isKnownKind(kind: number): kind is Kind {
-  return ALL_KINDS.includes(kind);
+  return (Object.values(KINDS) as readonly number[]).includes(kind);
+}
+
+/** True when the relay accepts `kind` from a client. */
+export function isRelayAcceptedKind(kind: number): boolean {
+  return RELAY_ACCEPTED_KINDS.includes(kind);
 }

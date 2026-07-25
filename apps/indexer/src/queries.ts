@@ -46,16 +46,25 @@ export function upsertEvent(row: EventRow): Sql {
 
 export function upsertProfile(row: ProfileRow): Sql {
   return {
-    text: `insert into profiles (pubkey, tag_name, city, avatar_sha256, first_seen, updated_at)
-           values ($1, $2, $3, $4, $5, $6)
+    text: `insert into profiles (pubkey, tag_name, city, about, avatar_sha256, first_seen, updated_at)
+           values ($1, $2, $3, $4, $5, $6, $7)
            on conflict (pubkey) do update set
              tag_name      = excluded.tag_name,
              city          = excluded.city,
+             about         = excluded.about,
              avatar_sha256 = excluded.avatar_sha256,
              first_seen    = least(profiles.first_seen, excluded.first_seen),
              updated_at    = excluded.updated_at
            where excluded.updated_at >= profiles.updated_at`,
-    params: [row.pubkey, row.tag_name, row.city, row.avatar_sha256, row.first_seen, row.updated_at],
+    params: [
+      row.pubkey,
+      row.tag_name,
+      row.city,
+      row.about,
+      row.avatar_sha256,
+      row.first_seen,
+      row.updated_at,
+    ],
   };
 }
 

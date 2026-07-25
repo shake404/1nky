@@ -67,13 +67,15 @@ describe('indexEvent', () => {
   it('stores a profile', async () => {
     const db = fakeDb();
     const counters = newCounters();
-    const template = buildProfile({ tag: 'SMOG', city: 'sf' });
+    const template = buildProfile({ tag: 'SMOG', city: 'sf', bio: 'panels only' });
     await indexEvent(db, makeEvent({ ...template, kind: KINDS.PROFILE, pubkey: AUTHOR }), counters, {
       now: NOW,
     });
 
     expect(counters.profiles).toBe(1);
-    expect(db.matching('insert into profiles')[0]?.params).toContain('SMOG');
+    const params = db.matching('insert into profiles')[0]?.params;
+    expect(params).toContain('SMOG');
+    expect(params).toContain('panels only');
   });
 
   it('counts a flick with no image as invalid but still keeps the event', async () => {
@@ -142,6 +144,54 @@ describe('indexEvent', () => {
     await indexEvent(rejected, registry, rejectedCounters, { now: NOW, sitePubkey: hex('ff') });
     expect(rejectedCounters.boards).toBe(0);
     expect(rejected.matching('insert into boards')).toHaveLength(0);
+  });
+
+  it('writes ZERO rows for a gift wrap (kind 1059)', async () => {
+    // Private messages must not exist in an index that is served through a
+    // public read API. Not the ciphertext, not the recipient tag, not the
+    // timestamp — the metadata alone reconstructs the social graph.
+    const db = fakeDb();
+    const counters = newCounters();
+    const recipient = hex('ee');
+
+    await indexEvent(
+      db,
+      makeEvent({
+        kind: KINDS.GIFT_WRAP,
+        id: hex('77'),
+        pubkey: hex('12'),
+        tags: [['p', recipient]],
+        content: 'AsK0KGvfrmHy...base64 nip44 payload',
+      }),
+      counters,
+      { now: NOW },
+    );
+
+    // Not one statement was issued — not even the `events` insert or the
+    // pubkey_stats touch.
+    expect(db.calls).toEqual([]);
+    expect(counters.skipped).toBe(1);
+    expect(counters.events).toBe(0);
+
+    // And nothing about the message ended up anywhere we could have logged it.
+    const everything = JSON.stringify(db.calls);
+    expect(everything).not.toContain(recipient);
+    expect(everything).not.toContain('base64');
+  });
+
+  it('skips a gift wrap even when it is squeezed in among real events', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+
+    await indexEvent(db, flick(), counters, { now: NOW });
+    await indexEvent(db, makeEvent({ kind: KINDS.GIFT_WRAP, id: hex('78') }), counters, {
+      now: NOW,
+    });
+    await indexEvent(db, makeEvent({ kind: KINDS.NOTE, id: hex('79') }), counters, { now: NOW });
+
+    expect(counters.events).toBe(2);
+    expect(counters.skipped).toBe(1);
+    for (const call of db.calls) expect(call.params).not.toContain(KINDS.GIFT_WRAP);
   });
 
   it('stores unrouted kinds in events only', async () => {

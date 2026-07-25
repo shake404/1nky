@@ -1,7 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect width="64" height="64" fill="#0d0d0d"/>
-  <rect x="3" y="3" width="58" height="58" fill="none" stroke="#ff3d00" stroke-width="2"/>
-  <text x="32" y="33" fill="#f4f2ed" font-family="Arial Narrow, Impact, sans-serif"
+  <defs>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="36%" stop-color="#dfe4e9"/>
+      <stop offset="52%" stop-color="#6f767d"/>
+      <stop offset="60%" stop-color="#c7ced4"/>
+      <stop offset="100%" stop-color="#f4f7f9"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" fill="#0c0a11"/>
+  <rect x="3" y="3" width="58" height="58" fill="none" stroke="#ff3d8a" stroke-width="2"/>
+  <text x="32" y="34" fill="url(#chrome)" stroke="#06050a" stroke-width="1.5"
+        paint-order="stroke" font-family="Arial Narrow, Impact, sans-serif"
         font-size="26" font-weight="700" letter-spacing="-1"
         text-anchor="middle" dominant-baseline="central">1NKY</text>
 </svg>

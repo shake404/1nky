@@ -19,7 +19,7 @@ export function QrBlock({ value, size = 220 }: { value: string; size?: number })
       width: size,
       margin: 1,
       errorCorrectionLevel: 'M',
-      color: { dark: '#0d0d0dff', light: '#f4f2edff' },
+      color: { dark: '#0c0a11ff', light: '#ece7deff' },
     }).catch(() => setFailed(true));
   }, [value, size]);
 

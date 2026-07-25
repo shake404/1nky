@@ -11,8 +11,25 @@ const MIGRATIONS = [
 describe('loadMigrations', () => {
   it('reads the real migration files in filename order', async () => {
     const migrations = await loadMigrations();
-    expect(migrations.map((m) => m.version)).toEqual(['001_init.sql', '002_indexes.sql']);
+    expect(migrations.map((m) => m.version)).toEqual([
+      '001_init.sql',
+      '002_indexes.sql',
+      '003_profile_about.sql',
+    ]);
     expect(migrations[0]?.sql).toContain('create table if not exists events');
+  });
+
+  it('is forward-only: new columns arrive in a new file, never by editing 001', async () => {
+    const migrations = await loadMigrations();
+    const byVersion = new Map(migrations.map((m) => [m.version, m.sql]));
+
+    // profiles.about was added in 003. If it ever appears in 001, somebody has
+    // rewritten an applied migration and every deployed database is now out of
+    // step with the file that claims to describe it.
+    expect(byVersion.get('001_init.sql')).not.toContain('about');
+    expect(byVersion.get('003_profile_about.sql')).toContain(
+      'alter table profiles add column if not exists about text',
+    );
   });
 });
 

@@ -3,8 +3,10 @@
  *
  * We refuse to pull `sharp` (or any image lib) into the web workspace just to
  * paint four squares, so this hand-rolls a minimal PNG encoder on top of
- * node:zlib. Output is a near-black tile with a hazard-orange hairline and the
- * "1NKY" wordmark drawn from a hand-plotted 5x7 bitmap font.
+ * node:zlib. Output is a soot tile with an ink hairline and the "1NKY"
+ * wordmark drawn from a hand-plotted 5x7 bitmap font — banded top-to-bottom
+ * so it reads as chrome, and dropped onto a hard black shadow like any
+ * throwie ever painted.
  *
  *   node scripts/gen-icons.mjs
  */
@@ -15,9 +17,21 @@ import { fileURLToPath } from 'node:url';
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
-const INK = [0x0d, 0x0d, 0x0d];
-const PAPER = [0xf4, 0xf2, 0xed];
-const HAZARD = [0xff, 0x3d, 0x00];
+const SOOT = [0x0c, 0x0a, 0x11];
+const KEYLINE = [0x06, 0x05, 0x0a];
+const INK = [0xff, 0x3d, 0x8a];
+
+// One chrome ramp per glyph row (5x7 font): highlight, body, the dark band
+// where the horizon cuts across the metal, then the bounce light back up.
+const CHROME = [
+  [0xff, 0xff, 0xff],
+  [0xef, 0xf3, 0xf6],
+  [0xdf, 0xe4, 0xe9],
+  [0x6f, 0x76, 0x7d],
+  [0xc7, 0xce, 0xd4],
+  [0xe8, 0xed, 0xf1],
+  [0xf4, 0xf7, 0xf9],
+];
 
 // --- 5x7 bitmap font, only the glyphs the wordmark needs -------------------
 const GLYPHS = {
@@ -97,12 +111,14 @@ function rect(px, size, x0, y0, w, h, colour) {
   }
 }
 
-function drawWord(px, size, word, originX, originY, scale, gap, colour) {
+/** `ink` is either one RGB triple or a per-glyph-row ramp of them. */
+function drawWord(px, size, word, originX, originY, scale, gap, ink) {
   let cx = originX;
   for (const ch of word) {
     const glyph = GLYPHS[ch];
     if (!glyph) continue;
     glyph.forEach((row, ry) => {
+      const colour = Array.isArray(ink[0]) ? ink[ry] : ink;
       [...row].forEach((cell, rx) => {
         if (cell === '#') rect(px, size, cx + rx * scale, originY + ry * scale, scale, scale, colour);
       });
@@ -112,14 +128,14 @@ function drawWord(px, size, word, originX, originY, scale, gap, colour) {
 }
 
 function build(size, { pad }) {
-  const px = canvas(size, INK);
+  const px = canvas(size, SOOT);
   const inset = Math.round(size * pad);
-  // hazard hairline frame — reads as a sticker edge at small sizes
+  // ink hairline frame — reads as a sticker edge at small sizes
   const line = Math.max(1, Math.round(size / 64));
-  rect(px, size, inset, inset, size - inset * 2, line, HAZARD);
-  rect(px, size, inset, size - inset - line, size - inset * 2, line, HAZARD);
-  rect(px, size, inset, inset, line, size - inset * 2, HAZARD);
-  rect(px, size, size - inset - line, inset, line, size - inset * 2, HAZARD);
+  rect(px, size, inset, inset, size - inset * 2, line, INK);
+  rect(px, size, inset, size - inset - line, size - inset * 2, line, INK);
+  rect(px, size, inset, inset, line, size - inset * 2, INK);
+  rect(px, size, size - inset - line, inset, line, size - inset * 2, INK);
 
   const word = '1NKY';
   const usable = size - inset * 2 - line * 6;
@@ -127,7 +143,12 @@ function build(size, { pad }) {
   const gap = scale;
   const wordW = word.length * 5 * scale + (word.length - 1) * gap;
   const wordH = 7 * scale;
-  drawWord(px, size, word, Math.round((size - wordW) / 2), Math.round((size - wordH) / 2), scale, gap, PAPER);
+  const x = Math.round((size - wordW) / 2);
+  const y = Math.round((size - wordH) / 2);
+  // Hard shadow first, down and to the right, then the chrome on top of it.
+  const off = Math.max(1, Math.round(scale * 0.7));
+  drawWord(px, size, word, x + off, y + off, scale, gap, KEYLINE);
+  drawWord(px, size, word, x, y, scale, gap, CHROME);
   return encodePng(size, size, px);
 }
 

@@ -1,4 +1,4 @@
-import type { SignedEvent } from '@1nky/protocol';
+import { KINDS, type SignedEvent } from '@1nky/protocol';
 
 import type { Queryable, Sql } from './types.js';
 import {
@@ -28,6 +28,8 @@ export interface Counters {
   duplicates: number;
   expired: number;
   invalid: number;
+  /** Events deliberately not stored — currently gift wraps (kind 1059). */
+  skipped: number;
   errors: number;
   /** Successful relay connections. Zero after a run means the relay is down. */
   connections: number;
@@ -46,6 +48,7 @@ export function newCounters(): Counters {
     duplicates: 0,
     expired: 0,
     invalid: 0,
+    skipped: 0,
     errors: 0,
     connections: 0,
   };
@@ -79,6 +82,20 @@ export async function indexEvent(
   counters: Counters,
   options: IndexOptions,
 ): Promise<void> {
+  // A gift wrap NEVER reaches Postgres — not `events`, not anywhere. This
+  // database is served to the public through the read-only REST API, and a
+  // wrap's plaintext envelope (recipient `p` tag, timestamp, size) is enough
+  // to reconstruct who talks to whom and how much. That social graph is
+  // precisely what NIP-59 exists to hide, so the index must not hold it.
+  // Wraps live in the relay alone, retrieved by their recipient's own `#p`
+  // filter. INDEXED_KINDS already keeps them out of the firehose; this is the
+  // second lock, because `rebuild` and any future direct caller come through
+  // here. Return BEFORE the first query so not one row is written.
+  if (event.kind === KINDS.GIFT_WRAP) {
+    counters.skipped += 1;
+    return;
+  }
+
   if (isExpired(event, options.now)) {
     counters.expired += 1;
     return;

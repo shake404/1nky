@@ -110,6 +110,50 @@
 }
 
 # =============================================================================
+# PRODUCTION — interim TLS host (ACTIVE)
+# =============================================================================
+# REDACTED-HOST.sslip.io resolves to the droplet's reserved IP via sslip.io's
+# wildcard DNS, which lets Caddy obtain a real certificate before the 1nky.com
+# nameserver flip at the registrar. The PWA on Vercel talks to this origin over
+# wss:// and https://. When 1nky.com's A records resolve here, add
+# `1nky.com, www.1nky.com` to the address line below and redeploy — nothing
+# else changes.
+# =============================================================================
+
+REDACTED-HOST.sslip.io {
+	import scrub_headers
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "DENY"
+	}
+
+	@relay path /relay /relay/*
+	handle @relay {
+		reverse_proxy strfry:7777
+	}
+
+	handle_path /api/* {
+		reverse_proxy api:3001
+	}
+
+	handle_path /media/* {
+		request_body {
+			max_size 6MB
+		}
+		import immutable_media
+		reverse_proxy media:3002
+	}
+
+	# The PWA itself lives on Vercel until 1nky.com points here.
+	handle {
+		redir https://1nky.vercel.app{uri} temporary
+	}
+}
+
+# =============================================================================
 # PRODUCTION — 1nky.com  (COMMENTED OUT)
 # =============================================================================
 #

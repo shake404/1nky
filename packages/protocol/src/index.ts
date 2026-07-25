@@ -8,7 +8,15 @@
  */
 
 // --- Kinds -----------------------------------------------------------------
-export { ALL_KINDS, isKnownKind, KINDS } from './kinds.js';
+export {
+  ALL_KINDS,
+  isKnownKind,
+  isRelayAcceptedKind,
+  isWrapInternalKind,
+  KINDS,
+  RELAY_ACCEPTED_KINDS,
+  WRAP_INTERNAL_KINDS,
+} from './kinds.js';
 export type { Kind, KindName } from './kinds.js';
 
 // --- Copy deck -------------------------------------------------------------
@@ -53,6 +61,7 @@ export {
   imetaTag,
   normalizeBoard,
 } from './builders.js';
+export { PROFILE_BIO_MAX } from './builders.js';
 export type {
   BuilderOptions,
   BuildBuffOptions,
@@ -64,6 +73,16 @@ export type {
   BuildThreadOpInput,
   ReportTarget,
 } from './builders.js';
+
+// --- Private messages (NIP-17 / NIP-59) ------------------------------------
+export {
+  DM_TEXT_MAX,
+  GIFT_WRAP_MAX_BACKDATE_SECONDS,
+  giftWrapRecipient,
+  unwrapMessage,
+  wrapMessage,
+} from './dm.js';
+export type { UnwrappedMessage } from './dm.js';
 
 // --- Blackbook (NIP-49) ----------------------------------------------------
 export {
