@@ -36,6 +36,15 @@ export function Landing(): JSX.Element {
             hand over to anyone who comes asking. Your pictures get scrubbed clean on
             your phone before they ever leave it.
           </p>
+          <a
+            href="https://docs.1nky.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="kicker"
+            style={{ textDecoration: 'underline' }}
+          >
+            Read the whole thing
+          </a>
         </div>
       </div>
     </div>

@@ -213,6 +213,17 @@ export function Settings(): JSX.Element {
             What&apos;s coming
           </Link>
         </div>
+        <div className="settings-row">
+          <span className="muted">How all of it works — tags, crews, beef, keeping yourself covered.</span>
+          <a
+            href="https://docs.1nky.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn--ghost btn--sm sticker"
+          >
+            Read up
+          </a>
+        </div>
         <p className="help">
           A holler is an ordinary post on an ordinary board. Same rules as the wall — no
           name, no number, just your tag.

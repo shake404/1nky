@@ -6,6 +6,7 @@ import { QrBlock } from '../components/QrBlock.js';
 import { Spraying } from '../components/Spraying.js';
 import { POW_BITS } from '../lib/config.js';
 import { saveCrewKey } from '../lib/crew-keys.js';
+import { backUpCrewKey } from '../lib/crew-sync.js';
 import {
   createCrew,
   crewTemplates,
@@ -79,6 +80,12 @@ export function CreateCrew(): JSX.Element {
       // Best effort — a failure here does not block the blackbook export that
       // already happened above or the link below.
       await saveCrewKey({ pubkey: created.pubkey, secret: created.secret, name: created.name }).catch(() => undefined);
+
+      // Back the crew key up ENCRYPTED to the founder's own tag so their OTHER
+      // devices can pull it down and get the founder panel too. Fire-and-forget
+      // and best effort — it never throws and must never block the blackbook
+      // export or the link below.
+      void backUpCrewKey(tag, { pubkey: created.pubkey, secret: created.secret, name: created.name });
 
       // Export the crew blackbook immediately — this is the one time the raw
       // crew secret is on screen; the founder hands it off.

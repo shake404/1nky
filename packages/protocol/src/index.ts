@@ -128,6 +128,16 @@ export {
 } from './dm.js';
 export type { UnwrappedMessage } from './dm.js';
 
+// --- Crew-key sync (kind 30078, nip44 self-encrypted) ----------------------
+export {
+  buildCrewKeyBackup,
+  CREW_KEY_BACKUP_DTAG_PREFIX,
+  decryptCrewKey,
+  encryptCrewKey,
+  parseCrewKeyBackup,
+} from './crew-key.js';
+export type { CrewKeyPayload } from './crew-key.js';
+
 // --- Blackbook (NIP-49) ----------------------------------------------------
 export {
   BLACKBOOK_LOGN,

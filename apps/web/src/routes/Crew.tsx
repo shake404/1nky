@@ -41,6 +41,7 @@ export function Crew(): JSX.Element {
   const [page, setPage] = useState<CrewPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [isFounder, setIsFounder] = useState(false);
+  const [founderName, setFounderName] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage | null>(null);
 
   const valid = HEX64.test(pubkey);
@@ -49,10 +50,18 @@ export function Crew(): JSX.Element {
     if (!valid) return;
     let live = true;
     setLoading(true);
+    setFounderName(null);
     void fetchCrew(pubkey).then((found) => {
       if (!live) return;
       setPage(found);
       setLoading(false);
+      // Resolve the founder's own tag so "founded by" reads as their name, not
+      // their mark. A miss falls back to the mark (done at render).
+      if (found.crew.founderPubkey) {
+        void fetchProfile(found.crew.founderPubkey).then((meta) => {
+          if (live) setFounderName(meta?.name?.trim() || null);
+        });
+      }
     });
     void hasCrewKey(pubkey).then((found) => {
       if (live) setIsFounder(found);
@@ -174,8 +183,8 @@ export function Crew(): JSX.Element {
           {crew.founderPubkey ? (
             <p className="muted" style={{ fontSize: '0.85rem', marginTop: 4 }}>
               founded by{' '}
-              <Link to={`/w/${crew.founderPubkey}`} className="mono" style={{ textDecoration: 'underline' }}>
-                {fingerprint(crew.founderPubkey)}
+              <Link to={`/w/${crew.founderPubkey}`} style={{ textDecoration: 'underline' }}>
+                {founderName || fingerprint(crew.founderPubkey)}
               </Link>
               {crew.foundedAt ? ` · est. ${new Date(crew.foundedAt * 1000).getFullYear()}` : ''}
             </p>

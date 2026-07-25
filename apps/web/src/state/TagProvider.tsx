@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { syncCrewKeys } from '../lib/crew-sync.js';
 import { requestPersistence } from '../lib/db.js';
 import {
   adoptTag,
@@ -38,10 +39,25 @@ export function TagProvider({ children }: { children: ReactNode }): JSX.Element 
   const [tag, setTag] = useState<Tag | null>(null);
   const [ready, setReady] = useState(false);
   const [persisted, setPersisted] = useState(false);
+  // Which tag pubkey we have already pulled crew keys for, so the sync runs
+  // once per tag load rather than on every render.
+  const syncedFor = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     setTag(await loadTag());
   }, []);
+
+  // On login / a tag becoming available, pull the writer's own crew-key
+  // backups off the relay into this device's keyring, so a founder on a fresh
+  // device gets their crews (and founder panel) back. Reads the tag only —
+  // never writes the single-identity store — and is a silent, idempotent
+  // best-effort background sync (no user-facing copy).
+  useEffect(() => {
+    if (!tag) return;
+    if (syncedFor.current === tag.pubkey) return;
+    syncedFor.current = tag.pubkey;
+    void syncCrewKeys(tag).catch(() => undefined);
+  }, [tag]);
 
   useEffect(() => {
     let live = true;

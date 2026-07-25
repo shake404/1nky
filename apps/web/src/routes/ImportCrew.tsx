@@ -2,6 +2,7 @@ import { getPublicKey } from '@1nky/protocol';
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { saveCrewKey } from '../lib/crew-keys.js';
+import { backUpCrewKey } from '../lib/crew-sync.js';
 import { linkCrewToFounder, saveFoundedCrew } from '../lib/crews.js';
 import { importBlackbook } from '../lib/identity.js';
 import { fetchProfile } from '../lib/profiles.js';
@@ -53,8 +54,13 @@ export function ImportCrew(): JSX.Element {
       await saveFoundedCrew({ pubkey: crewPubkey, name, foundedByMe: true });
 
       // Best effort: put the crew on this writer's own page too, so it shows
-      // up everywhere their tag does. Never blocks the import itself.
-      if (tag) await linkCrewToFounder(tag, crewPubkey).catch(() => undefined);
+      // up everywhere their tag does, AND back the crew key up encrypted to
+      // their tag so their other devices can pull it down. Neither blocks the
+      // import itself.
+      if (tag) {
+        await linkCrewToFounder(tag, crewPubkey).catch(() => undefined);
+        void backUpCrewKey(tag, { pubkey: crewPubkey, secret, name });
+      }
 
       say('You hold this crew on this device now.');
       navigate(`/crew/${crewPubkey}`, { replace: true });
