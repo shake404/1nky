@@ -1,20 +1,27 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { Express } from 'express';
 import sharp from 'sharp';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { createApp } from './app.js';
 import { UPLOADER_METADATA_KEY } from './config.js';
+import { HttpError } from './errors.js';
 import {
   authHeader,
+  fakeTranscoder,
   makeKeypair,
   MemoryBlobStorage,
   signAuthEvent,
   TEST_CONFIG,
   type TestKeypair,
 } from './test-helpers.js';
+import type { VideoTranscoder } from './video.js';
 
 function hash(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex');
@@ -293,6 +300,123 @@ describe('PUT /upload', () => {
   });
 });
 
+describe('PUT /upload — video', () => {
+  function videoApp(transcoder: VideoTranscoder = fakeTranscoder()): Express {
+    return createApp({ storage, config: TEST_CONFIG, transcodeVideo: transcoder });
+  }
+
+  function videoBody(size = 2048): Buffer {
+    return Buffer.alloc(size, 7);
+  }
+
+  it('routes a video content-type through the transcoder and returns a video descriptor', async () => {
+    const body = videoBody();
+    const res = await request(videoApp())
+      .put('/upload')
+      .set('Authorization', authHeader(uploadAuth(body)))
+      .set('Content-Type', 'video/mp4')
+      .send(body);
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      type: 'video/mp4',
+      duration: 12,
+      width: 1280,
+      height: 720,
+      url: expect.stringContaining('https://media.test/') as unknown as string,
+    });
+    expect(res.body.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(res.body.poster).toBeDefined();
+    expect(res.body.poster.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(res.body.poster.url).toBe(`https://media.test/${res.body.poster.sha256 as string}`);
+    expect(res.body.url).toBe(`https://media.test/${res.body.sha256 as string}`);
+    expect(typeof res.body.uploaded).toBe('number');
+  });
+
+  it('stores the transcoded mp4 and the poster webp with the right content types', async () => {
+    const body = videoBody();
+    const res = await request(videoApp())
+      .put('/upload')
+      .set('Authorization', authHeader(uploadAuth(body)))
+      .set('Content-Type', 'video/quicktime')
+      .send(body);
+
+    expect(res.status).toBe(201);
+    const video = storage.objects.get(res.body.sha256 as string)!;
+    expect(video.contentType).toBe('video/mp4');
+    expect(video.cacheControl).toBe('public, max-age=31536000, immutable');
+    expect(video.metadata[UPLOADER_METADATA_KEY]).toBe(keys.pubkey);
+
+    const poster = storage.objects.get(res.body.poster.sha256 as string)!;
+    expect(poster.contentType).toBe('image/webp');
+    expect(poster.cacheControl).toBe('public, max-age=31536000, immutable');
+    expect(poster.metadata[UPLOADER_METADATA_KEY]).toBe(keys.pubkey);
+
+    // The descriptor addresses the transcoded bytes, not the raw upload.
+    expect(hash(video.body)).toBe(res.body.sha256);
+    expect(hash(poster.body)).toBe(res.body.poster.sha256);
+  });
+
+  it('routes an image content-type through sharp, never the transcoder', async () => {
+    let transcoderCalled = false;
+    const spy: VideoTranscoder = async () => {
+      transcoderCalled = true;
+      return { video: Buffer.alloc(0), poster: Buffer.alloc(0), duration: 1, width: 1, height: 1 };
+    };
+    const png = await makePng();
+    const res = await request(videoApp(spy))
+      .put('/upload')
+      .set('Authorization', authHeader(uploadAuth(png)))
+      .set('Content-Type', 'image/png')
+      .send(png);
+
+    expect(res.status).toBe(201);
+    expect(res.body.type).toBe('image/webp');
+    expect(transcoderCalled).toBe(false);
+  });
+
+  it('rejects an oversize video body with 413 at the video cap', async () => {
+    const big = Buffer.alloc(TEST_CONFIG.maxVideoBytes + 1024, 7);
+    const res = await request(videoApp())
+      .put('/upload')
+      .set('Authorization', authHeader(uploadAuth(big)))
+      .set('Content-Type', 'video/mp4')
+      .send(big);
+
+    expect(res.status).toBe(413);
+    expect(storage.objects.size).toBe(0);
+  });
+
+  it('returns 415 when the transcoder cannot decode the video', async () => {
+    const failing: VideoTranscoder = async () => {
+      throw new HttpError(415, 'video could not be decoded');
+    };
+    const body = videoBody();
+    const res = await request(videoApp(failing))
+      .put('/upload')
+      .set('Authorization', authHeader(uploadAuth(body)))
+      .set('Content-Type', 'video/webm')
+      .send(body);
+
+    expect(res.status).toBe(415);
+    expect(storage.objects.size).toBe(0);
+  });
+
+  it('rejects a video body whose hash does not match the x tag with 400', async () => {
+    const body = videoBody();
+    const other = videoBody(4096);
+    const res = await request(videoApp())
+      .put('/upload')
+      .set('Authorization', authHeader(uploadAuth(other)))
+      .set('Content-Type', 'video/mp4')
+      .send(body);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/do not match/i);
+    expect(storage.objects.size).toBe(0);
+  });
+});
+
 describe('HEAD /upload (BUD-06)', () => {
   it('accepts a compliant preflight', async () => {
     const res = await request(app)
@@ -306,10 +430,26 @@ describe('HEAD /upload (BUD-06)', () => {
   it('rejects an unsupported X-Content-Type with 415 and a reason', async () => {
     const res = await request(app)
       .head('/upload')
-      .set('X-Content-Type', 'video/mp4')
+      .set('X-Content-Type', 'text/html')
       .set('X-Content-Length', '1024');
     expect(res.status).toBe(415);
     expect(res.headers['x-reason']).toBeDefined();
+  });
+
+  it('accepts a video X-Content-Type within the video cap', async () => {
+    const res = await request(app)
+      .head('/upload')
+      .set('X-Content-Type', 'video/mp4')
+      .set('X-Content-Length', '1024');
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects an oversize video X-Content-Length with 413 at the video cap', async () => {
+    const res = await request(app)
+      .head('/upload')
+      .set('X-Content-Type', 'video/mp4')
+      .set('X-Content-Length', String(TEST_CONFIG.maxVideoBytes + 1));
+    expect(res.status).toBe(413);
   });
 
   it('rejects an oversize X-Content-Length with 413', async () => {
@@ -534,5 +674,104 @@ describe('error surface', () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('internal error');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Real-ffmpeg integration. Gated behind FFMPEG_TESTS=1 so `pnpm test` stays
+// green on CI without ffmpeg. When enabled, this builds a tiny clip WITH
+// injected metadata, uploads it through the real transcoder, and asserts the
+// stored mp4 carries NONE of that metadata and that the duration is capped.
+// ---------------------------------------------------------------------------
+function ffmpegAvailable(): boolean {
+  try {
+    const res = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+    return res.error === undefined && res.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+const RUN_FFMPEG = process.env.FFMPEG_TESTS === '1' && ffmpegAvailable();
+
+(RUN_FFMPEG ? describe : describe.skip)('PUT /upload — video ffmpeg integration', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), '1nky-ffmpeg-it-'));
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('transcodes a real clip, strips ALL metadata, caps duration <= 60s', async () => {
+    // Build a 2-second clip WITH injected metadata that must be stripped.
+    const rawPath = join(dir, 'raw.mp4');
+    const makeRaw = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=duration=2:size=320x240:rate=10',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-metadata',
+        'title=LEAK-METADATA',
+        '-metadata',
+        'comment=secret-gps-40.7,-74.0',
+        rawPath,
+      ],
+      { stdio: 'ignore' },
+    );
+    expect(makeRaw.error).toBeUndefined();
+    expect(makeRaw.status).toBe(0);
+
+    const raw = readFileSync(rawPath);
+
+    // Sanity: the raw clip really does carry the metadata we expect stripped.
+    const rawProbe = spawnSync(
+      'ffprobe',
+      ['-v', 'error', '-show_format', '-of', 'json', rawPath],
+      { encoding: 'utf8' },
+    );
+    const rawTags = (JSON.parse(rawProbe.stdout).format?.tags ?? {}) as Record<string, string>;
+    expect(JSON.stringify(rawTags)).toContain('LEAK-METADATA');
+
+    const res = await request(app)
+      .put('/upload')
+      .set('Authorization', authHeader(uploadAuth(raw)))
+      .set('Content-Type', 'video/mp4')
+      .send(raw);
+
+    expect(res.status).toBe(201);
+    expect(res.body.type).toBe('video/mp4');
+    expect(res.body.duration).toBeGreaterThan(0);
+    expect(res.body.duration).toBeLessThanOrEqual(60);
+    expect(res.body.width).toBeLessThanOrEqual(1280);
+    expect(res.body.height).toBeLessThanOrEqual(720);
+
+    // The stored mp4 must contain NONE of the injected metadata.
+    const stored = storage.objects.get(res.body.sha256 as string)!;
+    const storedPath = join(dir, 'stored.mp4');
+    writeFileSync(storedPath, stored.body);
+    const probe = spawnSync(
+      'ffprobe',
+      ['-v', 'error', '-show_format', '-of', 'json', storedPath],
+      { encoding: 'utf8' },
+    );
+    const tags = (JSON.parse(probe.stdout).format?.tags ?? {}) as Record<string, string>;
+    const blob = JSON.stringify(tags);
+    expect(blob).not.toContain('LEAK-METADATA');
+    expect(blob).not.toContain('secret-gps');
+
+    // The poster is a webp still with no metadata.
+    const poster = storage.objects.get(res.body.poster.sha256 as string)!;
+    const posterMeta = await sharp(poster.body).metadata();
+    expect(posterMeta.format).toBe('webp');
+    expect(posterMeta.exif).toBeUndefined();
   });
 });

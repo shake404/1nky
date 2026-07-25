@@ -1,4 +1,13 @@
-import { buildBuff, buildFlick, buildProfile, buildReport, KINDS } from '@1nky/protocol';
+import {
+  buildBuff,
+  buildCrewBadgeRegistry,
+  buildCrewDefinition,
+  buildFlick,
+  buildProfile,
+  buildReport,
+  buildVideo,
+  KINDS,
+} from '@1nky/protocol';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -24,6 +33,20 @@ function flick(overrides: Parameters<typeof makeEvent>[0] = {}) {
     createdAt: NOW - 10,
   });
   return makeEvent({ ...template, id: hex('11'), pubkey: AUTHOR, ...overrides });
+}
+
+function video(overrides: Parameters<typeof makeEvent>[0] = {}) {
+  const template = buildVideo({
+    url: 'https://cdn.example/v.mp4',
+    sha256: SHA,
+    dims: { width: 1280, height: 720 },
+    durationSec: 12,
+    poster: 'https://cdn.example/p.webp',
+    boards: ['sf'],
+    caption: 'roll-up',
+    createdAt: NOW - 5,
+  });
+  return makeEvent({ ...template, id: hex('22'), pubkey: AUTHOR, ...overrides });
 }
 
 describe('indexEvent', () => {
@@ -88,6 +111,31 @@ describe('indexEvent', () => {
     expect(db.matching('insert into events')).toHaveLength(1);
   });
 
+  it('stores a video (kind 22) and discovers its boards', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, video(), counters, { now: NOW });
+
+    expect(counters.videos).toBe(1);
+    expect(db.matching('insert into videos')).toHaveLength(1);
+    const params = db.matching('insert into videos')[0]?.params;
+    expect(params).toContain('https://cdn.example/v.mp4');
+    expect(params).toContain('https://cdn.example/p.webp');
+    // Boards are auto-registered just like flicks.
+    expect(db.matching('insert into boards')).toHaveLength(1);
+  });
+
+  it('counts a video with no url or blob hash as invalid but keeps the event', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, makeEvent({ kind: KINDS.VIDEO, tags: [] }), counters, { now: NOW });
+
+    expect(counters.invalid).toBe(1);
+    expect(counters.videos).toBe(0);
+    expect(db.matching('insert into events')).toHaveLength(1);
+    expect(db.matching('insert into videos')).toHaveLength(0);
+  });
+
   it('increments the reported writer report_count, not the reporter', async () => {
     const db = fakeDb();
     const counters = newCounters();
@@ -144,6 +192,60 @@ describe('indexEvent', () => {
     await indexEvent(rejected, registry, rejectedCounters, { now: NOW, sitePubkey: hex('ff') });
     expect(rejectedCounters.boards).toBe(0);
     expect(rejected.matching('insert into boards')).toHaveLength(0);
+  });
+
+  it('indexes a crew definition (d:crew) signed by the crew own key', async () => {
+    const def = makeEvent({
+      ...buildCrewDefinition({ name: 'FASE', members: [hex('01'), hex('02')] }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+      id: hex('33'),
+    });
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, def, counters, { now: NOW });
+
+    expect(counters.crews).toBe(1);
+    const upsert = db.matching('insert into crews')[0];
+    expect(upsert).toBeDefined();
+    expect(upsert?.params[0]).toBe(AUTHOR);
+    expect(upsert?.params[1]).toBe('FASE');
+    expect(upsert?.params[5]).toEqual([hex('01'), hex('02')]);
+  });
+
+  it('counts a crew definition with no name as nothing derived', async () => {
+    const def = makeEvent({
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+      tags: [['d', 'crew']],
+      content: '{"name":""}',
+    });
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, def, counters, { now: NOW });
+
+    expect(counters.crews).toBe(0);
+    expect(db.matching('insert into crews')).toHaveLength(0);
+    // The raw event is still kept.
+    expect(db.matching('insert into events')).toHaveLength(1);
+  });
+
+  it('only indexes crew badges (d:crew-badges) from the site key', async () => {
+    const template = buildCrewBadgeRegistry({ crewPubkeys: [hex('01'), hex('02')] });
+    const badge = (pubkey: string) =>
+      makeEvent({ ...template, kind: KINDS.APP_DATA, pubkey, id: hex(pubkey.slice(0, 1)) });
+
+    const accepted = fakeDb();
+    const acceptedCounters = newCounters();
+    await indexEvent(accepted, badge(AUTHOR), acceptedCounters, { now: NOW, sitePubkey: AUTHOR });
+    expect(acceptedCounters.crewBadges).toBe(2);
+    expect(accepted.matching('insert into crew_badges')).toHaveLength(2);
+
+    const rejected = fakeDb();
+    const rejectedCounters = newCounters();
+    await indexEvent(rejected, badge(hex('99')), rejectedCounters, { now: NOW, sitePubkey: AUTHOR });
+    expect(rejectedCounters.crewBadges).toBe(0);
+    expect(rejected.matching('insert into crew_badges')).toHaveLength(0);
   });
 
   it('writes ZERO rows for a gift wrap (kind 1059)', async () => {

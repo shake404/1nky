@@ -49,6 +49,7 @@ export function writerRoutes({ db, config }: Deps): Router {
           updatedAt: null,
           eventCount: 0,
           banned: false,
+          crews: [],
         };
 
     res.json({

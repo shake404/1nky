@@ -1,10 +1,25 @@
-import { buildBuff, buildComment, buildFlick, buildProfile, buildReport, KINDS } from '@1nky/protocol';
+import {
+  buildBuff,
+  buildComment,
+  buildCrewBadgeRegistry,
+  buildCrewDefinition,
+  buildFlick,
+  buildProfile,
+  buildReport,
+  buildVideo,
+  CREW_BADGES_DTAG,
+  CREW_DEFINITION_DTAG,
+  KINDS,
+} from '@1nky/protocol';
 import { describe, expect, it } from 'vitest';
 
 import {
+  boardKindOf,
   boardRowsFromFlick,
   boardRowsFromRegistry,
   boardsOf,
+  crewBadgeRowsFromRegistry,
+  crewDefinitionRowFromEvent,
   expirationOf,
   isExpired,
   parseImeta,
@@ -17,6 +32,7 @@ import {
   toFlickRow,
   toProfileRow,
   toReportRow,
+  toVideoRow,
 } from './mappers.js';
 import { hex, makeEvent } from './testing/fixtures.js';
 
@@ -95,6 +111,7 @@ describe('toProfileRow (kind 0)', () => {
       city: 'SF Bay',
       bio: 'panels and rooftops',
       avatarSha256: SHA,
+      crews: [hex('01'), hex('02')],
     });
     const row = toProfileRow(makeEvent({ ...template, pubkey: AUTHOR, kind: KINDS.PROFILE }));
 
@@ -104,8 +121,23 @@ describe('toProfileRow (kind 0)', () => {
       city: 'sf-bay',
       about: 'panels and rooftops',
       avatar_sha256: SHA,
+      crews: [hex('01'), hex('02')],
     });
     expect(row.first_seen).toBe(row.updated_at);
+  });
+
+  it('parses self-declared crews from kind-0 content, deduped and lowercased', () => {
+    const row = toProfileRow(
+      makeEvent({ kind: 0, content: JSON.stringify({ name: 'X', crews: ['AB'.repeat(32), '  ' + 'CD'.repeat(32) + '  ', 'AB'.repeat(32), 9] }) }),
+    );
+    expect(row.crews).toEqual(['ab'.repeat(32), 'cd'.repeat(32)]);
+  });
+
+  it('leaves crews empty when the writer declares none', () => {
+    const template = buildProfile({ tag: 'SMOG' });
+    expect(toProfileRow(makeEvent({ ...template, kind: KINDS.PROFILE })).crews).toEqual([]);
+    expect(toProfileRow(makeEvent({ kind: 0, content: '{"name":"X"}' })).crews).toEqual([]);
+    expect(toProfileRow(makeEvent({ kind: 0, content: '{"name":"X","crews":"not-an-array"}' })).crews).toEqual([]);
   });
 
   it('leaves `about` null when the writer has no bio', () => {
@@ -196,7 +228,77 @@ describe('toFlickRow (kind 20)', () => {
       width: null,
       height: null,
       blurhash: null,
+      poster: null,
+      duration: null,
     });
+  });
+
+  it('reads the video poster still and duration out of imeta', () => {
+    const fields = parseImeta([
+      'imeta',
+      'url https://m.example/v.mp4',
+      'x ' + SHA,
+      'dim 1280x720',
+      'image https://m.example/p.webp',
+      'duration 42',
+    ]);
+    expect(fields.poster).toBe('https://m.example/p.webp');
+    expect(fields.duration).toBe(42);
+    expect(parseImeta(['imeta', 'duration soon']).duration).toBeNull();
+  });
+});
+
+describe('toVideoRow (kind 22)', () => {
+  const template = buildVideo({
+    url: 'https://cdn.example/v.mp4',
+    sha256: SHA,
+    dims: { width: 1280, height: 720 },
+    durationSec: 33,
+    poster: 'https://cdn.example/p.webp',
+    blurhash: 'LEHV6n',
+    caption: 'roll-up',
+    boards: ['SF Bay', 'sf-bay', 'Trains'],
+  });
+
+  it('maps imeta into columns', () => {
+    const row = toVideoRow(makeEvent({ ...template, pubkey: AUTHOR, id: hex('11') }));
+    expect(row).toEqual({
+      event_id: hex('11'),
+      pubkey: AUTHOR,
+      created_at: template.created_at,
+      url: 'https://cdn.example/v.mp4',
+      sha256: SHA,
+      poster_url: 'https://cdn.example/p.webp',
+      duration: 33,
+      width: 1280,
+      height: 720,
+      blurhash: 'LEHV6n',
+      caption: 'roll-up',
+      boards: ['sf-bay', 'trains'],
+    });
+  });
+
+  it('falls back to top-level tags when imeta is absent', () => {
+    const row = toVideoRow(
+      makeEvent({
+        kind: 22,
+        tags: [
+          ['url', 'https://cdn.example/v2.mp4'],
+          ['x', SHA],
+          ['duration', '9'],
+          ['image', 'https://cdn.example/p2.webp'],
+        ],
+      }),
+    );
+    expect(row?.url).toBe('https://cdn.example/v2.mp4');
+    expect(row?.sha256).toBe(SHA);
+    expect(row?.duration).toBe(9);
+    expect(row?.poster_url).toBe('https://cdn.example/p2.webp');
+    expect(row?.width).toBeNull();
+  });
+
+  it('rejects a video with no url or blob hash', () => {
+    expect(toVideoRow(makeEvent({ kind: 22, tags: [['t', 'sf']] }))).toBeNull();
   });
 });
 
@@ -310,12 +412,156 @@ describe('boards', () => {
       { slug: 'oakland', title: 'oakland', kind: 'city', created_by: null, created_at: event.created_at },
     ]);
   });
+
+  it('classifies discovered boards by dash-namespace prefix', () => {
+    const event = makeEvent({
+      kind: 20,
+      tags: [
+        ['t', 'sf-bay'],
+        ['t', 'type-throwie'],
+        ['t', 'surface-street'],
+        ['t', 'region-bay-area'],
+        ['t', 'legal-permission'],
+      ],
+    });
+    const rows = boardRowsFromFlick(event);
+    expect(rows.map((r) => [r.slug, r.kind])).toEqual([
+      ['sf-bay', 'city'],
+      ['type-throwie', 'type'],
+      ['surface-street', 'surface'],
+      ['region-bay-area', 'region'],
+      ['legal-permission', 'legal'],
+    ]);
+  });
+
+  it('boardKindOf treats an unprefixed slug as a city', () => {
+    expect(boardKindOf('oakland')).toBe('city');
+    expect(boardKindOf('type-throwie')).toBe('type');
+    expect(boardKindOf('surface-freight')).toBe('surface');
+    expect(boardKindOf('region-pnw')).toBe('region');
+    expect(boardKindOf('legal-permission')).toBe('legal');
+  });
+
+  it('reads a region per registry entry', () => {
+    const event = makeEvent({
+      kind: 30078,
+      pubkey: AUTHOR,
+      tags: [['d', 'boards']],
+      content: JSON.stringify({
+        boards: [
+          { slug: 'region-bay-area', title: 'Bay Area', kind: 'region' },
+          { slug: 'sf-bay', title: 'SF / Bay', kind: 'city', region: 'region-bay-area' },
+          { slug: 'oak', kind: 'city' },
+        ],
+      }),
+    });
+    const rows = boardRowsFromRegistry(event);
+    expect(rows[0]?.region_slug).toBeUndefined();
+    expect(rows[1]?.region_slug).toBe('region-bay-area');
+    expect(rows[2]?.region_slug).toBeUndefined();
+  });
+});
+
+describe('crewDefinitionRowFromEvent (kind 30078 d:crew)', () => {
+  it('maps a crew definition built by @1nky/protocol', () => {
+    const template = buildCrewDefinition({
+      name: 'FASE',
+      members: [hex('01'), hex('02')],
+      founderPubkey: hex('03'),
+      createdAt: 1_700_000_000,
+    });
+    const row = crewDefinitionRowFromEvent(
+      makeEvent({ ...template, pubkey: AUTHOR, kind: KINDS.APP_DATA }),
+    );
+    expect(row).toEqual({
+      crew_pubkey: AUTHOR,
+      name: 'FASE',
+      mark: null,
+      founder_pubkey: hex('03'),
+      founded_at: 1_700_000_000,
+      members: [hex('01'), hex('02')],
+      created_at: 1_700_000_000,
+      updated_at: 1_700_000_000,
+    });
+  });
+
+  it('merges p-tags and content.members, deduped', () => {
+    const event = makeEvent({
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+      tags: [
+        ['d', CREW_DEFINITION_DTAG],
+        ['p', hex('01')],
+        ['p', hex('02')],
+      ],
+      content: JSON.stringify({ name: 'X', members: [hex('02'), hex('04'), 'not-hex'] }),
+    });
+    expect(crewDefinitionRowFromEvent(event)?.members).toEqual([hex('01'), hex('02'), hex('04')]);
+  });
+
+  it('returns null for a different d-tag, no name, or unparseable content', () => {
+    expect(
+      crewDefinitionRowFromEvent(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'boards']], content: '{"name":"x"}' }),
+      ),
+    ).toBeNull();
+    expect(
+      crewDefinitionRowFromEvent(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'crew']], content: '{"name":""}' }),
+      ),
+    ).toBeNull();
+    expect(
+      crewDefinitionRowFromEvent(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'crew']], content: '{' }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('crewBadgeRowsFromRegistry (kind 30078 d:crew-badges)', () => {
+  it('maps the site-key-signed badge attestation', () => {
+    const template = buildCrewBadgeRegistry({ crewPubkeys: [hex('01'), hex('02')], createdAt: 123 });
+    const rows = crewBadgeRowsFromRegistry(
+      makeEvent({ ...template, pubkey: AUTHOR, kind: KINDS.APP_DATA }),
+    );
+    expect(rows).toEqual([
+      { crew_pubkey: hex('01'), verified_at: 123, verified_by: AUTHOR },
+      { crew_pubkey: hex('02'), verified_at: 123, verified_by: AUTHOR },
+    ]);
+  });
+
+  it('dedupes and falls back to created_at when verifiedAt is missing', () => {
+    const event = makeEvent({
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+      created_at: 555,
+      tags: [['d', CREW_BADGES_DTAG]],
+      content: JSON.stringify({ badges: [{ pubkey: hex('01') }, { pubkey: hex('01') }] }),
+    });
+    expect(crewBadgeRowsFromRegistry(event)).toEqual([
+      { crew_pubkey: hex('01'), verified_at: 555, verified_by: AUTHOR },
+    ]);
+  });
+
+  it('returns nothing for a different d-tag or junk content', () => {
+    expect(
+      crewBadgeRowsFromRegistry(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'crew']], content: '{"badges":[]}' }),
+      ),
+    ).toEqual([]);
+    expect(
+      crewBadgeRowsFromRegistry(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'crew-badges']], content: '{' }),
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe('routeOf', () => {
   it('routes every kind 1NKY stores', () => {
     expect(routeOf(KINDS.PROFILE)).toBe('profile');
     expect(routeOf(KINDS.FLICK)).toBe('flick');
+    expect(routeOf(KINDS.VIDEO)).toBe('video');
     expect(routeOf(KINDS.COMMENT)).toBe('comment');
     expect(routeOf(KINDS.REPORT)).toBe('report');
     expect(routeOf(KINDS.DELETE)).toBe('deletion');

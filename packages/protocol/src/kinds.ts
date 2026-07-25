@@ -26,6 +26,8 @@ export const KINDS = {
   DM: 14,
   /** NIP-68 picture event — user-facing copy: "flick". */
   FLICK: 20,
+  /** NIP-71 short-form video — user-facing copy: "flick" (video). */
+  VIDEO: 22,
   /**
    * NIP-59 gift wrap. This is the ONLY private-message kind that goes on the
    * wire: signed by a throwaway ephemeral key, `p`-tagged to the recipient,

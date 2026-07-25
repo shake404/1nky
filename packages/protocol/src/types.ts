@@ -51,6 +51,34 @@ export interface FlickImeta {
   size?: number;
 }
 
+/**
+ * The media description carried in a kind-22 `imeta` tag (NIP-92 + NIP-71).
+ *
+ * `sha256` is the Blossom blob address of the transcoded *video* bytes — the
+ * clip's identity. `poster` is the URL of a still frame (a separate webp blob)
+ * shown before the video plays.
+ */
+export interface VideoImeta {
+  /** Absolute URL the video blob is served from. */
+  url: string;
+  /** Lowercase hex SHA-256 of the served video bytes (the `x` value). */
+  sha256: string;
+  /** Pixel dimensions, serialised as `dim <w>x<h>`. */
+  dims: FlickDims;
+  /** Duration in seconds, serialised as `duration <sec>`. */
+  durationSec: number;
+  /** Absolute URL of the poster still, serialised as `image <url>`. */
+  poster: string;
+  /** MIME type of the served bytes. Defaults to `video/mp4`. */
+  mime?: string;
+  /** Blurhash placeholder shown before the video plays. */
+  blurhash?: string;
+  /** Accessibility description. */
+  alt?: string;
+  /** Byte length of the served video bytes. */
+  size?: number;
+}
+
 /** The subset of an event needed to check its proof of work. */
 export interface PowCheckable {
   id: string;

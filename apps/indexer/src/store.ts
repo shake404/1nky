@@ -4,14 +4,18 @@ import type { Queryable, Sql } from './types.js';
 import {
   boardRowsFromFlick,
   boardRowsFromRegistry,
+  crewBadgeRowsFromRegistry,
+  crewDefinitionRowFromEvent,
   isExpired,
   routeOf,
+  tagValue,
   toCommentRow,
   toDeletionRow,
   toEventRow,
   toFlickRow,
   toProfileRow,
   toReportRow,
+  toVideoRow,
 } from './mappers.js';
 import * as q from './queries.js';
 
@@ -20,10 +24,13 @@ export interface Counters {
   events: number;
   profiles: number;
   flicks: number;
+  videos: number;
   comments: number;
   reports: number;
   deletions: number;
   boards: number;
+  crews: number;
+  crewBadges: number;
   buffed: number;
   duplicates: number;
   expired: number;
@@ -40,10 +47,13 @@ export function newCounters(): Counters {
     events: 0,
     profiles: 0,
     flicks: 0,
+    videos: 0,
     comments: 0,
     reports: 0,
     deletions: 0,
     boards: 0,
+    crews: 0,
+    crewBadges: 0,
     buffed: 0,
     duplicates: 0,
     expired: 0,
@@ -130,6 +140,20 @@ export async function indexEvent(
       return;
     }
 
+    case 'video': {
+      const video = toVideoRow(event);
+      if (!video) {
+        counters.invalid += 1;
+        return;
+      }
+      await run(db, q.upsertVideo(video));
+      counters.videos += 1;
+      for (const board of boardRowsFromFlick(event)) {
+        await run(db, q.upsertBoard(board, 'discovered'));
+      }
+      return;
+    }
+
     case 'comment': {
       const comment = toCommentRow(event);
       if (!comment) {
@@ -173,6 +197,30 @@ export async function indexEvent(
     }
 
     case 'registry': {
+      const d = tagValue(event.tags, 'd');
+      // A crew definition is signed by the crew's own key (anyone may define
+      // their own crew). Membership is the crew-signed roster — the strong
+      // trust list — so it is indexed from whoever holds the crew key.
+      if (d === 'crew') {
+        const crew = crewDefinitionRowFromEvent(event);
+        if (crew) {
+          await run(db, q.upsertCrew(crew));
+          counters.crews += 1;
+        }
+        return;
+      }
+      // A crew badge attestation is signed by the SITE key only — the same
+      // key that signs board registries and mod lists. A badge affects
+      // display, never what the relay accepts.
+      if (d === 'crew-badges') {
+        if (options.sitePubkey && event.pubkey !== options.sitePubkey) return;
+        for (const badge of crewBadgeRowsFromRegistry(event)) {
+          await run(db, q.upsertCrewBadge(badge));
+          counters.crewBadges += 1;
+        }
+        return;
+      }
+      // Board registry (d starts with "boards"), site-key signed.
       if (options.sitePubkey && event.pubkey !== options.sitePubkey) return;
       for (const board of boardRowsFromRegistry(event)) {
         await run(db, q.upsertBoard(board, 'registry'));

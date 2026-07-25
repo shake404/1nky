@@ -14,7 +14,7 @@ import { loadConfig, loadS3Config } from './config.js';
 import { createS3Client, S3BlobStorage } from './storage.js';
 
 export { createApp } from './app.js';
-export type { AppDeps, BlobDescriptor } from './app.js';
+export type { AppDeps, BlobDescriptor, VideoDescriptor } from './app.js';
 export { loadConfig, loadS3Config } from './config.js';
 export type { Env, MediaConfig, S3Config } from './config.js';
 export { HttpError } from './errors.js';
@@ -22,6 +22,8 @@ export { createS3Client, S3BlobStorage } from './storage.js';
 export type { BlobBody, BlobHead, BlobStorage, PutBlobInput } from './storage.js';
 export { verifyBlossomAuth } from './auth.js';
 export { reencodeToWebp } from './image.js';
+export { transcodeVideo } from './video.js';
+export type { VideoTranscoder, VideoTranscodeOptions, VideoTranscodeResult } from './video.js';
 
 export function start(): void {
   const config = loadConfig();

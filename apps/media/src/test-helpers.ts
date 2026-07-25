@@ -10,6 +10,7 @@ import {
 
 import type { MediaConfig } from './config.js';
 import type { BlobBody, BlobHead, BlobStorage, PutBlobInput } from './storage.js';
+import type { VideoTranscoder } from './video.js';
 
 /** In-memory `BlobStorage` double — injected instead of mocking the AWS SDK. */
 export class MemoryBlobStorage implements BlobStorage {
@@ -54,6 +55,7 @@ export class MemoryBlobStorage implements BlobStorage {
 export const TEST_CONFIG: MediaConfig = {
   port: 0,
   maxUploadBytes: 5 * 1024 * 1024,
+  maxVideoBytes: 50 * 1024 * 1024,
   bucket: 'test-bucket',
   publicBase: 'https://media.test',
   maxDimension: 4096,
@@ -102,4 +104,22 @@ export function signAuthEvent(options: AuthEventOptions): SignedEvent {
 /** Encodes a signed event into an `Authorization: Nostr …` header value. */
 export function authHeader(event: SignedEvent): string {
   return `Nostr ${Buffer.from(JSON.stringify(event), 'utf8').toString('base64')}`;
+}
+
+import type { VideoTranscodeResult } from './video.js';
+
+/**
+ * A deterministic in-memory transcoder for tests that exercise the video
+ * upload path without ffmpeg. Returns fixed mp4/poster buffers so the
+ * descriptor shape and storage routing can be asserted without a real encode.
+ */
+export function fakeTranscoder(overrides: Partial<VideoTranscodeResult> = {}): VideoTranscoder {
+  return async () => ({
+    video: Buffer.from('fake-transcoded-mp4'),
+    poster: Buffer.from('fake-poster-webp'),
+    duration: 12,
+    width: 1280,
+    height: 720,
+    ...overrides,
+  });
 }

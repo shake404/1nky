@@ -12,6 +12,7 @@ import {
   request,
   type Responder,
   TEST_CONFIG,
+  videoRow,
 } from './testing/fixtures.js';
 
 const AUTHOR = hex('ab');
@@ -152,6 +153,25 @@ describe('GET /feed', () => {
     const res = await request(createApp(db, TEST_CONFIG), '/feed?limit=2');
     expect((res.body as { nextCursor: string | null }).nextCursor).toBeTypeOf('string');
   });
+
+  it('includes videos alongside flicks, each tagged with its mediaType', async () => {
+    const db = fakeDb((text) => {
+      if (text.includes('from flicks f')) return { rows: [flickRow(), videoRow()] };
+      return undefined;
+    });
+    const res = await request(createApp(db, TEST_CONFIG), '/feed?limit=10');
+    expect(res.status).toBe(200);
+    const items = (res.body as {
+      flicks: { mediaType: string; posterUrl: string | null; duration: number | null }[];
+    }).flicks;
+    expect(items).toHaveLength(2);
+    expect(items[0]?.mediaType).toBe('flick');
+    expect(items[0]?.posterUrl).toBeNull();
+    expect(items[0]?.duration).toBeNull();
+    expect(items[1]?.mediaType).toBe('video');
+    expect(items[1]?.posterUrl).toBe('https://cdn.example/p.webp');
+    expect(items[1]?.duration).toBe(12);
+  });
 });
 
 describe('GET /flick/:id', () => {
@@ -207,6 +227,213 @@ describe('GET /writer/:pubkey', () => {
     );
     expect(res.status).toBe(200);
     expect((res.body as { writer: { tag: null } }).writer.tag).toBeNull();
+  });
+});
+
+describe('GET /explore/facets', () => {
+  it('classifies tags into cities, types, surfaces and regions', async () => {
+    const db = fakeDb((text) => {
+      if (text.includes('unnest(m.boards)')) {
+        return {
+          rows: [
+            { slug: 'sf-bay', item_count: 3 },
+            { slug: 'type-throwie', item_count: 5 },
+            { slug: 'type-piece', item_count: 2 },
+            { slug: 'surface-street', item_count: 4 },
+            { slug: 'region-bay-area', item_count: 1 },
+            { slug: 'legal-permission', item_count: 7 },
+          ],
+        };
+      }
+      return undefined;
+    });
+    const res = await request(createApp(db, TEST_CONFIG), '/explore/facets');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      cities: [{ slug: 'sf-bay', count: 3 }],
+      types: [
+        { slug: 'throwie', count: 5 },
+        { slug: 'piece', count: 2 },
+      ],
+      surfaces: [{ slug: 'street', count: 4 }],
+      regions: [{ slug: 'bay-area', count: 1 }],
+    });
+  });
+
+  it('is cache-friendly (CORS *, read-only)', async () => {
+    const res = await request(app((text) => (text.includes('unnest(m.boards)') ? { rows: [] } : undefined)), '/explore/facets');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+  });
+});
+
+describe('GET /explore', () => {
+  const exploreDb = (rows: unknown[] = []) =>
+    fakeDb((text) => (text.includes('m.boards &&') ? { rows } : undefined));
+
+  it('returns a unified, shaped feed filtered by facets', async () => {
+    const res = await request(
+      createApp(exploreDb([flickRow({ boards: ['sf-bay', 'type-throwie'] })]), TEST_CONFIG),
+      '/explore?city=sf-bay&type=throwie&legal=true',
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { flicks: { mediaType: string; boards: string[] }[]; nextCursor: string | null };
+    expect(body.flicks).toHaveLength(1);
+    expect(body.flicks[0]?.mediaType).toBe('flick');
+    expect(body.flicks[0]?.boards).toEqual(['sf-bay', 'type-throwie']);
+  });
+
+  it('normalises and prefixes the facet values before querying', async () => {
+    const db = exploreDb();
+    await request(
+      createApp(db, TEST_CONFIG),
+      '/explore?city=SF%20Bay&type=Throwie&surface=Street&region=Bay%20Area&legal=true',
+    );
+    const call = db.matching('m.boards &&')[0];
+    expect(call?.params[0]).toEqual(['sf-bay']);
+    expect(call?.params[1]).toEqual(['type-throwie']);
+    expect(call?.params[2]).toEqual(['surface-street']);
+    expect(call?.params[3]).toEqual(['region-bay-area']);
+    expect(call?.params[4]).toEqual(['legal-permission']);
+  });
+
+  it('ORs repeated values within a facet and ANDs across facets', async () => {
+    const db = exploreDb();
+    await request(createApp(db, TEST_CONFIG), '/explore?type=throwie&type=piece&city=sf-bay');
+    const call = db.matching('m.boards &&')[0];
+    expect(call?.params[0]).toEqual(['sf-bay']);
+    expect(call?.params[1]).toEqual(['type-throwie', 'type-piece']);
+  });
+
+  it('paginates by keyset cursor', async () => {
+    const db = exploreDb();
+    const cursor = encodeCursor({ createdAt: 1_700_000_000, eventId: FLICK_ID });
+    await request(createApp(db, TEST_CONFIG), `/explore?cursor=${cursor}`);
+    const call = db.matching('m.boards &&')[0];
+    expect(call?.params[5]).toBe(1_700_000_000);
+    expect(call?.params[6]).toBe(FLICK_ID);
+  });
+
+  it('refuses writes (read-only)', async () => {
+    const res = await request(app(), '/explore', { method: 'POST' });
+    expect(res.status).toBe(405);
+  });
+});
+
+describe('GET /crew/:pubkey', () => {
+  const crewHeader = (overrides: Record<string, unknown> = {}) => ({
+    pubkey: AUTHOR,
+    tag_name: 'FASE CREW',
+    city: 'sf-bay',
+    avatar_sha256: null,
+    first_seen: '1700000000',
+    updated_at: '1700000000',
+    crew_name: 'FASE CREW',
+    crew_mark: 'x7k2mq',
+    founder_pubkey: hex('ef'),
+    founded_at: '1700000000',
+    members: [AUTHOR, hex('ef')],
+    verified_at: '1700000500',
+    verified_by: hex('99'),
+    ...overrides,
+  });
+
+  it('returns the crew header, roster, repping and a media wall', async () => {
+    const db = fakeDb((text) => {
+      if (text.includes('from (select $1::text as pk) x')) return { rows: [crewHeader()] };
+      if (text.includes('p.crews @> array[$1]')) {
+        return { rows: [{ pubkey: hex('ef'), tag_name: 'SMOG', city: 'sf', avatar_sha256: null }] };
+      }
+      if (text.includes('p.pubkey = any($1::text[])')) {
+        return { rows: [{ pubkey: AUTHOR, tag_name: 'FASE CREW', avatar_sha256: null }] };
+      }
+      if (text.includes('f.pubkey = $1') || text.includes('v.pubkey = $1')) return { rows: [flickRow()] };
+      return undefined;
+    });
+    const res = await request(createApp(db, TEST_CONFIG), `/crew/${AUTHOR}`);
+    expect(res.status).toBe(200);
+    const body = res.body as {
+      crew: { tag: string; mark: string; verified: boolean; memberCount: number; founderPubkey: string };
+      members: { pubkey: string; tag: string }[];
+      repping: { pubkey: string; tag: string }[];
+      flicks: unknown[];
+      nextCursor: string | null;
+    };
+    expect(body.crew.tag).toBe('FASE CREW');
+    expect(body.crew.verified).toBe(true);
+    expect(body.crew.memberCount).toBe(2);
+    expect(body.crew.founderPubkey).toBe(hex('ef'));
+    expect(body.members).toHaveLength(2);
+    expect(body.members[0]?.pubkey).toBe(AUTHOR);
+    expect(body.repping[0]?.tag).toBe('SMOG');
+    expect(body.flicks).toHaveLength(1);
+  });
+
+  it('shows an unverified crew with no roster when only a profile exists', async () => {
+    const db = fakeDb((text) => {
+      if (text.includes('from (select $1::text as pk) x')) {
+        return {
+          rows: [
+            crewHeader({
+              crew_name: null,
+              crew_mark: null,
+              founder_pubkey: null,
+              founded_at: null,
+              members: null,
+              verified_at: null,
+              verified_by: null,
+            }),
+          ],
+        };
+      }
+      if (text.includes('f.pubkey = $1') || text.includes('v.pubkey = $1')) return { rows: [flickRow()] };
+      return { rows: [] };
+    });
+    const res = await request(createApp(db, TEST_CONFIG), `/crew/${AUTHOR}`);
+    expect(res.status).toBe(200);
+    const body = res.body as { crew: { verified: boolean; memberCount: number }; members: unknown[]; repping: unknown[] };
+    expect(body.crew.verified).toBe(false);
+    expect(body.crew.memberCount).toBe(0);
+    expect(body.members).toEqual([]);
+    expect(body.repping).toEqual([]);
+  });
+
+  it('404s when there is no profile, no definition, no badge and no media', async () => {
+    const db = fakeDb((text) => {
+      if (text.includes('from (select $1::text as pk) x')) {
+        return {
+          rows: [
+            {
+              pubkey: AUTHOR,
+              tag_name: null,
+              city: null,
+              avatar_sha256: null,
+              first_seen: null,
+              updated_at: null,
+              crew_name: null,
+              crew_mark: null,
+              founder_pubkey: null,
+              founded_at: null,
+              members: null,
+              verified_at: null,
+              verified_by: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const res = await request(createApp(db, TEST_CONFIG), `/crew/${AUTHOR}`);
+    expect(res.status).toBe(404);
+  });
+
+  it('400s for a bad pubkey', async () => {
+    expect((await request(app(), '/crew/nope')).status).toBe(400);
+  });
+
+  it('refuses writes (read-only)', async () => {
+    const res = await request(app(), `/crew/${AUTHOR}`, { method: 'DELETE' });
+    expect(res.status).toBe(405);
   });
 });
 

@@ -104,11 +104,14 @@ describe('rebuild', () => {
     expect([...DERIVED_TABLES]).toEqual([
       'events',
       'flicks',
+      'videos',
       'profiles',
       'comments',
       'reports',
       'deletions',
       'boards',
+      'crews',
+      'crew_badges',
       'pubkey_stats',
       'sync_state',
     ]);

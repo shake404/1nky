@@ -40,6 +40,7 @@ export type {
   Tag,
   UnsignedEvent,
   VerifiedEvent,
+  VideoImeta,
 } from './types.js';
 
 // --- Proof of work (NIP-13) ------------------------------------------------
@@ -52,17 +53,26 @@ export {
   boardTag,
   buildBuff,
   buildComment,
+  buildCrewBadgeRegistry,
+  buildCrewDefinition,
+  buildCrewProfile,
   buildExpiration,
   buildFlick,
   buildMuteList,
   buildProfile,
   buildReport,
   buildThreadOp,
+  buildVideo,
+  CREW_BADGES_DTAG,
+  CREW_DEFINITION_DTAG,
   imetaTag,
   normalizeBoard,
+  videoImetaTag,
 } from './builders.js';
 export { PROFILE_BIO_MAX } from './builders.js';
 export type {
+  BuildCrewBadgeRegistryInput,
+  BuildCrewDefinitionInput,
   BuilderOptions,
   BuildBuffOptions,
   BuildCommentOptions,
@@ -71,8 +81,22 @@ export type {
   BuildProfileInput,
   BuildReportOptions,
   BuildThreadOpInput,
+  BuildVideoInput,
   ReportTarget,
 } from './builders.js';
+
+// --- Explore facets --------------------------------------------------------
+export {
+  GRAF_TYPES,
+  legalPermissionTag,
+  LEGAL_PERMISSION_TAG,
+  parseFacets,
+  regionTag,
+  surfaceTag,
+  SURFACES,
+  typeTag,
+} from './facets.js';
+export type { GrafType, ParsedFacets, Surface } from './facets.js';
 
 // --- Private messages (NIP-17 / NIP-59) ------------------------------------
 export {

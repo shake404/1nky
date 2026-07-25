@@ -5,12 +5,13 @@ import {
   countComments,
   markOf,
   num,
+  shapeFeedItem,
   shapeFlick,
   shapeProfile,
   shapeWriter,
   threadComments,
 } from './shape.js';
-import { commentRow, flickRow, hex } from './testing/fixtures.js';
+import { commentRow, flickRow, hex, videoRow } from './testing/fixtures.js';
 
 const AUTHOR = hex('ab');
 
@@ -62,6 +63,25 @@ describe('shapeFlick', () => {
     expect(flick.boards).toEqual([]);
     expect(flick.width).toBeNull();
     expect(flick.replyCount).toBe(0);
+  });
+});
+
+describe('shapeFeedItem', () => {
+  it('tags a flick row with mediaType "flick" and null video fields', () => {
+    const item = shapeFeedItem(flickRow() as never);
+    expect(item.mediaType).toBe('flick');
+    expect(item.posterUrl).toBeNull();
+    expect(item.duration).toBeNull();
+    expect(item.id).toBe(hex('11'));
+  });
+
+  it('tags a video row with mediaType "video" and carries the poster + duration', () => {
+    const item = shapeFeedItem(videoRow() as never);
+    expect(item.mediaType).toBe('video');
+    expect(item.posterUrl).toBe('https://cdn.example/p.webp');
+    expect(item.duration).toBe(12);
+    expect(item.id).toBe(hex('22'));
+    expect(item.width).toBe(1280);
   });
 });
 

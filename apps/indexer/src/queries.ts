@@ -1,11 +1,14 @@
 import type {
   BoardRow,
   CommentRow,
+  CrewBadgeRow,
+  CrewRow,
   DeletionRow,
   EventRow,
   FlickRow,
   ProfileRow,
   ReportRow,
+  VideoRow,
 } from './mappers.js';
 import type { Sql } from './types.js';
 
@@ -46,22 +49,24 @@ export function upsertEvent(row: EventRow): Sql {
 
 export function upsertProfile(row: ProfileRow): Sql {
   return {
-    text: `insert into profiles (pubkey, tag_name, city, about, avatar_sha256, first_seen, updated_at)
-           values ($1, $2, $3, $4, $5, $6, $7)
+    text: `insert into profiles (pubkey, tag_name, city, about, avatar_sha256, crews, first_seen, updated_at)
+           values ($1, $2, $3, $4, $5, $6::text[], $7, $8)
            on conflict (pubkey) do update set
              tag_name      = excluded.tag_name,
              city          = excluded.city,
              about         = excluded.about,
              avatar_sha256 = excluded.avatar_sha256,
+             crews         = excluded.crews,
              first_seen    = least(profiles.first_seen, excluded.first_seen),
              updated_at    = excluded.updated_at
-           where excluded.updated_at >= profiles.updated_at`,
+            where excluded.updated_at >= profiles.updated_at`,
     params: [
       row.pubkey,
       row.tag_name,
       row.city,
       row.about,
       row.avatar_sha256,
+      row.crews,
       row.first_seen,
       row.updated_at,
     ],
@@ -86,6 +91,37 @@ export function upsertFlick(row: FlickRow): Sql {
       row.created_at,
       row.url,
       row.sha256,
+      row.width,
+      row.height,
+      row.blurhash,
+      row.caption,
+      row.boards,
+    ],
+  };
+}
+
+export function upsertVideo(row: VideoRow): Sql {
+  return {
+    text: `insert into videos (event_id, pubkey, created_at, url, sha256, poster_url, duration, width, height, blurhash, caption, boards)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::text[])
+           on conflict (event_id) do update set
+             url        = excluded.url,
+             sha256     = excluded.sha256,
+             poster_url = excluded.poster_url,
+             duration   = excluded.duration,
+             width      = excluded.width,
+             height     = excluded.height,
+             blurhash   = excluded.blurhash,
+             caption    = excluded.caption,
+             boards     = excluded.boards`,
+    params: [
+      row.event_id,
+      row.pubkey,
+      row.created_at,
+      row.url,
+      row.sha256,
+      row.poster_url,
+      row.duration,
       row.width,
       row.height,
       row.blurhash,
@@ -136,22 +172,64 @@ export function upsertDeletion(row: DeletionRow): Sql {
 /**
  * `registry` rows come from the site-key-signed kind 30078 event and win.
  * `discovered` rows are inferred from a flick's `t` tags and never overwrite
- * a real title.
+ * a real title. A registry entry may also set a city's parent `region_slug`
+ * (and never unsets one it does not declare, via `coalesce`).
  */
 export function upsertBoard(row: BoardRow, source: 'registry' | 'discovered'): Sql {
   const conflict =
     source === 'registry'
       ? `do update set title = excluded.title,
                        kind = excluded.kind,
+                       region_slug = coalesce(excluded.region_slug, boards.region_slug),
                        created_by = coalesce(excluded.created_by, boards.created_by),
                        created_at = least(boards.created_at, excluded.created_at)`
       : `do update set created_at = least(boards.created_at, excluded.created_at)`;
 
   return {
-    text: `insert into boards (slug, title, kind, created_by, created_at)
-           values ($1, $2, $3, $4, $5)
+    text: `insert into boards (slug, title, kind, created_by, created_at, region_slug)
+           values ($1, $2, $3, $4, $5, $6)
            on conflict (slug) ${conflict}`,
-    params: [row.slug, row.title, row.kind, row.created_by, row.created_at],
+    params: [row.slug, row.title, row.kind, row.created_by, row.created_at, row.region_slug ?? null],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// crews (kind 30078 d:crew) and crew_badges (kind 30078 d:crew-badges)
+// ---------------------------------------------------------------------------
+
+export function upsertCrew(row: CrewRow): Sql {
+  return {
+    text: `insert into crews (crew_pubkey, name, mark, founder_pubkey, founded_at, members, created_at, updated_at)
+           values ($1, $2, $3, $4, $5, $6::text[], $7, $8)
+           on conflict (crew_pubkey) do update set
+             name           = excluded.name,
+             mark           = excluded.mark,
+             founder_pubkey = excluded.founder_pubkey,
+             founded_at     = excluded.founded_at,
+             members        = excluded.members,
+             updated_at     = excluded.updated_at
+           where excluded.updated_at >= crews.updated_at`,
+    params: [
+      row.crew_pubkey,
+      row.name,
+      row.mark,
+      row.founder_pubkey,
+      row.founded_at,
+      row.members,
+      row.created_at,
+      row.updated_at,
+    ],
+  };
+}
+
+export function upsertCrewBadge(row: CrewBadgeRow): Sql {
+  return {
+    text: `insert into crew_badges (crew_pubkey, verified_at, verified_by)
+           values ($1, $2, $3)
+           on conflict (crew_pubkey) do update set
+             verified_at = excluded.verified_at,
+             verified_by  = excluded.verified_by`,
+    params: [row.crew_pubkey, row.verified_at, row.verified_by],
   };
 }
 
@@ -275,11 +353,14 @@ export function writeWatermark(createdAt: number): Sql {
 export const DERIVED_TABLES = [
   'events',
   'flicks',
+  'videos',
   'profiles',
   'comments',
   'reports',
   'deletions',
   'boards',
+  'crews',
+  'crew_badges',
   'pubkey_stats',
   'sync_state',
 ] as const;

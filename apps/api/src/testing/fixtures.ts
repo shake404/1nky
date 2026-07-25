@@ -114,10 +114,36 @@ export function flickRow(overrides: Record<string, unknown> = {}): Record<string
     blurhash: 'LEHV6n',
     caption: 'rooftop',
     boards: ['sf'],
+    media_type: 'flick',
+    poster_url: null,
+    duration: null,
     tag_name: 'SMOG',
     city: 'sf',
     avatar_sha256: null,
     reply_count: 2,
+    ...overrides,
+  };
+}
+
+export function videoRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    event_id: hex('22'),
+    pubkey: hex('ab'),
+    created_at: '1700000200',
+    url: 'https://cdn.example/v.mp4',
+    sha256: hex('ce'),
+    width: 1280,
+    height: 720,
+    blurhash: 'LEHV6n',
+    caption: 'roll-up',
+    boards: ['sf'],
+    media_type: 'video',
+    poster_url: 'https://cdn.example/p.webp',
+    duration: 12,
+    tag_name: 'SMOG',
+    city: 'sf',
+    avatar_sha256: null,
+    reply_count: 0,
     ...overrides,
   };
 }

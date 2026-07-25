@@ -10,6 +10,8 @@ import { KINDS, normalizeBoard, REPORT_REASONS, type SignedEvent } from '@1nky/p
  * relay is the source of truth.
  */
 
+const HEX64 = /^[0-9a-f]{64}$/;
+
 // ---------------------------------------------------------------------------
 // Tag helpers
 // ---------------------------------------------------------------------------
@@ -100,6 +102,8 @@ export interface ProfileRow {
   /** The writer's bio. Named for the kind-0 JSON field, not for the UI. */
   about: string | null;
   avatar_sha256: string | null;
+  /** Self-declared crew pubkeys/handles from kind-0 `content.crews`. A claim. */
+  crews: string[];
   first_seen: number;
   updated_at: number;
 }
@@ -133,12 +137,23 @@ export function toProfileRow(event: SignedEvent): ProfileRow {
   // so a hostile kind 0 could otherwise park 60KB of prose in every profile
   // row. Truncate to the same limit the builder enforces.
   const about = str('about');
+  const crewsRaw = parsed['crews'];
+  const crews: string[] = Array.isArray(crewsRaw)
+    ? [
+        ...new Set(
+          crewsRaw
+            .filter((c: unknown): c is string => typeof c === 'string' && c.trim() !== '')
+            .map((c) => c.trim().toLowerCase()),
+        ),
+      ]
+    : [];
   return {
     pubkey: event.pubkey,
     tag_name: str('name') ?? str('display_name'),
     city: city === null ? null : normalizeBoard(city) || null,
     about: about === null ? null : about.slice(0, ABOUT_MAX),
     avatar_sha256: str('avatar_sha256') ?? str('picture_sha256'),
+    crews,
     first_seen: event.created_at,
     updated_at: event.created_at,
   };
@@ -150,6 +165,10 @@ export interface ImetaFields {
   width: number | null;
   height: number | null;
   blurhash: string | null;
+  /** NIP-92 `image` — the poster still for a kind-22 video. */
+  poster: string | null;
+  /** NIP-71 `duration` — whole seconds for a kind-22 video. */
+  duration: number | null;
 }
 
 const EMPTY_IMETA: ImetaFields = {
@@ -158,6 +177,8 @@ const EMPTY_IMETA: ImetaFields = {
   width: null,
   height: null,
   blurhash: null,
+  poster: null,
+  duration: null,
 };
 
 /**
@@ -187,12 +208,21 @@ export function parseImeta(tag: readonly string[] | undefined): ImetaFields {
     }
   }
 
+  const durationRaw = fields.get('duration');
+  let duration: number | null = null;
+  if (durationRaw) {
+    const parsed = Number.parseInt(durationRaw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) duration = parsed;
+  }
+
   return {
     url: fields.get('url') ?? null,
     sha256: fields.get('x') ?? null,
     width,
     height,
     blurhash: fields.get('blurhash') ?? null,
+    poster: fields.get('image') ?? null,
+    duration,
   };
 }
 
@@ -226,6 +256,55 @@ export function toFlickRow(event: SignedEvent): FlickRow | null {
     created_at: event.created_at,
     url,
     sha256,
+    width: imeta.width,
+    height: imeta.height,
+    blurhash: imeta.blurhash ?? tagValue(event.tags, 'blurhash') ?? null,
+    caption: event.content ?? '',
+    boards: boardsOf(event),
+  };
+}
+
+export interface VideoRow {
+  event_id: string;
+  pubkey: string;
+  created_at: number;
+  url: string;
+  sha256: string;
+  poster_url: string | null;
+  duration: number | null;
+  width: number | null;
+  height: number | null;
+  blurhash: string | null;
+  caption: string;
+  boards: string[];
+}
+
+/**
+ * Kind 22 (NIP-71 short-form video). Structured exactly like a flick: requires
+ * a url and a blob hash, falls back to the top-level `x` / `url` / `duration`
+ * tags when `imeta` is missing or partial, and carries the poster still URL.
+ */
+export function toVideoRow(event: SignedEvent): VideoRow | null {
+  const imeta = parseImeta(findTag(event.tags, 'imeta'));
+  const url = imeta.url ?? tagValue(event.tags, 'url') ?? null;
+  const sha256 = imeta.sha256 ?? tagValue(event.tags, 'x') ?? null;
+  if (!url || !sha256) return null;
+
+  const durationTag = tagValue(event.tags, 'duration');
+  let duration: number | null = imeta.duration;
+  if (duration === null && durationTag !== undefined) {
+    const parsed = Number.parseInt(durationTag, 10);
+    if (Number.isFinite(parsed) && parsed > 0) duration = parsed;
+  }
+
+  return {
+    event_id: event.id,
+    pubkey: event.pubkey,
+    created_at: event.created_at,
+    url,
+    sha256,
+    poster_url: imeta.poster ?? tagValue(event.tags, 'image') ?? null,
+    duration,
     width: imeta.width,
     height: imeta.height,
     blurhash: imeta.blurhash ?? tagValue(event.tags, 'blurhash') ?? null,
@@ -327,12 +406,30 @@ export interface BoardRow {
   kind: string;
   created_by: string | null;
   created_at: number;
+  /** Parent region slug, set only from a registry entry that declares one. */
+  region_slug?: string | null;
+}
+
+/**
+ * Classify a board slug into its facet `kind` by dash-namespace prefix.
+ *
+ * City tags stay unprefixed (the existing default, preserves every board
+ * auto-discovered today). Only the *new* facets get prefixes — see
+ * explore-and-crews Part 3.1.
+ */
+export function boardKindOf(slug: string): string {
+  if (slug.startsWith('type-')) return 'type';
+  if (slug.startsWith('surface-')) return 'surface';
+  if (slug.startsWith('region-')) return 'region';
+  if (slug === 'legal-permission') return 'legal';
+  return 'city';
 }
 
 /**
  * Kind 30078 board registry, signed by the site key. Accepts either
  * `{"boards":[...]}` or a bare array of `{ slug, title, kind }`.
- * Anything else yields no rows.
+ * Anything else yields no rows. An optional `region` per entry records the
+ * parent region slug for a city (Part 3.3).
  */
 export function boardRowsFromRegistry(event: SignedEvent): BoardRow[] {
   const d = tagValue(event.tags, 'd');
@@ -358,35 +455,152 @@ export function boardRowsFromRegistry(event: SignedEvent): BoardRow[] {
     const slug = normalizeBoard(rawSlug);
     if (!slug || seen.has(slug)) continue;
     seen.add(slug);
-    rows.push({
+    const row: BoardRow = {
       slug,
       title: typeof record['title'] === 'string' && record['title'] ? record['title'] : slug,
       kind: typeof record['kind'] === 'string' && record['kind'] ? record['kind'] : 'city',
       created_by: event.pubkey,
       created_at: event.created_at,
-    });
+    };
+    const region = typeof record['region'] === 'string' ? normalizeBoard(record['region']) : null;
+    if (region) row.region_slug = region;
+    rows.push(row);
   }
   return rows;
 }
 
-/** Boards implied by a flick's `t` tags, so `/boards` is never empty. */
+/** Boards implied by a flick's `t` tags, classified by prefix (Part 3.4). */
 export function boardRowsFromFlick(event: SignedEvent): BoardRow[] {
   return boardsOf(event).map((slug) => ({
     slug,
     title: slug,
-    kind: 'city',
+    kind: boardKindOf(slug),
     created_by: null,
     created_at: event.created_at,
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Crews — kind 30078 with d:crew (crew-signed) and d:crew-badges (site-signed)
+// ---------------------------------------------------------------------------
+
+export interface CrewRow {
+  crew_pubkey: string;
+  name: string;
+  mark: string | null;
+  founder_pubkey: string | null;
+  founded_at: number | null;
+  members: string[];
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * Kind 30078 with d:crew — a crew definition, signed by the crew's own key.
+ * Content JSON: `{ name, members, mark?, founderPubkey?, foundedAt? }`. The
+ * roster is read from the `p` tags (wire-canonical, tag-filterable) and
+ * merged with `content.members`, deduped. Returns null when the content is
+ * unparseable or the crew has no name.
+ */
+export function crewDefinitionRowFromEvent(event: SignedEvent): CrewRow | null {
+  const d = tagValue(event.tags, 'd');
+  if (d !== 'crew') return null;
+
+  let parsed: Record<string, unknown> = {};
+  try {
+    const value: unknown = JSON.parse(event.content || '{}');
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+
+  const str = (key: string): string | null => {
+    const v = parsed[key];
+    return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+  };
+
+  const name = str('name');
+  if (!name) return null;
+
+  const fromContent = Array.isArray(parsed['members'])
+    ? (parsed['members'] as unknown[]).filter((m): m is string => typeof m === 'string' && HEX64.test(m))
+    : [];
+  const fromTags = tagValues(event.tags, 'p').filter((m) => HEX64.test(m));
+  const members = [...new Set([...fromTags, ...fromContent])];
+
+  const foundedAtRaw = parsed['foundedAt'];
+  const foundedAt =
+    typeof foundedAtRaw === 'number' && Number.isFinite(foundedAtRaw) ? foundedAtRaw : event.created_at;
+
+  return {
+    crew_pubkey: event.pubkey,
+    name,
+    mark: str('mark'),
+    founder_pubkey: str('founderPubkey'),
+    founded_at: foundedAt,
+    members,
+    created_at: event.created_at,
+    updated_at: event.created_at,
+  };
+}
+
+export interface CrewBadgeRow {
+  crew_pubkey: string;
+  verified_at: number;
+  verified_by: string;
+}
+
+/**
+ * Kind 30078 with d:crew-badges — site-key-signed attestation. Content:
+ * `{"badges":[{pubkey, mark?, verifiedAt?}]}`. Mirrors `boardRowsFromRegistry`
+ * exactly; only the `d` value and signer differ (the signer check happens in
+ * the store, same as the board registry).
+ */
+export function crewBadgeRowsFromRegistry(event: SignedEvent): CrewBadgeRow[] {
+  const d = tagValue(event.tags, 'd');
+  if (d !== 'crew-badges') return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(event.content || 'null');
+  } catch {
+    return [];
+  }
+  let list: unknown = parsed;
+  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    list = (parsed as Record<string, unknown>)['badges'];
+  }
+  if (!Array.isArray(list)) return [];
+
+  const rows: CrewBadgeRow[] = [];
+  const seen = new Set<string>();
+  for (const entry of list) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    const rawPk = typeof record['pubkey'] === 'string' ? record['pubkey'].toLowerCase() : '';
+    if (!HEX64.test(rawPk) || seen.has(rawPk)) continue;
+    seen.add(rawPk);
+    const verifiedAtRaw = record['verifiedAt'];
+    const verifiedAt =
+      typeof verifiedAtRaw === 'number' && Number.isFinite(verifiedAtRaw) ? verifiedAtRaw : event.created_at;
+    rows.push({ crew_pubkey: rawPk, verified_at: verifiedAt, verified_by: event.pubkey });
+  }
+  return rows;
+}
+
 /** Which derived table an event feeds, by kind. */
-export function routeOf(kind: number): 'profile' | 'flick' | 'comment' | 'report' | 'deletion' | 'registry' | 'event' {
+export function routeOf(
+  kind: number,
+): 'profile' | 'flick' | 'video' | 'comment' | 'report' | 'deletion' | 'registry' | 'event' {
   switch (kind) {
     case KINDS.PROFILE:
       return 'profile';
     case KINDS.FLICK:
       return 'flick';
+    case KINDS.VIDEO:
+      return 'video';
     case KINDS.COMMENT:
       return 'comment';
     case KINDS.REPORT:

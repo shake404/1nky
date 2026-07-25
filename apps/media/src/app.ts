@@ -12,8 +12,10 @@ import { KINDS } from '@1nky/protocol';
 import { verifyBlossomAuth } from './auth.js';
 import {
   ALLOWED_UPLOAD_TYPES,
+  ALLOWED_VIDEO_TYPES,
   IMMUTABLE_CACHE_CONTROL,
   STORED_CONTENT_TYPE,
+  STORED_VIDEO_CONTENT_TYPE,
   UPLOADER_METADATA_KEY,
   type MediaConfig,
 } from './config.js';
@@ -29,21 +31,44 @@ import {
 } from './http.js';
 import { reencodeToWebp } from './image.js';
 import type { BlobStorage } from './storage.js';
+import { transcodeVideo as defaultTranscodeVideo, type VideoTranscoder } from './video.js';
 
 export interface AppDeps {
   readonly storage: BlobStorage;
   readonly config: MediaConfig;
   /** Injectable clock (unix seconds) so tests can pin expirations. */
   readonly now?: () => number;
+  /**
+   * Injectable video transcoder. Defaults to the real ffmpeg-based one; tests
+   * inject a stub so `pnpm test` stays green without ffmpeg on CI.
+   */
+  readonly transcodeVideo?: VideoTranscoder;
 }
 
-/** BUD-02 blob descriptor. */
+/** BUD-02 blob descriptor for an image upload. */
 export interface BlobDescriptor {
   readonly url: string;
   readonly sha256: string;
   readonly size: number;
   readonly type: string;
   readonly uploaded: number;
+}
+
+/**
+ * Descriptor returned for a video upload. The `sha256`/`url` address the
+ * transcoded mp4; `poster` addresses the webp still. The client puts
+ * `sha256` into the kind-22 `x` tag and `poster.url` into the imeta `image`.
+ */
+export interface VideoDescriptor {
+  readonly url: string;
+  readonly sha256: string;
+  readonly size: number;
+  readonly type: 'video/mp4';
+  readonly uploaded: number;
+  readonly duration: number;
+  readonly width: number;
+  readonly height: number;
+  readonly poster: { readonly url: string; readonly sha256: string };
 }
 
 const EXPOSED_HEADERS = [
@@ -56,6 +81,18 @@ const EXPOSED_HEADERS = [
   'X-SHA-256',
   'X-Upload-Message',
 ].join(', ');
+
+const REJECTED_TYPE_MESSAGE =
+  'only image/webp, image/jpeg, image/png, video/mp4, video/quicktime and video/webm are accepted';
+
+function isVideoType(type: string): boolean {
+  return ALLOWED_VIDEO_TYPES.has(type);
+}
+
+/** Byte cap that applies to a given accepted content type. */
+function byteCapFor(config: MediaConfig, type: string): number {
+  return isVideoType(type) ? config.maxVideoBytes : config.maxUploadBytes;
+}
 
 /**
  * Errors are logged as message + blob/kind context only.
@@ -110,6 +147,7 @@ function ifNoneMatchHits(header: string | undefined, etag: string): boolean {
 export function createApp(deps: AppDeps): Express {
   const { storage, config } = deps;
   const now = deps.now ?? ((): number => Math.floor(Date.now() / 1000));
+  const transcode = deps.transcodeVideo ?? defaultTranscodeVideo;
 
   const app = express();
   app.disable('x-powered-by');
@@ -142,13 +180,15 @@ export function createApp(deps: AppDeps): Express {
       res.set('X-Reason', 'X-SHA-256 must be a 64-character hex sha256').status(400).end();
       return;
     }
-    if (declaredType !== '' && !ALLOWED_UPLOAD_TYPES.has(declaredType)) {
-      res.set('X-Reason', 'only image/webp, image/jpeg and image/png are accepted').status(415).end();
+    const isVideo = declaredType !== '' && isVideoType(declaredType);
+    const isImage = declaredType !== '' && ALLOWED_UPLOAD_TYPES.has(declaredType);
+    if (declaredType !== '' && !isVideo && !isImage) {
+      res.set('X-Reason', REJECTED_TYPE_MESSAGE).status(415).end();
       return;
     }
-    if (declaredLength !== undefined && declaredLength > config.maxUploadBytes) {
+    if (declaredLength !== undefined && declaredLength > byteCapFor(config, isVideo ? 'video/mp4' : 'image/webp')) {
       res
-        .set('X-Reason', `blob exceeds the ${config.maxUploadBytes}-byte limit`)
+        .set('X-Reason', `blob exceeds the ${byteCapFor(config, isVideo ? 'video/mp4' : 'image/webp')}-byte limit`)
         .status(413)
         .end();
       return;
@@ -161,18 +201,21 @@ export function createApp(deps: AppDeps): Express {
     const auth = verifyBlossomAuth(req.headers.authorization, { verb: 'upload', now: now() });
 
     const contentType = normalizeContentType(req.headers['content-type']);
-    if (!ALLOWED_UPLOAD_TYPES.has(contentType)) {
-      throw new HttpError(415, 'only image/webp, image/jpeg and image/png are accepted');
+    const video = isVideoType(contentType);
+    const image = ALLOWED_UPLOAD_TYPES.has(contentType);
+    if (!video && !image) {
+      throw new HttpError(415, REJECTED_TYPE_MESSAGE);
     }
 
+    const maxBytes = byteCapFor(config, contentType);
     const declaredLength = parseSizeHeader(req.headers['content-length']);
-    if (declaredLength !== undefined && declaredLength > config.maxUploadBytes) {
-      throw new HttpError(413, `blob exceeds the ${config.maxUploadBytes}-byte limit`);
+    if (declaredLength !== undefined && declaredLength > maxBytes) {
+      throw new HttpError(413, `blob exceeds the ${maxBytes}-byte limit`);
     }
 
-    const body = await readBodyCapped(req, config.maxUploadBytes);
+    const body = await readBodyCapped(req, maxBytes);
     if (body.truncated) {
-      throw new HttpError(413, `blob exceeds the ${config.maxUploadBytes}-byte limit`);
+      throw new HttpError(413, `blob exceeds the ${maxBytes}-byte limit`);
     }
     if (body.data.length === 0) {
       throw new HttpError(400, 'upload body is empty');
@@ -184,6 +227,62 @@ export function createApp(deps: AppDeps): Express {
       throw new HttpError(400, 'uploaded bytes do not match the authorized sha256');
     }
 
+    if (video) {
+      const result = await transcode(body.data, {
+        maxDurationSec: 60,
+        maxWidth: 1280,
+        maxHeight: 720,
+        posterQuality: 80,
+        inputMime: contentType,
+      });
+
+      // Addressed by the hash of the TRANSCODED bytes (which differ from the
+      // client's `x` tag). The client MUST put the sha256 returned here into
+      // the kind-22 `x` tag, or the event will point at a blob that does not
+      // exist.
+      const videoHash = sha256Hex(result.video);
+      const posterHash = sha256Hex(result.poster);
+      rememberBlob(res, videoHash);
+      const uploaded = now();
+
+      const videoExisting = await storage.head(videoHash);
+      if (videoExisting === null) {
+        await storage.put({
+          key: videoHash,
+          body: result.video,
+          contentType: STORED_VIDEO_CONTENT_TYPE,
+          cacheControl: IMMUTABLE_CACHE_CONTROL,
+          metadata: { [UPLOADER_METADATA_KEY]: auth.pubkey },
+        });
+      }
+      const posterExisting = await storage.head(posterHash);
+      if (posterExisting === null) {
+        await storage.put({
+          key: posterHash,
+          body: result.poster,
+          contentType: STORED_CONTENT_TYPE,
+          cacheControl: IMMUTABLE_CACHE_CONTROL,
+          metadata: { [UPLOADER_METADATA_KEY]: auth.pubkey },
+        });
+      }
+
+      const descriptor: VideoDescriptor = {
+        url: `${config.publicBase}/${videoHash}`,
+        sha256: videoHash,
+        size: result.video.length,
+        type: STORED_VIDEO_CONTENT_TYPE,
+        uploaded,
+        duration: result.duration,
+        width: result.width,
+        height: result.height,
+        poster: { url: `${config.publicBase}/${posterHash}`, sha256: posterHash },
+      };
+
+      res.status(videoExisting === null ? 201 : 200).json(descriptor);
+      return;
+    }
+
+    // --- image path --------------------------------------------------------
     const reencoded = await reencodeToWebp(body.data, {
       maxDimension: config.maxDimension,
       quality: config.webpQuality,

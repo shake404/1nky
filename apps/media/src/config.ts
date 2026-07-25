@@ -11,11 +11,21 @@ export const ALLOWED_UPLOAD_TYPES: ReadonlySet<string> = new Set([
   'image/png',
 ]);
 
+/** Video MIME types accepted for upload (transcoded server-side via ffmpeg). */
+export const ALLOWED_VIDEO_TYPES: ReadonlySet<string> = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+]);
+
 /** Formats `sharp` is allowed to have detected in the decoded input. */
 export const ALLOWED_IMAGE_FORMATS: ReadonlySet<string> = new Set(['webp', 'jpeg', 'jpg', 'png']);
 
-/** Everything is re-encoded to this, so it is the only type we ever store. */
+/** Everything is re-encoded to this, so it is the only image type we store. */
 export const STORED_CONTENT_TYPE = 'image/webp';
+
+/** Videos are always transcoded to H.264 mp4, so this is the only video type stored. */
+export const STORED_VIDEO_CONTENT_TYPE = 'video/mp4';
 
 /** Content-addressed blobs are immutable — cache them forever. */
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
@@ -26,15 +36,17 @@ export const UPLOADER_METADATA_KEY = 'uploader';
 export interface MediaConfig {
   /** MEDIA_PORT — HTTP listen port. */
   readonly port: number;
-  /** MAX_UPLOAD_MB, expanded to bytes. */
+  /** MAX_UPLOAD_MB, expanded to bytes. Image upload cap. */
   readonly maxUploadBytes: number;
+  /** MAX_VIDEO_MB, expanded to bytes. Raw video upload cap (before transcode). */
+  readonly maxVideoBytes: number;
   /** R2_BUCKET — bucket blobs are written to. */
   readonly bucket: string;
   /** MEDIA_PUBLIC_BASE — origin used to build blob descriptor URLs. */
   readonly publicBase: string;
-  /** Longest edge (px) allowed out of the re-encoder. */
+  /** Longest edge (px) allowed out of the image re-encoder. */
   readonly maxDimension: number;
-  /** WebP quality used by the defense-in-depth re-encode. */
+  /** WebP quality used by the defense-in-depth image re-encode. */
   readonly webpQuality: number;
 }
 
@@ -67,6 +79,7 @@ export function loadConfig(env: Env = process.env): MediaConfig {
   return {
     port: intFromEnv(env, 'MEDIA_PORT', 3002),
     maxUploadBytes: intFromEnv(env, 'MAX_UPLOAD_MB', 5) * 1024 * 1024,
+    maxVideoBytes: intFromEnv(env, 'MAX_VIDEO_MB', 50) * 1024 * 1024,
     bucket: env['R2_BUCKET']?.trim() || '1nky-media',
     publicBase: stripTrailingSlash(env['MEDIA_PUBLIC_BASE']?.trim() || 'http://localhost:3002'),
     maxDimension: intFromEnv(env, 'MEDIA_MAX_DIMENSION', 4096),

@@ -24,6 +24,11 @@ describe('loadConfig', () => {
     expect(cfg.maxUploadBytes).toBe(12 * 1024 * 1024);
   });
 
+  it('defaults MAX_VIDEO_MB to 50 and reads an override', () => {
+    expect(loadConfig({}).maxVideoBytes).toBe(50 * 1024 * 1024);
+    expect(loadConfig({ MAX_VIDEO_MB: '3' }).maxVideoBytes).toBe(3 * 1024 * 1024);
+  });
+
   it('trims the trailing slash off MEDIA_PUBLIC_BASE', () => {
     expect(loadConfig({ MEDIA_PUBLIC_BASE: 'https://cdn.1nky.com/' }).publicBase).toBe(
       'https://cdn.1nky.com',

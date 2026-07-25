@@ -102,12 +102,73 @@ export function shapeFlick(row: FlickSource): FlickJson {
   };
 }
 
+/**
+ * A unified feed row — a flick or a video — tagged with `mediaType` so the
+ * client picks an `<img>` or a `<video>`. Video rows also carry the poster
+ * still URL and duration; flick rows report null for both.
+ */
+export interface FeedItemSource extends WriterSource {
+  event_id: string;
+  created_at: number | string;
+  url: string;
+  sha256: string;
+  width: number | null;
+  height: number | null;
+  blurhash: string | null;
+  caption: string | null;
+  boards: string[] | null;
+  reply_count?: number | string;
+  media_type: string;
+  poster_url: string | null;
+  duration: number | string | null;
+}
+
+export interface FeedItemJson {
+  id: string;
+  mediaType: 'flick' | 'video';
+  createdAt: number;
+  url: string;
+  sha256: string;
+  width: number | null;
+  height: number | null;
+  blurhash: string | null;
+  caption: string;
+  boards: string[];
+  replyCount: number;
+  /** Poster still URL for a video; null for a flick. */
+  posterUrl: string | null;
+  /** Duration in seconds for a video; null for a flick. */
+  duration: number | null;
+  writer: WriterJson;
+}
+
+export function shapeFeedItem(row: FeedItemSource): FeedItemJson {
+  return {
+    id: row.event_id,
+    mediaType: row.media_type === 'video' ? 'video' : 'flick',
+    createdAt: num(row.created_at),
+    url: row.url,
+    sha256: row.sha256,
+    width: nullableNum(row.width),
+    height: nullableNum(row.height),
+    blurhash: row.blurhash ?? null,
+    caption: row.caption ?? '',
+    boards: row.boards ?? [],
+    replyCount: num(row.reply_count),
+    posterUrl: row.poster_url ?? null,
+    duration: nullableNum(row.duration),
+    writer: shapeWriter(row),
+  };
+}
+
 export interface ProfileSource extends WriterSource {
   first_seen?: number | string;
   updated_at?: number | string;
   first_event_at?: number | string | null;
   event_count?: number | string;
   banned?: boolean;
+  /** Self-declared crew pubkeys/handles from kind-0 `content.crews`. */
+  crews?: string[] | null;
 }
 
 export interface ProfileJson extends WriterJson {
@@ -116,6 +177,8 @@ export interface ProfileJson extends WriterJson {
   flickCount?: number;
   eventCount: number;
   banned: boolean;
+  /** Self-declared crew affiliations — a claim, not a verified roster. */
+  crews: string[];
 }
 
 export function shapeProfile(row: ProfileSource): ProfileJson {
@@ -125,6 +188,7 @@ export function shapeProfile(row: ProfileSource): ProfileJson {
     updatedAt: nullableNum(row.updated_at),
     eventCount: num(row.event_count),
     banned: row.banned === true,
+    crews: row.crews ?? [],
   };
 }
 

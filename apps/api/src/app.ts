@@ -4,6 +4,8 @@ import type { ApiConfig } from './config.js';
 import { cors, errorHandler, notFoundHandler, readOnly } from './http.js';
 import { boardRoutes } from './routes/boards.js';
 import type { Deps } from './routes/deps.js';
+import { crewRoutes } from './routes/crew.js';
+import { exploreRoutes } from './routes/explore.js';
 import { feedRoutes } from './routes/feed.js';
 import { flickRoutes } from './routes/flick.js';
 import { healthRoutes } from './routes/health.js';
@@ -42,9 +44,11 @@ export function createApp(db: Queryable, config: ApiConfig): Express {
 
   app.use(healthRoutes(deps));
   app.use(feedRoutes(deps));
+  app.use(exploreRoutes(deps));
   app.use(flickRoutes(deps));
   app.use(boardRoutes(deps));
   app.use(writerRoutes(deps));
+  app.use(crewRoutes(deps));
   app.use(searchRoutes(deps));
   app.use(modRoutes(deps));
 

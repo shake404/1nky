@@ -39,12 +39,23 @@ FROM base AS runtime
 ENV NODE_ENV=production \
     MEDIA_PORT=3002
 
+# ffmpeg is required for the video upload path: every clip is transcoded
+# through ffmpeg with all metadata stripped (GPS/device) before the bytes are
+# stored. ffprobe probes the output for duration + dimensions. Installed in the
+# runtime stage (the image that runs node) as root, before dropping to `node`.
+# --no-install-recommends keeps the layer small; ffmpeg brings its own deps.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build --chown=node:node /repo /repo
 
 USER node
 EXPOSE 3002
 
-# Re-encodes every upload with sharp as defense-in-depth (hard rule #5) and
-# streams to R2. Original bytes are never persisted; nothing is written to
-# local disk, so no tmpdir volume is mounted on purpose.
+# Re-encodes every image upload with sharp as defense-in-depth (hard rule #5)
+# and streams to R2. Video uploads are transcoded through ffmpeg to a temp file
+# (cleaned up in a finally block) and never persisted as the original bytes, so
+# no tmpdir volume is mounted on purpose — the OS tmpdir is enough and is not
+# retained.
 CMD ["node", "apps/media/dist/index.js"]

@@ -15,6 +15,8 @@ describe('loadMigrations', () => {
       '001_init.sql',
       '002_indexes.sql',
       '003_profile_about.sql',
+      '004_videos.sql',
+      '005_explore_crews.sql',
     ]);
     expect(migrations[0]?.sql).toContain('create table if not exists events');
   });

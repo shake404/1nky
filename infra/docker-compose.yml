@@ -39,6 +39,13 @@
 # file). Bootstrap it with:  cp ../.env.example .env
 # Every value below has a sane default so the Phase 0 three-service bring-up
 # works with no .env at all.
+#
+# VIDEO (media service): short graffiti clips are transcoded through ffmpeg
+# with every metadata field stripped (GPS/device). Hard caps are enforced
+# server-side: input <= MAX_VIDEO_MB (default 50) and <= 60s; output is
+# H.264 720p. The original bytes are never persisted — only the transcoded
+# mp4 and a poster still are stored, content-addressed by their sha256.
+# ffmpeg is installed in infra/docker/media.Dockerfile (runtime stage).
 # ---------------------------------------------------------------------------
 
 name: 1nky
@@ -116,15 +123,15 @@ services:
     environment:
       # --- write-policy knobs (all read by strfry/write-policy.mjs) ---
       # Kind allowlist: 0 profile, 1 thread OP, 5 delete/"buff", 20 flick,
-      # 1059 NIP-59 gift wrap (private messages), 1111 NIP-22 reply,
-      # 1984 report/"flag it", 10000 NIP-51 mute, 30078 app-specific
-      # (board registry / mod list, signed by the site key).
+      # 22 short-form video/"flick" (NIP-71), 1059 NIP-59 gift wrap (private
+      # messages), 1111 NIP-22 reply, 1984 report/"flag it", 10000 NIP-51 mute,
+      # 30078 app-specific (board registry / mod list, signed by the site key).
       #
       # Kinds 13 (seal) and 14 (private message) are deliberately absent and
       # cannot be added back here: write-policy.mjs rejects them by number
       # before it looks at this list. They only ever exist encrypted inside a
       # 1059, so one arriving at the relay is a plaintext DM leak.
-      ALLOWED_KINDS: "${ALLOWED_KINDS:-0,1,5,20,1059,1111,1984,10000,30078}"
+      ALLOWED_KINDS: "${ALLOWED_KINDS:-0,1,5,20,22,1059,1111,1984,10000,30078}"
       MAX_EVENT_BYTES: "${MAX_EVENT_BYTES:-65536}"
       # NIP-13 tiers. Defaults mirror the root .env.example.
       POW_BITS_NEW: "${POW_BITS_NEW:-18}"
@@ -274,7 +281,12 @@ services:
     environment:
       NODE_ENV: "${NODE_ENV:-production}"
       MEDIA_PORT: "3002"
+      # Images: re-encoded with sharp, capped at MAX_UPLOAD_MB (default 5).
       MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-5}"
+      # Videos: transcoded through ffmpeg with ALL metadata stripped, capped at
+      # MAX_VIDEO_MB (default 50) input and 60s. Output is H.264 720p. The
+      # media.Dockerfile installs ffmpeg in this image's runtime stage.
+      MAX_VIDEO_MB: "${MAX_VIDEO_MB:-50}"
       MEDIA_PUBLIC_BASE: "${MEDIA_PUBLIC_BASE:-http://localhost/media}"
       R2_ACCOUNT_ID: "${R2_ACCOUNT_ID:-}"
       R2_ACCESS_KEY_ID: "${R2_ACCESS_KEY_ID:-}"

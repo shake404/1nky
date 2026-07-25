@@ -111,6 +111,15 @@ export function oneParam(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Every value of a (possibly repeated) query param, as a clean string array. */
+export function manyParam(value: unknown): string[] {
+  if (typeof value === 'string') return value === '' ? [] : [value];
+  if (Array.isArray(value)) {
+    return value.filter((v): v is string => typeof v === 'string' && v !== '');
+  }
+  return [];
+}
+
 export function parseLimit(raw: unknown, config: ApiConfig): number {
   const value = oneParam(raw);
   if (value === undefined || value === '') return config.defaultLimit;

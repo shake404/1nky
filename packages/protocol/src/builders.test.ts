@@ -5,16 +5,25 @@ import {
   boardTag,
   buildBuff,
   buildComment,
+  buildCrewBadgeRegistry,
+  buildCrewDefinition,
+  buildCrewProfile,
   buildExpiration,
   buildFlick,
   buildMuteList,
   buildProfile,
   buildReport,
   buildThreadOp,
+  buildVideo,
+  CREW_BADGES_DTAG,
+  CREW_DEFINITION_DTAG,
   imetaTag,
   normalizeBoard,
   PROFILE_BIO_MAX,
+  videoImetaTag,
 } from './builders.js';
+import { fingerprint } from './mark.js';
+import { GRAF_TYPES, LEGAL_PERMISSION_TAG, parseFacets, SURFACES, typeTag } from './facets.js';
 import { KINDS } from './kinds.js';
 import type { EventRef, Tag } from './types.js';
 
@@ -120,6 +129,15 @@ describe('buildProfile', () => {
       buildProfile({ tag: 'X', bio: 'y'.repeat(PROFILE_BIO_MAX) }),
     ).not.toThrow();
   });
+
+  it('serialises self-declared crews, lowercased and deduped', () => {
+    const ev = buildProfile({ tag: 'SEKT', crews: [HEX_A, HEX_A, '  ' + HEX_B + '  '] });
+    expect(JSON.parse(ev.content)).toEqual({ name: 'SEKT', crews: [HEX_A, HEX_B] });
+  });
+
+  it('omits crews when none are passed (additive — no shape change)', () => {
+    expect(JSON.parse(buildProfile({ tag: 'SEKT' }).content)).toEqual({ name: 'SEKT' });
+  });
 });
 
 describe('buildFlick', () => {
@@ -169,6 +187,257 @@ describe('buildFlick', () => {
     const base = { url: 'https://x/y', sha256: HEX_A, dims: { width: 1, height: 1 } };
     expect(() => buildFlick({ ...base, sha256: 'short' })).toThrow(TypeError);
     expect(() => buildFlick({ ...base, url: '' })).toThrow(TypeError);
+  });
+
+  it('emits dash-namespaced facet t tags alongside the city boards', () => {
+    const ev = buildFlick({
+      url: 'https://m.1nky.com/' + HEX_A,
+      sha256: HEX_A,
+      dims: { width: 4, height: 5 },
+      boards: ['sf-bay'],
+      types: ['throwie'],
+      surfaces: ['street'],
+      region: 'Bay Area',
+      legalPermission: true,
+      createdAt: FIXED,
+    });
+    expect(find(ev.tags, 't')).toEqual([
+      ['t', 'sf-bay'],
+      ['t', 'type-throwie'],
+      ['t', 'surface-street'],
+      ['t', 'region-bay-area'],
+      ['t', 'legal-permission'],
+    ]);
+    // And they round-trip through parseFacets.
+    expect(parseFacets(ev.tags)).toEqual({
+      city: 'sf-bay',
+      region: 'bay-area',
+      types: ['throwie'],
+      surfaces: ['street'],
+      legalPermission: true,
+    });
+  });
+
+  it('dedupes a facet slug supplied both as a board and as a facet', () => {
+    const ev = buildFlick({
+      url: 'https://m.1nky.com/' + HEX_A,
+      sha256: HEX_A,
+      dims: { width: 4, height: 5 },
+      boards: ['type-throwie'],
+      types: ['throwie'],
+      createdAt: FIXED,
+    });
+    expect(find(ev.tags, 't')).toEqual([['t', 'type-throwie']]);
+  });
+
+  it('accepts every fixed graf type and surface without throwing', () => {
+    for (const type of GRAF_TYPES) expect(typeTag(type)[1]).toBe(`type-${type}`);
+    for (const surface of SURFACES) {
+      const ev = buildFlick({
+        url: 'https://m.1nky.com/' + HEX_A,
+        sha256: HEX_A,
+        dims: { width: 4, height: 5 },
+        surfaces: [surface],
+        createdAt: FIXED,
+      });
+      expect(first(ev.tags, 't')).toEqual(['t', `surface-${surface}`]);
+    }
+    expect(LEGAL_PERMISSION_TAG).toBe('legal-permission');
+  });
+});
+
+describe('videoImetaTag', () => {
+  it('packs NIP-92 + NIP-71 fields into one tag', () => {
+    const tag = videoImetaTag({
+      url: 'https://m.1nky.com/' + HEX_A,
+      sha256: HEX_A,
+      dims: { width: 1280, height: 720 },
+      durationSec: 42,
+      poster: 'https://m.1nky.com/' + HEX_B,
+      blurhash: 'LEHV6nWB2yk8',
+      alt: 'roll-up on the 4th street line',
+      size: 1_048_576,
+    });
+    expect(tag[0]).toBe('imeta');
+    expect(tag).toContain(`url https://m.1nky.com/${HEX_A}`);
+    expect(tag).toContain('m video/mp4');
+    expect(tag).toContain(`x ${HEX_A}`);
+    expect(tag).toContain('dim 1280x720');
+    expect(tag).toContain(`image https://m.1nky.com/${HEX_B}`);
+    expect(tag).toContain('duration 42');
+    expect(tag).toContain('blurhash LEHV6nWB2yk8');
+    expect(tag).toContain('alt roll-up on the 4th street line');
+    expect(tag).toContain('size 1048576');
+  });
+
+  it('rejects a bad blob hash', () => {
+    expect(() =>
+      videoImetaTag({
+        url: 'https://x/y',
+        sha256: 'short',
+        dims: { width: 1, height: 1 },
+        durationSec: 1,
+        poster: 'https://x/p',
+      }),
+    ).toThrow(TypeError);
+  });
+});
+
+describe('buildVideo', () => {
+  const video = buildVideo({
+    url: 'https://m.1nky.com/' + HEX_A,
+    sha256: HEX_A,
+    dims: { width: 1280, height: 720 },
+    durationSec: 33,
+    poster: 'https://m.1nky.com/' + HEX_B,
+    blurhash: 'LEHV6nWB2yk8',
+    alt: 'roll-up on the 4th street line',
+    boards: ['SF Bay', 'sf-bay', 'Trains'],
+    caption: 'all city',
+    createdAt: FIXED,
+  });
+
+  it('is kind 22', () => {
+    expect(video.kind).toBe(KINDS.VIDEO);
+    expect(video.kind).toBe(22);
+    expect(video.content).toBe('all city');
+  });
+
+  it('carries one imeta tag plus top-level x, m and duration for indexing', () => {
+    expect(find(video.tags, 'imeta')).toHaveLength(1);
+    expect(first(video.tags, 'x')).toEqual(['x', HEX_A]);
+    expect(first(video.tags, 'm')).toEqual(['m', 'video/mp4']);
+    expect(first(video.tags, 'duration')).toEqual(['duration', '33']);
+    expect(first(video.tags, 'alt')).toEqual(['alt', 'roll-up on the 4th street line']);
+    // The poster still rides inside imeta, not as a top-level tag.
+    expect(first(video.tags, 'image')).toBeUndefined();
+  });
+
+  it('emits a deduped t tag per board', () => {
+    expect(find(video.tags, 't')).toEqual([
+      ['t', 'sf-bay'],
+      ['t', 'trains'],
+    ]);
+  });
+
+  it('adds an expiration tag only when asked', () => {
+    expect(first(video.tags, 'expiration')).toBeUndefined();
+    const ephemeral = buildVideo({
+      url: 'https://m.1nky.com/' + HEX_A,
+      sha256: HEX_A,
+      dims: { width: 1280, height: 720 },
+      durationSec: 5,
+      poster: 'https://m.1nky.com/' + HEX_B,
+      expiration: FIXED,
+    });
+    expect(first(ephemeral.tags, 'expiration')).toEqual(['expiration', String(FIXED)]);
+  });
+
+  it('rejects a bad blob hash, missing url/poster, or non-positive duration', () => {
+    const base = {
+      url: 'https://x/y',
+      sha256: HEX_A,
+      dims: { width: 1, height: 1 },
+      durationSec: 1,
+      poster: 'https://x/p',
+    };
+    expect(() => buildVideo({ ...base, sha256: 'short' })).toThrow(TypeError);
+    expect(() => buildVideo({ ...base, url: '' })).toThrow(TypeError);
+    expect(() => buildVideo({ ...base, poster: '' })).toThrow(TypeError);
+    expect(() => buildVideo({ ...base, durationSec: 0 })).toThrow(TypeError);
+    expect(() => buildVideo({ ...base, durationSec: -1 })).toThrow(TypeError);
+  });
+
+  it('emits dash-namespaced facet t tags alongside the city boards', () => {
+    const ev = buildVideo({
+      url: 'https://m.1nky.com/' + HEX_A,
+      sha256: HEX_A,
+      dims: { width: 1280, height: 720 },
+      durationSec: 5,
+      poster: 'https://m.1nky.com/' + HEX_B,
+      boards: ['sf-bay'],
+      types: ['piece'],
+      surfaces: ['freight'],
+      region: 'SoCal',
+      legalPermission: false,
+      createdAt: FIXED,
+    });
+    expect(find(ev.tags, 't')).toEqual([
+      ['t', 'sf-bay'],
+      ['t', 'type-piece'],
+      ['t', 'surface-freight'],
+      ['t', 'region-socal'],
+    ]);
+  });
+});
+
+describe('buildCrewProfile', () => {
+  it('is buildProfile — a crew page is structurally a writer page', () => {
+    expect(buildCrewProfile).toBe(buildProfile);
+    const ev = buildCrewProfile({ tag: 'FASE', city: 'sf-bay', createdAt: FIXED });
+    expect(ev.kind).toBe(KINDS.PROFILE);
+    expect(JSON.parse(ev.content)).toEqual({ name: 'FASE', city: 'sf-bay' });
+  });
+});
+
+describe('buildCrewDefinition', () => {
+  it('is kind 30078 with d:crew, a p tag per member, and a JSON roster', () => {
+    const ev = buildCrewDefinition({
+      name: 'FASE',
+      mark: fingerprint(HEX_A),
+      members: [HEX_A, HEX_B, HEX_A],
+      founderPubkey: HEX_C,
+      createdAt: FIXED,
+    });
+    expect(ev.kind).toBe(KINDS.APP_DATA);
+    expect(first(ev.tags, 'd')).toEqual(['d', CREW_DEFINITION_DTAG]);
+    expect(first(ev.tags, 'd')?.[1]).toBe('crew');
+    // Deduped p tags, one per member.
+    expect(find(ev.tags, 'p')).toEqual([
+      ['p', HEX_A],
+      ['p', HEX_B],
+    ]);
+    const content = JSON.parse(ev.content) as Record<string, unknown>;
+    expect(content['name']).toBe('FASE');
+    expect(content['members']).toEqual([HEX_A, HEX_B]);
+    expect(content['founderPubkey']).toBe(HEX_C);
+    expect(content['mark']).toBe(fingerprint(HEX_A));
+    expect(content['foundedAt']).toBe(FIXED);
+  });
+
+  it('carries optional links and omits founder/mark when absent', () => {
+    const ev = buildCrewDefinition({
+      name: 'MSK',
+      members: [HEX_A],
+      links: { instagram: 'https://ig.example/m' },
+    });
+    const content = JSON.parse(ev.content) as Record<string, unknown>;
+    expect(content['links']).toEqual({ instagram: 'https://ig.example/m' });
+    expect(content['founderPubkey']).toBeUndefined();
+    expect(content['mark']).toBeUndefined();
+  });
+
+  it('rejects an empty name or a bad member pubkey', () => {
+    expect(() => buildCrewDefinition({ name: '   ', members: [HEX_A] })).toThrow(TypeError);
+    expect(() => buildCrewDefinition({ name: 'X', members: ['nope'] })).toThrow(TypeError);
+  });
+});
+
+describe('buildCrewBadgeRegistry', () => {
+  it('is kind 30078 with d:crew-badges, site-key-signed shape, and a mark per crew', () => {
+    const ev = buildCrewBadgeRegistry({ crewPubkeys: [HEX_A, HEX_B, HEX_A], createdAt: FIXED });
+    expect(ev.kind).toBe(KINDS.APP_DATA);
+    expect(first(ev.tags, 'd')).toEqual(['d', CREW_BADGES_DTAG]);
+    expect(first(ev.tags, 'd')?.[1]).toBe('crew-badges');
+    const content = JSON.parse(ev.content) as { badges: { pubkey: string; mark: string; verifiedAt: number }[] };
+    expect(content.badges).toEqual([
+      { pubkey: HEX_A, mark: fingerprint(HEX_A), verifiedAt: FIXED },
+      { pubkey: HEX_B, mark: fingerprint(HEX_B), verifiedAt: FIXED },
+    ]);
+  });
+
+  it('rejects a malformed crew pubkey', () => {
+    expect(() => buildCrewBadgeRegistry({ crewPubkeys: ['nope'] })).toThrow(TypeError);
   });
 });
 
@@ -311,11 +580,20 @@ describe('every builder produces a signable template', () => {
       sha256: HEX_A,
       dims: { width: 4, height: 5 },
     }),
+    video: buildVideo({
+      url: 'https://m.1nky.com/' + HEX_A,
+      sha256: HEX_A,
+      dims: { width: 1280, height: 720 },
+      durationSec: 9,
+      poster: 'https://m.1nky.com/' + HEX_B,
+    }),
     threadOp: buildThreadOp({ content: 'hi', boards: ['sf-bay'] }),
     comment: buildComment(ref, { content: 'clean' }),
     buff: buildBuff([HEX_A]),
     report: buildReport({ pubkey: pk }, 'spam'),
     muteList: buildMuteList([HEX_B]),
+    crewDefinition: buildCrewDefinition({ name: 'FASE', members: [pk, HEX_B] }),
+    crewBadgeRegistry: buildCrewBadgeRegistry({ crewPubkeys: [pk] }),
   };
 
   it.each(Object.entries(templates))('%s signs and verifies', (_name, tpl) => {

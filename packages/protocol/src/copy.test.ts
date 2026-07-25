@@ -27,6 +27,7 @@ describe('KINDS', () => {
       SEAL: 13,
       DM: 14,
       FLICK: 20,
+      VIDEO: 22,
       GIFT_WRAP: 1059,
       COMMENT: 1111,
       REPORT: 1984,
