@@ -20,6 +20,7 @@ import { PickTag } from './routes/PickTag.js';
 import { PostFlick } from './routes/PostFlick.js';
 import { ProfileEdit } from './routes/ProfileEdit.js';
 import { Restore } from './routes/Restore.js';
+import { Search } from './routes/Search.js';
 import { Settings } from './routes/Settings.js';
 import { Thread } from './routes/Thread.js';
 import { MyWall, Writer } from './routes/Writer.js';
@@ -67,6 +68,7 @@ export function App(): JSX.Element {
       <Routes>
         <Route path="/" element={<Feed />} />
         <Route path="/explore" element={<Explore />} />
+        <Route path="/search" element={<Search />} />
         <Route path="/f/:id" element={<FlickDetail />} />
         <Route path="/boards" element={<Boards />} />
         <Route path="/b/:slug" element={<Board />} />

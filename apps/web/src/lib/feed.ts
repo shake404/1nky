@@ -302,18 +302,146 @@ async function fallbackFeed(cursor: string | null, board?: string): Promise<Feed
   };
 }
 
-/** Everything one writer has up. */
-export async function fetchWriterFlicks(pubkey: string): Promise<Flick[]> {
+// --- One writer --------------------------------------------------------------
+
+/**
+ * What the wall knows about a writer, as opposed to what they say about
+ * themselves (that is their own profile — see `profiles.ts`).
+ *
+ * The two counts and `firstSeen` are what the writer page turns into "on the
+ * wall since March 2025" and "12 up". Both counts are nullable because an older
+ * box may not count anything, and a made-up zero would read as a fact.
+ */
+export interface WriterSummary {
+  pubkey: string;
+  /** Their tag name, when the wall joined it in. */
+  tag: string | null;
+  mark: string;
+  avatarSha256: string | null;
+  city: string | null;
+  /** When the first thing of theirs landed, in seconds. Null when unknown. */
+  firstSeen: number | null;
+  /** When the wall last saw anything from them. */
+  updatedAt: number | null;
+  /** How many flicks and clips they have up. Null when uncounted. */
+  flickCount: number | null;
+  /** Everything they have ever put up, of any sort (wire field `eventCount`). */
+  postCount: number | null;
+  banned: boolean;
+  /** Crews they are repping — a claim on their own profile, not a roster. */
+  crews: string[];
+}
+
+export interface WriterPage {
+  /** Null when the wall could not be reached, or had nothing on them. */
+  writer: WriterSummary | null;
+  flicks: Flick[];
+  /** Opaque cursor for the next page of their wall. */
+  cursor: string | null;
+  /** True when we had to read the wall directly instead. */
+  degraded: boolean;
+}
+
+function writerSummaryFrom(value: unknown, pubkey: string): WriterSummary | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const raw = value as Record<string, unknown>;
+  const str = (key: string): string | null => {
+    const found = raw[key];
+    return typeof found === 'string' && found.trim() ? found.trim() : null;
+  };
+  const int = (key: string): number | null => {
+    const found = raw[key];
+    if (typeof found === 'number' && Number.isFinite(found)) return Math.floor(found);
+    if (typeof found === 'string' && found.trim()) {
+      const parsed = Number.parseInt(found, 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const id = (str('pubkey') ?? pubkey).toLowerCase();
+  return {
+    pubkey: id,
+    tag: str('tag') ?? str('name'),
+    mark: str('mark') ?? fingerprint(id),
+    avatarSha256: str('avatarSha256'),
+    city: str('city'),
+    firstSeen: int('firstSeen'),
+    updatedAt: int('updatedAt'),
+    flickCount: int('flickCount'),
+    postCount: int('eventCount'),
+    banned: raw['banned'] === true,
+    crews: Array.isArray(raw['crews'])
+      ? (raw['crews'] as unknown[]).filter((c): c is string => typeof c === 'string')
+      : [],
+  };
+}
+
+/** Shape a `GET /writer/:pubkey` answer: the writer, their wall, the cursor. */
+export function parseWriterResponse(
+  payload: unknown,
+  pubkey: string,
+): { writer: WriterSummary | null; flicks: Flick[]; cursor: string | null } {
+  const body = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>;
+  const { flicks, cursor } = parseFeedResponse(body);
+  return { writer: writerSummaryFrom(body['writer'], pubkey), flicks, cursor };
+}
+
+/**
+ * One writer: who the wall says they are, plus everything they have up.
+ *
+ * `GET /writer/:pubkey` answers with both in one round trip, which is why the
+ * page does not ask twice. When it cannot be reached we read their posts
+ * straight off the wall and say nothing at all about how long they have been
+ * around — the counts and the first-seen date only exist on the read side, and
+ * guessing them from one page of posts would be a fiction.
+ */
+export async function fetchWriterPage(pubkey: string, cursor?: string | null): Promise<WriterPage> {
+  const url = new URL(`${API_BASE}/writer/${pubkey}`);
+  url.searchParams.set('limit', String(PAGE_SIZE));
+  if (cursor) url.searchParams.set('cursor', cursor);
+
   try {
-    const response = await fetch(`${API_BASE}/writer/${pubkey}/flicks`, {
-      headers: { Accept: 'application/json' },
-    });
-    if (response.ok) return parseFeedResponse(await response.json()).flicks;
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (response.ok) {
+      const parsed = parseWriterResponse(await response.json(), pubkey);
+      return { ...parsed, degraded: false };
+    }
   } catch {
     /* fall through to the wall */
   }
+
   const events = await relay.query([{ kinds: [KINDS.FLICK, KINDS.VIDEO], authors: [pubkey], limit: 60 }]);
-  return fromEvents(events);
+  return { writer: null, flicks: fromEvents(events), cursor: null, degraded: true };
+}
+
+/**
+ * Just the writer header, without pulling their whole wall down with it.
+ *
+ * Used where a byline wants to say how long somebody has been around and the
+ * screen is already showing one post of theirs (the flick detail view). Returns
+ * null rather than degrading — a byline with no dots on it is fine.
+ */
+export async function fetchWriterSummary(pubkey: string, signal?: AbortSignal): Promise<WriterSummary | null> {
+  const url = new URL(`${API_BASE}/writer/${pubkey}`);
+  // We want the header, not the wall. The wall ignores an unknown limit, so
+  // this is only ever a saving.
+  url.searchParams.set('limit', '1');
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) return null;
+    return parseWriterResponse(await response.json(), pubkey).writer;
+  } catch {
+    return null;
+  }
+}
+
+/** Everything one writer has up. */
+export async function fetchWriterFlicks(pubkey: string): Promise<Flick[]> {
+  return (await fetchWriterPage(pubkey)).flicks;
 }
 
 /** One flick by id, for the detail view on a cold load. */

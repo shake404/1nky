@@ -25,11 +25,40 @@ function ConnectionDot(): JSX.Element {
 const TOPNAV = [
   { to: '/', label: 'Wall', end: true },
   { to: '/explore', label: 'Explore', end: false },
+  { to: '/search', label: 'Search', end: false },
   { to: '/boards', label: 'Boards', end: false },
   { to: '/post', label: 'Post', end: false },
   { to: '/me', label: 'Mine', end: false },
   { to: '/crews', label: 'Crew', end: false },
 ] as const;
+
+/**
+ * The way to search on a phone.
+ *
+ * The bottom dock is full — eight tabs is already the ceiling for a phone-width
+ * row, and a ninth would shrink every label past reading. So search lives in the
+ * top bar instead: the glyph below, always in reach at the top of every screen,
+ * and the worded link in the desktop nav above (where it hides, because the word
+ * is already there).
+ *
+ * Drawn rather than typed: the geometric glyphs the dock uses have no magnifier
+ * among them, and an emoji would be the only colour image in the whole chrome.
+ */
+function SearchGlyph(): JSX.Element {
+  return (
+    <NavLink
+      to="/search"
+      className={({ isActive }) => `topbar__search ${isActive ? 'is-active' : ''}`}
+      aria-label="Search"
+      title="Search"
+    >
+      <svg viewBox="0 0 20 20" width="19" height="19" aria-hidden="true" focusable="false">
+        <circle cx="8.5" cy="8.5" r="5.4" fill="none" stroke="currentColor" strokeWidth="2" />
+        <line x1="12.7" y1="12.7" x2="18" y2="18" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    </NavLink>
+  );
+}
 
 export function TopBar(): JSX.Element {
   const { tag } = useTag();
@@ -54,6 +83,7 @@ export function TopBar(): JSX.Element {
           </nav>
         </div>
         <div className="row" style={{ gap: 12 }}>
+          <SearchGlyph />
           {tag ? (
             // The device holds ONE tag at a time (single-identity store — see
             // db.ts). Posting as a crew works by importing the crew's blackbook

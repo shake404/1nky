@@ -1825,3 +1825,81 @@ main {
 .reply__open:hover {
   color: var(--chalk);
 }
+
+/* --- Search ----------------------------------------------------------------
+ * The glyph in the top bar is the phone's way in (the dock is full at eight
+ * tabs). It disappears on desktop, where the word "Search" is already sitting
+ * in the top nav.
+ */
+.topbar__search {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-height: 40px;
+  color: var(--buff);
+  border: 1px solid transparent;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.topbar__search:hover {
+  color: var(--chalk);
+  border-color: var(--line-strong);
+}
+
+.topbar__search.is-active {
+  color: var(--chalk);
+  border-color: var(--line-strong);
+}
+
+@media (min-width: 980px) {
+  .topbar__search {
+    display: none;
+  }
+}
+
+/* The query box is big enough to be the obvious thing on the screen, but it
+   stays in the body sans — a search term is somebody else's name being looked
+   up, not paint being put down. Bodega is reserved for the latter. */
+.input--search {
+  font-size: 1.15rem;
+  letter-spacing: 0.01em;
+  padding: 16px 16px;
+}
+
+/* Safari paints its own clear button in a shade nothing else here uses. */
+.input--search::-webkit-search-cancel-button {
+  filter: grayscale(1) brightness(1.6);
+}
+
+/* --- Standing --------------------------------------------------------------
+ * How long somebody has been on the wall, and how much they have up. Three
+ * dots and a stencilled line — no number that can be climbed, nothing gold.
+ * Filled dots are chrome (finished work), empty ones are buff (not yet).
+ */
+.standing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.age-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* Sits on the text baseline next to a mark or a name. */
+  vertical-align: middle;
+}
+
+.age-dots__dot {
+  width: 6px;
+  height: 6px;
+  background: var(--soot-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.age-dots__dot--on {
+  background: var(--chrome-face);
+  box-shadow: 1px 1px 0 var(--keyline);
+}

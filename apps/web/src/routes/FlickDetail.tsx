@@ -1,12 +1,13 @@
 import { COPY, KINDS, type EventRef, type SignedEvent } from '@1nky/protocol';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { AgeDots } from '../components/AgeDots.js';
 import { FlagIt } from '../components/FlagIt.js';
 import { IgnoreWriter } from '../components/IgnoreWriter.js';
 import { WriterChip } from '../components/WriterChip.js';
 import { Spraying } from '../components/Spraying.js';
 import { getPref, setPref } from '../lib/db.js';
-import { fetchFlick, type Flick } from '../lib/feed.js';
+import { fetchFlick, fetchWriterSummary, type Flick, type WriterSummary } from '../lib/feed.js';
 import { ago } from '../lib/platform.js';
 import { buffEvents, postComment, type Stage } from '../lib/publish.js';
 import { relay } from '../lib/relay.js';
@@ -28,6 +29,7 @@ export function FlickDetail(): JSX.Element {
   const { say } = useToast();
 
   const [flick, setFlick] = useState<Flick | null>(null);
+  const [writer, setWriter] = useState<WriterSummary | null>(null);
   const [missing, setMissing] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [draft, setDraft] = useState('');
@@ -37,6 +39,7 @@ export function FlickDetail(): JSX.Element {
   useEffect(() => {
     let live = true;
     setFlick(null);
+    setWriter(null);
     setMissing(false);
     void fetchFlick(id).then((found) => {
       if (!live) return;
@@ -47,6 +50,23 @@ export function FlickDetail(): JSX.Element {
       live = false;
     };
   }, [id]);
+
+  /**
+   * How long the writer has been on the wall, for the byline.
+   *
+   * Asked for HERE and nowhere in a grid: one lookup on a screen showing one
+   * post is fine, the same lookup once per tile on a wall of twenty is not —
+   * which is why `WriterChip` never does this itself.
+   */
+  useEffect(() => {
+    const author = flick?.pubkey;
+    if (!author) return;
+    const controller = new AbortController();
+    void fetchWriterSummary(author, controller.signal).then((found) => {
+      if (!controller.signal.aborted) setWriter(found);
+    });
+    return () => controller.abort();
+  }, [flick?.pubkey]);
 
   // Replies stream in live; the wall does not need a refresh button.
   useEffect(() => {
@@ -152,7 +172,10 @@ export function FlickDetail(): JSX.Element {
       )}
 
       <div className="row spread">
-        <WriterChip pubkey={flick.pubkey} name={flick.writer} size={28} />
+        <span className="row" style={{ gap: 10 }}>
+          <WriterChip pubkey={flick.pubkey} name={flick.writer ?? writer?.tag ?? undefined} size={28} />
+          <AgeDots firstSeen={writer?.firstSeen} />
+        </span>
         <span className="mono faint">{ago(flick.createdAt)}</span>
       </div>
 

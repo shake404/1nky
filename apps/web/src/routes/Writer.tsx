@@ -1,15 +1,39 @@
 import { COPY, fingerprint } from '@1nky/protocol';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { AgeDots } from '../components/AgeDots.js';
 import { FlickCard } from '../components/FlickCard.js';
 import { Identicon } from '../components/Identicon.js';
 import { IgnoreWriter, useIgnoredWriters } from '../components/IgnoreWriter.js';
 import { fetchWriterCrews } from '../lib/crews.js';
-import { fetchWriterFlicks, type Flick } from '../lib/feed.js';
+import { fetchWriterPage, type Flick, type WriterSummary } from '../lib/feed.js';
 import { fetchProfile } from '../lib/profiles.js';
+import { onTheWallSince, upLine } from '../lib/reputation.js';
 import { useTag } from '../state/TagProvider.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * How long they have been on the wall and how much they have up — the only two
+ * things this app will ever say about somebody's standing. No score, no rank,
+ * nothing anybody can farm. Renders nothing at all when the wall does not know:
+ * an invented "new here" is a guess wearing a fact's clothes.
+ */
+function Standing({ writer }: { writer: WriterSummary | null }): JSX.Element | null {
+  if (!writer) return null;
+  const since = onTheWallSince(writer.firstSeen);
+  // What they have UP is the flick count; the wider count of everything they
+  // have ever put up stands in when the wall only kept that one.
+  const up = upLine(writer.flickCount ?? writer.postCount);
+  if (!since && !up) return null;
+
+  return (
+    <p className="standing" style={{ marginTop: 8 }}>
+      <AgeDots firstSeen={writer.firstSeen} />
+      <span className="mono faint">{[since, up].filter(Boolean).join(' · ')}</span>
+    </p>
+  );
+}
 
 /** A writer's page: tag, mark, identicon, everything they have up. */
 export function Writer(): JSX.Element {
@@ -18,6 +42,7 @@ export function Writer(): JSX.Element {
   const [name, setName] = useState<string>('');
   const [bio, setBio] = useState<string>('');
   const [flicks, setFlicks] = useState<Flick[]>([]);
+  const [summary, setSummary] = useState<WriterSummary | null>(null);
   const [crews, setCrews] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const ignored = useIgnoredWriters();
@@ -38,13 +63,16 @@ export function Writer(): JSX.Element {
     };
   }, [pubkey, valid]);
 
+  // One read for both halves of the page: who the wall says they are, and
+  // everything they have up.
   useEffect(() => {
     if (!valid) return;
     let live = true;
     setLoading(true);
-    void fetchWriterFlicks(pubkey).then((found) => {
+    void fetchWriterPage(pubkey).then((page) => {
       if (live) {
-        setFlicks(found);
+        setFlicks(page.flicks);
+        setSummary(page.writer);
         setLoading(false);
       }
     });
@@ -89,11 +117,12 @@ export function Writer(): JSX.Element {
       <div className="row" style={{ gap: 14 }}>
         <Identicon pubkey={pubkey} size={64} />
         <div>
-          <h2>{name || 'unnamed'}</h2>
+          <h2>{name || summary?.tag || 'unnamed'}</h2>
           <p className="mono muted" style={{ marginTop: 4 }}>
             {fingerprint(pubkey)}
           </p>
           <p className="help">{COPY.mark.hint}</p>
+          <Standing writer={summary} />
           {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>
@@ -159,6 +188,7 @@ export function Writer(): JSX.Element {
 export function MyWall(): JSX.Element {
   const { tag } = useTag();
   const [flicks, setFlicks] = useState<Flick[]>([]);
+  const [summary, setSummary] = useState<WriterSummary | null>(null);
   const [bio, setBio] = useState('');
   const [crews, setCrews] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,9 +196,10 @@ export function MyWall(): JSX.Element {
   useEffect(() => {
     if (!tag) return;
     let live = true;
-    void fetchWriterFlicks(tag.pubkey).then((found) => {
+    void fetchWriterPage(tag.pubkey).then((page) => {
       if (live) {
-        setFlicks(found);
+        setFlicks(page.flicks);
+        setSummary(page.writer);
         setLoading(false);
       }
     });
@@ -195,6 +226,7 @@ export function MyWall(): JSX.Element {
             {tag.mark}
           </p>
           <p className="help">{COPY.mark.hint}</p>
+          <Standing writer={summary} />
           {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>
