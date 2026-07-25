@@ -39,6 +39,11 @@ ENV NODE_ENV=production
 
 COPY --from=build --chown=node:node /repo /repo
 
+# Mountpoint for the dynamic mod lists (ban/invited exports). Owned by node in
+# the image so the named volume initialises node-writable on first mount —
+# a root-owned bind mount here is exactly the EACCES this exists to prevent.
+RUN mkdir -p /strfry-plugin && chown node:node /strfry-plugin
+
 USER node
 
 # The indexer's schema has no IP column and never will (hard rule #1).

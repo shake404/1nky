@@ -152,10 +152,12 @@ services:
       # every single private message.
       POW_NEW_KINDS: "${POW_NEW_KINDS:-0}"
       POW_REACTION_KINDS: "${POW_REACTION_KINDS:-1059,1984,10000}"
-      # Hot-reloaded ban list (JSON array of 32-byte hex pubkeys).
-      BAN_LIST_PATH: "${BAN_LIST_PATH:-/app/plugin/banlist.json}"
+      # Hot-reloaded ban list (JSON array of 32-byte hex pubkeys). Lives on the
+      # shared `modlists` volume the indexer writes — a bind mount of ./strfry
+      # is root-owned after every deploy and the indexer (USER node) EACCESes.
+      BAN_LIST_PATH: "${BAN_LIST_PATH:-/app/dynamic/banlist.json}"
       # Hot-reloaded invited list — invited pubkeys skip the newcomer PoW tier.
-      INVITED_LIST_PATH: "${INVITED_LIST_PATH:-/app/plugin/invited.json}"
+      INVITED_LIST_PATH: "${INVITED_LIST_PATH:-/app/dynamic/invited.json}"
       # Set to "0" to disable the PoW gate entirely (local dev only).
       POW_ENABLED: "${POW_ENABLED:-1}"
     volumes:
@@ -168,6 +170,8 @@ services:
       # inside the container, and the ban list hot-reload would silently stop
       # working.
       - ./strfry:/app/plugin:ro
+      # Dynamic mod lists (ban/invited), written by the indexer, read here.
+      - modlists:/app/dynamic:ro
     ports:
       # Exposed to the compose network as strfry:7777 for caddy/indexer, and to
       # the host on loopback only so the Phase 0 smoke script can reach it.
@@ -293,18 +297,18 @@ services:
       # another writer's event. Unset means nobody is a moderator.
       SITE_MOD_PUBKEYS: "${SITE_MOD_PUBKEYS:-}"
       # Where `banned_pubkeys` is exported for the relay's write policy. Unset
-      # disables the export; the path below is the read-write mount of
-      # infra/strfry/ declared under `volumes`.
+      # disables the export; the path below is the shared `modlists` volume.
       BAN_LIST_EXPORT_PATH: "/strfry-plugin/banlist.json"
-      # Invited pubkeys ("getting put on") — same mount, same hot-reload contract.
+      # Invited pubkeys ("getting put on") — same volume, same hot-reload contract.
       INVITED_LIST_EXPORT_PATH: "/strfry-plugin/invited.json"
     volumes:
-      # infra/strfry/, read-WRITE — this is the one service that writes
-      # banlist.json. Mount the DIRECTORY so the atomic write (write .tmp,
-      # rename over the target) works: renaming onto a bind-mounted single FILE
-      # is not possible, and a non-atomic in-place write would let the relay read
-      # a half-written list.
-      - ./strfry:/strfry-plugin
+      # Shared named volume, read-WRITE here, read-only in strfry (mounted at
+      # /app/dynamic). A named volume (not a bind of ./strfry) because deploys
+      # re-extract the tree root-owned and this container runs as `node`; the
+      # image pre-owns the mountpoint so the volume initialises node-writable.
+      # A DIRECTORY mount also keeps the atomic write (write .tmp, rename over
+      # the target) possible — renaming onto a bind-mounted single file is not.
+      - modlists:/strfry-plugin
     networks: [oneinky]
 
   # Blossom-compatible media service (@1nky/media). Streams to R2.
@@ -477,3 +481,6 @@ volumes:
   tor_keys:
   # Last-run status for the nightly backup. Disposable.
   backup_state:
+  # Dynamic mod lists (ban/invited exports): indexer writes, strfry reads.
+  # Disposable — the indexer re-exports on every startup.
+  modlists:
