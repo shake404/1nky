@@ -15,5 +15,5 @@ postgres-data/
 playwright-report/
 test-results/
 .playwright-mcp/
-1nky-landing.png
-1nky-desktop.png
+1nky-*.png
+Bodega-extracted/
