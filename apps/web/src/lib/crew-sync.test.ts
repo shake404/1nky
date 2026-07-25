@@ -30,8 +30,8 @@ vi.mock('./publish.js', () => ({
 const { relay } = await import('./relay.js');
 const { publishTemplate } = await import('./publish.js');
 const { resetDbHandle } = await import('./db.js');
-const { backUpCrewKey, syncCrewKeys } = await import('./crew-sync.js');
-const { hasCrewKey, listCrewKeys } = await import('./crew-keys.js');
+const { backUpCrewKey, ensureCrewBackups, syncCrewKeys } = await import('./crew-sync.js');
+const { hasCrewKey, listCrewKeys, saveCrewKey } = await import('./crew-keys.js');
 const { loadFoundedCrews } = await import('./crews.js');
 
 function hex(bytes: Uint8Array): string {
@@ -89,6 +89,32 @@ describe('backUpCrewKey', () => {
     await expect(
       backUpCrewKey({ secret: owner, pubkey: ownerPub }, { pubkey: crewPub, secret: crewSecret, name: 'FASE' }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('ensureCrewBackups', () => {
+  it('backs up a held crew that has none, once, then skips it next time', async () => {
+    await saveCrewKey({ pubkey: crewPub, secret: crewSecret, name: 'FASE' });
+
+    const first = await ensureCrewBackups({ secret: owner, pubkey: ownerPub });
+    expect(first).toBe(1);
+    expect(publishTemplate).toHaveBeenCalledTimes(1);
+    // The published backup is a crewkey: kind-30078, encrypted, decryptable by the owner.
+    const [, , template] = vi.mocked(publishTemplate).mock.calls[0]! as unknown as [Uint8Array, string, EventTemplate];
+    expect(template.tags).toContainEqual(['d', `crewkey:${crewPub}`]);
+    expect(template.content).not.toContain(crewSecretHex);
+    expect(decryptCrewKey(owner, ownerPub, template.content)).toEqual(payload);
+
+    // Second run: already seeded, nothing new mined.
+    vi.mocked(publishTemplate).mockClear();
+    const second = await ensureCrewBackups({ secret: owner, pubkey: ownerPub });
+    expect(second).toBe(0);
+    expect(publishTemplate).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when this device holds no crews', async () => {
+    expect(await ensureCrewBackups({ secret: owner, pubkey: ownerPub })).toBe(0);
+    expect(publishTemplate).not.toHaveBeenCalled();
   });
 });
 

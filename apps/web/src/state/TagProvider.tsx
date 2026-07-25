@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { syncCrewKeys } from '../lib/crew-sync.js';
+import { ensureCrewBackups, syncCrewKeys } from '../lib/crew-sync.js';
 import { requestPersistence } from '../lib/db.js';
 import {
   adoptTag,
@@ -56,7 +56,11 @@ export function TagProvider({ children }: { children: ReactNode }): JSX.Element 
     if (!tag) return;
     if (syncedFor.current === tag.pubkey) return;
     syncedFor.current = tag.pubkey;
-    void syncCrewKeys(tag).catch(() => undefined);
+    // Seed backups for crews this device already holds (so pre-sync crews reach
+    // the writer's other devices), then pull anything held elsewhere down.
+    void ensureCrewBackups(tag)
+      .catch(() => undefined)
+      .finally(() => void syncCrewKeys(tag).catch(() => undefined));
   }, [tag]);
 
   useEffect(() => {

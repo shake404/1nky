@@ -2,7 +2,7 @@ import { COPY, fingerprint } from '@1nky/protocol';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Identicon } from '../components/Identicon.js';
-import { syncCrewKeys } from '../lib/crew-sync.js';
+import { ensureCrewBackups, syncCrewKeys } from '../lib/crew-sync.js';
 import { fetchWriterCrews, loadFoundedCrews } from '../lib/crews.js';
 import { fetchProfile } from '../lib/profiles.js';
 import { useTag } from '../state/TagProvider.js';
@@ -33,9 +33,10 @@ export function Crews(): JSX.Element {
     if (!tag) return;
     let live = true;
     void (async () => {
-      // Pull any crew keys this writer's tag holds elsewhere into this device
-      // first, so a founder landing here on a fresh device sees their crews.
-      // Idempotent and best-effort — a miss just leaves the local list as-is.
+      // Seed backups for any crew this device holds but never backed up (crews
+      // founded before sync existed), then pull any this tag holds elsewhere.
+      // Both idempotent and best-effort — a miss just leaves the list as-is.
+      await ensureCrewBackups(tag).catch(() => undefined);
       await syncCrewKeys(tag).catch(() => undefined);
       const local = await loadFoundedCrews();
       const remotePubkeys = await fetchWriterCrews(tag.pubkey).catch(() => [] as string[]);

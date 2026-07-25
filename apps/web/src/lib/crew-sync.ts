@@ -6,8 +6,9 @@ import {
   parseCrewKeyBackup,
 } from '@1nky/protocol';
 import { POW_BITS } from './config.js';
-import { hasCrewKey, saveCrewKey } from './crew-keys.js';
+import { hasCrewKey, listCrewKeys, saveCrewKey } from './crew-keys.js';
 import { saveFoundedCrew } from './crews.js';
+import { getPref, setPref } from './db.js';
 import type { Tag } from './identity.js';
 import { publishTemplate } from './publish.js';
 import { relay } from './relay.js';
@@ -66,6 +67,39 @@ export async function backUpCrewKey(
   } catch {
     /* best effort — the crew still works on this device */
   }
+}
+
+const BACKED_UP_KEY = 'backed-up-crews';
+
+/**
+ * Make sure every crew this device already holds has a backup on the relay.
+ *
+ * Crews founded or imported BEFORE crew-key sync existed never published a
+ * backup, so a founder's other devices have nothing to pull. This seeds one
+ * for each held crew that this device has not backed up before — a one-time
+ * cost per crew per device, tracked in `prefs` so a later load does not
+ * re-mine work. Best effort; a crew still works locally if its backup does
+ * not go up. Returns how many it published this run.
+ */
+export async function ensureCrewBackups(tag: Pick<Tag, 'secret' | 'pubkey'>): Promise<number> {
+  let held;
+  try {
+    held = await listCrewKeys();
+  } catch {
+    return 0;
+  }
+  if (held.length === 0) return 0;
+
+  const done = new Set(await getPref<string[]>(BACKED_UP_KEY, []));
+  let published = 0;
+  for (const crew of held) {
+    if (done.has(crew.pubkey)) continue;
+    await backUpCrewKey(tag, { pubkey: crew.pubkey, secret: crew.secret, name: crew.name });
+    done.add(crew.pubkey);
+    published += 1;
+  }
+  if (published > 0) await setPref(BACKED_UP_KEY, [...done]);
+  return published;
 }
 
 /**
