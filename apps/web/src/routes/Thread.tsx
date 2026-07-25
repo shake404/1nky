@@ -12,6 +12,7 @@ import {
   type ThreadReply,
   type ThreadView,
 } from '../lib/boards.js';
+import { HAPPENING_BOARD, runsLine } from '../lib/happenings.js';
 import { ago } from '../lib/platform.js';
 import { postComment, type Stage } from '../lib/publish.js';
 import { useTag } from '../state/TagProvider.js';
@@ -148,7 +149,11 @@ export function Thread(): JSX.Element {
   }
 
   const clock = beefClock(op.expiresAt);
-  const board = op.boards[0];
+  // A thread with a date on it carries the happening marker among its boards.
+  // That slug is plumbing: the tape at the top wants the place, and the line
+  // below already says when it runs, so the countdown steps aside for it.
+  const happeningAt = op.happeningAt;
+  const board = op.boards.find((slug) => slug !== HAPPENING_BOARD) ?? op.boards[0];
 
   return (
     <div className="shell pad stack stack--wide">
@@ -166,7 +171,11 @@ export function Thread(): JSX.Element {
         <span className="mono faint">{ago(op.createdAt)}</span>
       </div>
 
-      {clock ? (
+      {happeningAt !== null ? (
+        <div className="row">
+          <span className="runs-line">{runsLine(happeningAt)}</span>
+        </div>
+      ) : clock ? (
         <div className="row">
           <BeefChip clock={clock} />
         </div>

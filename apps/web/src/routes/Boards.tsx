@@ -82,8 +82,19 @@ export function Boards(): JSX.Element {
         </div>
       )}
 
-      {/* Fixed, not fetched: the board where you complain about this place has
-          to be findable on the day nothing has been posted to it. */}
+      {/* Fixed, not fetched, for the same reason as the holler row below: what
+          is coming up has to be findable on a phone, where the bottom dock is
+          full and the desktop nav is not there to help. */}
+      <section className="stack">
+        <hr className="rule" />
+        <div className="settings-row">
+          <span className="muted">Jams, meets and shows with a date on them.</span>
+          <Link to="/happenings" className="btn btn--go btn--sm sticker">
+            Happenings
+          </Link>
+        </div>
+      </section>
+
       <section className="stack">
         <hr className="rule" />
         <div className="settings-row">

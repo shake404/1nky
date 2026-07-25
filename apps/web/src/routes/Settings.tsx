@@ -5,6 +5,7 @@ import { Identicon } from '../components/Identicon.js';
 import { IgnoreWriter, useIgnoredWriters } from '../components/IgnoreWriter.js';
 import { PutSomeoneOn } from '../components/PutSomeoneOn.js';
 import { QrBlock } from '../components/QrBlock.js';
+import { Recovery } from '../components/Recovery.js';
 import { API_BASE, MEDIA_BASE, POW_BITS, RELAY_WS_URL, SHOW_FLAGS } from '../lib/config.js';
 import { exportBlackbook } from '../lib/identity.js';
 import { loadModKey } from '../lib/mod.js';
@@ -78,6 +79,10 @@ export function Settings(): JSX.Element {
         </div>
         <p className="help">{COPY.blackbook.warning}</p>
       </section>
+
+      <hr className="rule" />
+
+      <Recovery />
 
       <hr className="rule" />
 

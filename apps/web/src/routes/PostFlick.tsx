@@ -1,6 +1,7 @@
 import { COPY, GRAF_TYPES, SURFACES, type GrafType, type Surface } from '@1nky/protocol';
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { BlurFaces } from '../components/BlurFaces.js';
 import { Spraying } from '../components/Spraying.js';
 import { fetchExploreFacets, type FacetOption } from '../lib/explore.js';
 import { postFlick, postVideo, type Stage } from '../lib/publish.js';
@@ -33,6 +34,11 @@ export function PostFlick(): JSX.Element {
   const [alt, setAlt] = useState('');
   const [stage, setStage] = useState<Stage | null>(null);
   const [error, setError] = useState('');
+
+  // Face blur: the bytes the writer approved, and whether they asked for a
+  // covering we could not give them.
+  const [blurred, setBlurred] = useState<Blob | null>(null);
+  const [blurBlocked, setBlurBlocked] = useState(false);
 
   // Facets.
   const [cities, setCities] = useState<FacetOption[]>([]);
@@ -79,8 +85,12 @@ export function PostFlick(): JSX.Element {
     setFile(chosen);
   };
 
+  // Stable identities: BlurFaces repaints whenever these change.
+  const takeBlurred = useCallback((blob: Blob | null) => setBlurred(blob), []);
+  const takeBlocked = useCallback((blocked: boolean) => setBlurBlocked(blocked), []);
+
   const submit = async (): Promise<void> => {
-    if (!tag || !file) return;
+    if (!tag || !file || blurBlocked) return;
     setError('');
     setStage('preparing');
     try {
@@ -100,7 +110,15 @@ export function PostFlick(): JSX.Element {
       if (media === 'video') {
         await postVideo(tag, { file, ...details, onStage: setStage });
       } else {
-        await postFlick(tag, { file, ...details, onStage: setStage });
+        // The covered canvas replaces the picked file when the writer asked for
+        // it, so the blur happens BEFORE the upload pipeline's own strip-and-
+        // re-encode rather than after — the original bytes never go anywhere.
+        const going = blurred
+          ? new File([blurred], file.name.replace(/\.[^.]+$/, '') + '.webp', {
+              type: 'image/webp',
+            })
+          : file;
+        await postFlick(tag, { file: going, ...details, onStage: setStage });
       }
       say('Up.');
       navigate('/', { replace: true });
@@ -158,6 +176,8 @@ export function PostFlick(): JSX.Element {
       )}
 
       {error ? <p className="error">{error}</p> : null}
+
+      <BlurFaces file={media === 'image' ? file : null} onBlurred={takeBlurred} onBlocked={takeBlocked} />
 
       {/* Facet selectors — tag this post so Explore can find it. */}
       <section className="facets">
@@ -259,10 +279,16 @@ export function PostFlick(): JSX.Element {
         type="button"
         className="btn btn--go btn--block sticker"
         onClick={() => void submit()}
-        disabled={!file || stage !== null}
+        disabled={!file || stage !== null || blurBlocked}
       >
         Put it up
       </button>
+      {blurBlocked ? (
+        <p className="help hazard">
+          You asked for faces to be covered and that did not work here. Switch it off above if you
+          want to put this up as it is.
+        </p>
+      ) : null}
     </div>
   );
 }

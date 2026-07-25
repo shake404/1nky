@@ -21,15 +21,23 @@ function ConnectionDot(): JSX.Element {
  * Desktop top-nav: persistent route links in the topbar from 980px up. The
  * mobile bottom dock (below) still carries the same core routes — the brief
  * is explicit that the bottom nav stays.
+ *
+ * `wide` marks a link that only appears once there is genuinely room for it
+ * (1180px, the shell's own width). Seven labels already fill the bar at 980px;
+ * "Happenings" is the longest word in the nav and would push the row into the
+ * speaking-as tape. So it waits for the space instead of crowding, and on
+ * anything narrower the boards hub is the door — which is where a phone finds it
+ * too, since the bottom dock is full at eight tabs.
  */
 const TOPNAV = [
-  { to: '/', label: 'Wall', end: true },
-  { to: '/explore', label: 'Explore', end: false },
-  { to: '/search', label: 'Search', end: false },
-  { to: '/boards', label: 'Boards', end: false },
-  { to: '/post', label: 'Post', end: false },
-  { to: '/me', label: 'Mine', end: false },
-  { to: '/crews', label: 'Crew', end: false },
+  { to: '/', label: 'Wall', end: true, wide: false },
+  { to: '/explore', label: 'Explore', end: false, wide: false },
+  { to: '/search', label: 'Search', end: false, wide: false },
+  { to: '/boards', label: 'Boards', end: false, wide: false },
+  { to: '/happenings', label: 'Happenings', end: false, wide: true },
+  { to: '/post', label: 'Post', end: false, wide: false },
+  { to: '/me', label: 'Mine', end: false, wide: false },
+  { to: '/crews', label: 'Crew', end: false, wide: false },
 ] as const;
 
 /**
@@ -75,7 +83,11 @@ export function TopBar(): JSX.Element {
                 key={item.to}
                 to={item.to}
                 end={item.end}
-                className={({ isActive }) => (isActive ? 'is-active' : '')}
+                className={({ isActive }) =>
+                  [item.wide ? 'topnav__wide' : '', isActive ? 'is-active' : '']
+                    .filter(Boolean)
+                    .join(' ')
+                }
               >
                 {item.label}
               </NavLink>

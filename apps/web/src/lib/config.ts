@@ -16,14 +16,73 @@ function trimSlash(value: string): string {
 
 const env = import.meta.env;
 
+// --- Onion-ready service bases -----------------------------------------------
+
+/**
+ * The three service addresses, derived rather than baked.
+ *
+ * The wall's normal build stamps absolute URLs in at compile time, which is
+ * right for 1nky.com and wrong for a hidden service: an `.onion` visitor who
+ * gets handed `https://api.1nky.com` has just been told to leave Tor, and the
+ * whole point of the address was that they never do. So on a `.onion` host the
+ * three bases are recomputed from the address bar itself — everything rides the
+ * one origin, and the vhost in front puts `/api`, `/media` and `/relay` where
+ * they belong.
+ */
+export interface ServiceBases {
+  api: string;
+  media: string;
+  relay: string;
+}
+
+/** Just enough of `Location` to derive from. */
+export interface BaseLocation {
+  hostname?: string;
+  origin?: string;
+  protocol?: string;
+  host?: string;
+}
+
+/**
+ * Same-origin bases for a hidden-service host, or null when the baked values
+ * should win.
+ *
+ * Null is the answer for 1nky.com, for a LAN box, and — importantly — for
+ * vitest, where `location.hostname` is `localhost`: the tests and the dev box
+ * both keep the localhost defaults they have always had.
+ */
+export function derivedBases(loc: BaseLocation | undefined | null): ServiceBases | null {
+  const hostname = (loc?.hostname ?? '').toLowerCase();
+  if (!hostname.endsWith('.onion')) return null;
+
+  const protocol = loc?.protocol ?? 'http:';
+  const host = loc?.host ?? hostname;
+  const origin = trimSlash(loc?.origin ?? `${protocol}//${host}`);
+  return {
+    api: `${origin}/api`,
+    media: `${origin}/media`,
+    relay: `ws${protocol === 'https:' ? 's' : ''}://${host}/relay`,
+  };
+}
+
+/**
+ * Computed once, at module init — the address bar cannot change under us
+ * without a reload, and a getter on every fetch would only buy re-reading a
+ * constant.
+ */
+const derived = derivedBases(typeof location === 'undefined' ? null : location);
+
 /** WebSocket endpoint for the write path. */
-export const RELAY_WS_URL = env.VITE_RELAY_WS_URL ?? 'ws://localhost:7777';
+export const RELAY_WS_URL = derived?.relay ?? env.VITE_RELAY_WS_URL ?? 'ws://localhost:7777';
 
 /** Read-only REST API (feeds, search). Never used for writes. */
-export const API_BASE = trimSlash(env.VITE_API_BASE ?? 'http://localhost:3001');
+export const API_BASE = derived?.api ?? trimSlash(env.VITE_API_BASE ?? 'http://localhost:3001');
 
 /** Blossom-compatible media service. */
-export const MEDIA_BASE = trimSlash(env.VITE_MEDIA_BASE ?? 'http://localhost:3002');
+export const MEDIA_BASE = derived?.media ?? trimSlash(env.VITE_MEDIA_BASE ?? 'http://localhost:3002');
+
+/** True when the three bases above came off the address bar, not the build. */
+export const SAME_ORIGIN_SERVICES = derived !== null;
 
 /**
  * NIP-13 difficulty targets. Defaults match `.env.example`

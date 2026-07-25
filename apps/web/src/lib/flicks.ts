@@ -149,7 +149,14 @@ export function buildUploadAuth(
   };
 }
 
-function authHeader(event: SignedEvent): string {
+/**
+ * The `Authorization: Nostr <base64>` header the media service reads.
+ *
+ * Exported because the recovery opt-in authenticates the exact same way an
+ * upload does — same signed 24242, same header shape, different verb. Sharing
+ * this rather than re-writing it means there is one encoder to get wrong.
+ */
+export function authHeader(event: SignedEvent): string {
   const json = JSON.stringify(event);
   const bytes = new TextEncoder().encode(json);
   let binary = '';

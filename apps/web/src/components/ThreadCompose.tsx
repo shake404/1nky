@@ -1,6 +1,7 @@
 import { beefExpiration, COPY, normalizeBoard, type BeefDuration } from '@1nky/protocol';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { HAPPENING_CLEARS_COPY, whenText } from '../lib/happenings.js';
 import { postThread, type Stage } from '../lib/publish.js';
 import { useTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
@@ -8,6 +9,31 @@ import { Spraying } from './Spraying.js';
 
 const SUBJECT_MAX = 80;
 const BODY_MAX = 2000;
+
+/**
+ * Turn what the browser's date-and-time field gives us into unix seconds.
+ *
+ * The field hands back a bare `2026-08-01T20:00` with no zone on it, which the
+ * platform reads as the writer's own clock — which is the right reading: a jam
+ * at eight is at eight where the jam is.
+ *
+ * Returns null for empty or unreadable input so the caller can just refuse.
+ */
+export function happeningSeconds(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed).getTime();
+  if (!Number.isFinite(parsed)) return null;
+  const seconds = Math.floor(parsed / 1000);
+  return seconds > 0 ? seconds : null;
+}
+
+/** What the date field's `min` should be: right now, in the field's format. */
+export function dateFieldFloor(now: number = Date.now()): string {
+  const at = new Date(now);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
 
 /**
  * How long it runs, in the writer's words.
@@ -38,6 +64,12 @@ export interface ThreadComposeProps {
   submitLabel?: string;
   /** What the toast says once it is up. */
   postedLabel?: string;
+  /**
+   * Open with the date switch already flipped. Used by the "put one up" door on
+   * the happenings list, so somebody who came to post a jam does not have to
+   * find the switch first.
+   */
+  defaultHappening?: boolean;
 }
 
 /**
@@ -53,6 +85,7 @@ export function ThreadCompose({
   bodyPlaceholder = 'Say it.',
   submitLabel = 'Put it up',
   postedLabel = 'Up.',
+  defaultHappening = false,
 }: ThreadComposeProps): JSX.Element | null {
   const { tag } = useTag();
   const { say } = useToast();
@@ -61,16 +94,31 @@ export function ThreadCompose({
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [duration, setDuration] = useState<BeefDuration>(defaultDuration);
+  const [happening, setHappening] = useState(defaultHappening);
+  const [goesDown, setGoesDown] = useState('');
   const [stage, setStage] = useState<Stage | null>(null);
   const [error, setError] = useState('');
 
   const board = normalizeBoard(rawBoard);
+  const happeningAt = happening ? happeningSeconds(goesDown) : null;
 
   if (!tag) return null;
 
   const submit = async (): Promise<void> => {
     if (!body.trim() || stage) return;
     setError('');
+
+    if (happening) {
+      if (happeningAt === null) {
+        setError('Say when it goes down.');
+        return;
+      }
+      if (happeningAt < Math.floor(Date.now() / 1000)) {
+        setError('That is already past.');
+        return;
+      }
+    }
+
     setStage('spraying');
     try {
       const expiration = beefExpiration(duration);
@@ -78,8 +126,14 @@ export function ThreadCompose({
         content: body,
         boards: [board],
         ...(subject.trim() ? { subject: subject.trim() } : {}),
-        // `pinned` hands back null — no lifetime goes on it at all.
-        ...(expiration === null ? {} : { expiration }),
+        // A date of its own comes with its own clock: the wall clears it a week
+        // after it goes down, so the lifetime picker steps out of the way.
+        ...(happeningAt !== null
+          ? { happeningAt }
+          : // `pinned` hands back null — no lifetime goes on it at all.
+            expiration === null
+            ? {}
+            : { expiration }),
         onStage: setStage,
       });
       say(postedLabel);
@@ -124,23 +178,58 @@ export function ThreadCompose({
       </div>
 
       <section className="stack">
-        <h3>How long till it dies?</h3>
-        <p className="help">{COPY.beef.blurb}</p>
-        <div className="beef-pick">
-          {BEEF_CHOICES.map((choice) => (
-            <button
-              key={choice.value}
-              type="button"
-              className={`beef-pick__option sticker ${duration === choice.value ? 'beef-pick__option--on' : ''}`}
-              aria-pressed={duration === choice.value}
-              onClick={() => setDuration(choice.value)}
-            >
-              <span className="beef-pick__label">{choice.label}</span>
-              <span className="beef-pick__note mono">{choice.note}</span>
-            </button>
-          ))}
-        </div>
+        <label className={`toggle ${happening ? 'toggle--on' : ''}`}>
+          <span className="toggle__box" aria-hidden="true" />
+          <input
+            type="checkbox"
+            className="sr-only"
+            checked={happening}
+            onChange={(e) => setHappening(e.target.checked)}
+          />
+          It&apos;s a happening
+        </label>
+        <p className="help">A jam, a meet, a show — something with a date on it.</p>
+
+        {happening ? (
+          <div className="field">
+            <label htmlFor="thread-when">When does it go down</label>
+            <input
+              id="thread-when"
+              className="input"
+              type="datetime-local"
+              value={goesDown}
+              min={dateFieldFloor()}
+              onChange={(e) => setGoesDown(e.target.value)}
+            />
+            <p className="help">
+              {happeningAt === null
+                ? `It goes on the list of what is coming, and ${HAPPENING_CLEARS_COPY}.`
+                : `Goes down ${whenText(happeningAt)}, and ${HAPPENING_CLEARS_COPY}.`}
+            </p>
+          </div>
+        ) : null}
       </section>
+
+      {happening ? null : (
+        <section className="stack">
+          <h3>How long till it dies?</h3>
+          <p className="help">{COPY.beef.blurb}</p>
+          <div className="beef-pick">
+            {BEEF_CHOICES.map((choice) => (
+              <button
+                key={choice.value}
+                type="button"
+                className={`beef-pick__option sticker ${duration === choice.value ? 'beef-pick__option--on' : ''}`}
+                aria-pressed={duration === choice.value}
+                onClick={() => setDuration(choice.value)}
+              >
+                <span className="beef-pick__label">{choice.label}</span>
+                <span className="beef-pick__note mono">{choice.note}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {error ? <p className="error">{error}</p> : null}
 

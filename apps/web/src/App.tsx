@@ -12,6 +12,7 @@ import { Explore } from './routes/Explore.js';
 import { Feed } from './routes/Feed.js';
 import { FlickDetail } from './routes/FlickDetail.js';
 import { HangItUp } from './routes/HangItUp.js';
+import { Happenings } from './routes/Happenings.js';
 import { Holler } from './routes/Holler.js';
 import { Landing } from './routes/Landing.js';
 import { Messages } from './routes/Messages.js';
@@ -73,6 +74,7 @@ export function App(): JSX.Element {
         <Route path="/search" element={<Search />} />
         <Route path="/f/:id" element={<FlickDetail />} />
         <Route path="/boards" element={<Boards />} />
+        <Route path="/happenings" element={<Happenings />} />
         <Route path="/b/:slug" element={<Board />} />
         <Route path="/b/:slug/new" element={<NewThread />} />
         <Route path="/t/:id" element={<Thread />} />

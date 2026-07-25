@@ -178,6 +178,13 @@ export interface PostThreadInput extends PublishOptions {
    * beef thread. Omit for one that stays up.
    */
   expiration?: number;
+  /**
+   * When the thing actually goes down (unix seconds) — this is what makes it a
+   * **happening**. The builder puts the date on it, adds the happening marker to
+   * its boards, and gives it a lifetime of a week after the date unless a
+   * lifetime was picked here, which always wins.
+   */
+  happeningAt?: number;
 }
 
 /**
@@ -187,7 +194,7 @@ export interface PostThreadInput extends PublishOptions {
  * thing, everything after that is the ordinary post tier.
  */
 export async function postThread(tag: Tag, input: PostThreadInput): Promise<SignedEvent> {
-  const { content, boards, subject, expiration, ...options } = input;
+  const { content, boards, subject, expiration, happeningAt, ...options } = input;
   const trimmed = content.trim();
   if (!trimmed) throw new PublishError('Say something first.');
 
@@ -196,6 +203,7 @@ export async function postThread(tag: Tag, input: PostThreadInput): Promise<Sign
     ...(boards?.length ? { boards } : {}),
     ...(subject?.trim() ? { subject: subject.trim() } : {}),
     ...(expiration !== undefined ? { expiration } : {}),
+    ...(happeningAt !== undefined ? { happeningAt } : {}),
   });
 
   const bits = tag.hasPosted ? POW_BITS.post : POW_BITS.new;

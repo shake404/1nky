@@ -40,6 +40,8 @@ vi.mock('../lib/relay.js', () => ({
 }));
 
 const { NewThread } = await import('./NewThread.js');
+const { dateFieldFloor, happeningSeconds } = await import('../components/ThreadCompose.js');
+const { HAPPENING_GRACE_SECONDS } = await import('../lib/happenings.js');
 const { TagProvider } = await import('../state/TagProvider.js');
 const { ToastProvider } = await import('../state/ToastProvider.js');
 const { createTag } = await import('../lib/identity.js');
@@ -83,13 +85,13 @@ async function settle(rounds = 8): Promise<void> {
   }
 }
 
-async function mount(): Promise<void> {
+async function mount(at = '/b/sf-bay/new'): Promise<void> {
   root = createRoot(container);
   await act(async () => {
     root!.render(
       <TagProvider>
         <ToastProvider>
-          <MemoryRouter initialEntries={['/b/sf-bay/new']}>
+          <MemoryRouter initialEntries={[at]}>
             <Routes>
               <Route path="/b/:slug/new" element={<NewThread />} />
               <Route path="/t/:id" element={<p>landed on the thread</p>} />
@@ -291,5 +293,164 @@ describe('starting a thread', () => {
     for (const banned of JARGON_BLOCKLIST) {
       expect(words).not.toContain(banned);
     }
+  });
+});
+
+/**
+ * Putting a happening up.
+ *
+ * A happening is the same thread with a date on it, so the only new things worth
+ * checking are the date itself, the fact that a date brings its own clock (a
+ * week after it goes down, not a lifetime from now), and that the switch stays
+ * off unless somebody flips it.
+ */
+
+/** The checkbox behind a `.toggle` label, found by the words on the label. */
+function switchNamed(text: string): HTMLInputElement {
+  const label = [...container.querySelectorAll('label.toggle')].find((l) =>
+    (l.textContent ?? '').includes(text),
+  );
+  if (!label) throw new Error(`no switch "${text}"`);
+  const input = label.querySelector('input[type="checkbox"]');
+  if (!input) throw new Error(`switch "${text}" has no box`);
+  return input as HTMLInputElement;
+}
+
+async function flip(text: string, on: boolean): Promise<void> {
+  const box = switchNamed(text);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!.call(box, on);
+    box.dispatchEvent(new Event('click', { bubbles: true }));
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+/** A date-and-time field value a few days out, in the field's own format. */
+function daysOut(days: number): string {
+  return dateFieldFloor(Date.now() + days * 86_400_000);
+}
+
+describe('putting a happening up', () => {
+  it('keeps the date switch off and the lifetime picker up by default', async () => {
+    await mount();
+
+    expect(switchNamed("It's a happening").checked).toBe(false);
+    expect(container.querySelector('#thread-when')).toBeNull();
+    expect(container.querySelectorAll('.beef-pick__option')).toHaveLength(4);
+  });
+
+  it('swaps the lifetime picker for a date once the switch is flipped', async () => {
+    await mount();
+    await flip("It's a happening", true);
+
+    expect(container.querySelector('#thread-when')).not.toBeNull();
+    // A date brings its own clock, so there is nothing left to pick.
+    expect(container.querySelectorAll('.beef-pick__option')).toHaveLength(0);
+    expect(container.textContent).toContain('clears itself a week after');
+  });
+
+  it('stamps the date and lets the wall clear it a week after', async () => {
+    await mount();
+    await flip("It's a happening", true);
+    await type('thread-body', 'yard jam, bring paint');
+    await type('thread-when', daysOut(10));
+
+    await act(async () => {
+      putItUp();
+    });
+    await settle();
+
+    expect(mined).toHaveLength(1);
+    const when = Number(tagsNamed('when')[0]?.[1]);
+    expect(when).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(when).toBe(happeningSeconds(daysOut(10)));
+
+    // The marker rides alongside the board it went up on.
+    expect(tagsNamed('t')).toEqual([['t', 'sf-bay'], ['t', 'happening']]);
+
+    const lifetime = Number(tagsNamed('expiration')[0]?.[1]);
+    expect(lifetime).toBe(when + HAPPENING_GRACE_SECONDS);
+  });
+
+  it('refuses a happening with no date on it', async () => {
+    await mount();
+    await flip("It's a happening", true);
+    await type('thread-body', 'a jam, some time, whenever');
+
+    await act(async () => {
+      putItUp();
+    });
+    await settle();
+
+    expect(mined).toHaveLength(0);
+    expect(container.textContent).toContain('Say when it goes down.');
+  });
+
+  it('refuses a date that has already been', async () => {
+    await mount();
+    await flip("It's a happening", true);
+    await type('thread-body', 'last summer');
+    await type('thread-when', daysOut(-30));
+
+    await act(async () => {
+      putItUp();
+    });
+    await settle();
+
+    expect(mined).toHaveLength(0);
+    expect(container.textContent).toContain('That is already past.');
+  });
+
+  it('flipping the switch back off puts an ordinary thread up', async () => {
+    await mount();
+    await flip("It's a happening", true);
+    await type('thread-when', daysOut(5));
+    await flip("It's a happening", false);
+    await type('thread-body', 'never mind the date');
+
+    await act(async () => {
+      putItUp();
+    });
+    await settle();
+
+    expect(tagsNamed('when')).toEqual([]);
+    expect(tagsNamed('t')).toEqual([['t', 'sf-bay']]);
+  });
+
+  it('opens with the switch already flipped when sent through that door', async () => {
+    await mount('/b/sf-bay/new?happening=1');
+
+    expect(switchNamed("It's a happening").checked).toBe(true);
+    expect(container.querySelector('#thread-when')).not.toBeNull();
+  });
+
+  it('says nothing from the jargon blocklist with the date field open', async () => {
+    await mount();
+    await flip("It's a happening", true);
+    await type('thread-when', daysOut(3));
+
+    const words = (container.textContent ?? '').toLowerCase();
+    for (const banned of JARGON_BLOCKLIST) {
+      expect(words).not.toContain(banned);
+    }
+  });
+});
+
+describe('happeningSeconds', () => {
+  it('reads the browser’s date-and-time value in the writer’s own clock', () => {
+    const local = new Date(2026, 7, 1, 20, 0, 0);
+    expect(happeningSeconds('2026-08-01T20:00')).toBe(Math.floor(local.getTime() / 1000));
+  });
+
+  it('refuses nothing and refuses nonsense', () => {
+    expect(happeningSeconds('')).toBeNull();
+    expect(happeningSeconds('   ')).toBeNull();
+    expect(happeningSeconds('whenever')).toBeNull();
+  });
+});
+
+describe('dateFieldFloor', () => {
+  it('writes right now the way the field wants it', () => {
+    expect(dateFieldFloor(new Date(2026, 0, 9, 7, 5).getTime())).toBe('2026-01-09T07:05');
   });
 });

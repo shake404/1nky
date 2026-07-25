@@ -462,6 +462,18 @@ main {
   border-color: var(--line-strong);
 }
 
+/* A nav link that waits for room. At 980px the row is already full; this one
+   turns up at the shell's own width, where it costs nothing. */
+.topnav a.topnav__wide {
+  display: none;
+}
+
+@media (min-width: 1180px) {
+  .topnav a.topnav__wide {
+    display: block;
+  }
+}
+
 /* Speaking-as indicator: shown in the bar when the active tag is not the
    writer's own (the crew blackbook-swap, Part 4.5). It is a strip of tape, not
    an error — switching contexts is a deliberate act. */
@@ -1161,6 +1173,20 @@ main {
   box-shadow: var(--drop);
 }
 
+/* The face-blur preview IS the upload, so it gets the full column and a
+   crosshair — the cursor is the promise that tapping does something. */
+.blur-stage {
+  position: relative;
+  width: 100%;
+}
+
+.blur-stage__canvas {
+  display: block;
+  height: auto;
+  cursor: crosshair;
+  touch-action: manipulation;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1751,6 +1777,37 @@ main {
   border-color: var(--keyline);
   background: var(--ink);
   box-shadow: var(--drop-sm);
+}
+
+/* The date on a happening. Same sticker shape as the countdown, opposite
+   temperature: a countdown is time running out, a date is time to plan — so it
+   sits in tape rather than in ink. */
+.when-chip {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--soot);
+  background: #e6dfcd;
+  border: 1px solid var(--keyline);
+  box-shadow: var(--drop-sm);
+}
+
+/* The line on a thread page that says when the thing runs. */
+.runs-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  color: var(--soot);
+  background: #e6dfcd;
+  border: 1px solid var(--keyline);
+  box-shadow: var(--drop-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.7rem;
 }
 
 /* --- Beef duration picker --------------------------------------------------

@@ -29,6 +29,13 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // The vendored face-detection runtime is ~22MB of WebAssembly plus its
+        // loader scripts, and a writer who never flips the "Blur faces" switch
+        // must never pay for it. It is served from this origin either way (hard
+        // rule: nothing loads from a CDN) — it is just fetched on demand rather
+        // than installed with the app. Keeping it out of the precache manifest
+        // also keeps the build honest about workbox's file-size ceiling.
+        globIgnores: ['models/**'],
         // Content-addressed media is immutable; cache it hard, but never
         // cache API/relay traffic.
         runtimeCaching: [

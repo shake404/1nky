@@ -77,6 +77,11 @@ export interface ThreadRow {
   createdAt: number;
   /** When the wall takes it away. Null means it stays up. */
   expiresAt: number | null;
+  /**
+   * When the thing actually goes down, for a thread somebody put a date on.
+   * Null for every ordinary thread, which is almost all of them.
+   */
+  happeningAt: number | null;
   replyCount: number;
   lastReplyAt: number | null;
 }
@@ -106,6 +111,8 @@ export interface ThreadOp {
   writer: ThreadWriter;
   createdAt: number;
   expiresAt: number | null;
+  /** When it goes down, for a happening. Null for an ordinary thread. */
+  happeningAt: number | null;
   replyCount: number;
 }
 
@@ -196,7 +203,14 @@ export function parseBoardsResponse(payload: unknown): BoardSummary[] {
   return out;
 }
 
-function threadRowFrom(value: unknown): ThreadRow | null {
+/**
+ * Shape one row of a thread list.
+ *
+ * Exported because a happening is the same row with a date on it — the
+ * happenings list reads through this rather than growing its own copy of every
+ * defensive cast.
+ */
+export function threadRowFrom(value: unknown): ThreadRow | null {
   const raw = record(value);
   if (!raw) return null;
   const id = str(raw['id']).toLowerCase();
@@ -210,6 +224,7 @@ function threadRowFrom(value: unknown): ThreadRow | null {
     writer,
     createdAt: int(raw['createdAt']),
     expiresAt: optionalInt(raw['expiresAt']),
+    happeningAt: optionalInt(raw['happeningAt']),
     replyCount: int(raw['replyCount']),
     lastReplyAt: optionalInt(raw['lastReplyAt']),
   };
@@ -301,6 +316,7 @@ export function parseThreadResponse(payload: unknown): ThreadView | null {
       writer,
       createdAt: int(raw['createdAt']),
       expiresAt: optionalInt(raw['expiresAt']),
+      happeningAt: optionalInt(raw['happeningAt']),
       replyCount: int(raw['replyCount']),
     },
     comments,
