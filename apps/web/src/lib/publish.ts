@@ -116,10 +116,17 @@ function friendly(message: string): string {
 }
 
 /**
- * Kind 0 — the writer's tag. First event from a fresh tag pays full freight.
+ * Kind 0 — the writer's tag.
  *
- * `putOn` only ever belongs on that first one: it is how somebody who got put
- * on says so, and it is read once, when they turn up.
+ * A profile ALWAYS pays the newcomer tier, first post or hundredth: the relay
+ * keeps kind 0 in `POW_NEW_KINDS`, so it demands `POW_BITS_NEW` for every
+ * profile regardless of how long the writer has been around. Mining at the
+ * cheaper post tier here is what made "save" bounce with "that did not stick"
+ * on every edit (the retry papered over it; this stops it happening at all).
+ *
+ * `putOn` only ever belongs on the first one: it is how somebody who got put
+ * on says so, and it is read once, when they turn up. `first` is kept for that
+ * intent and no longer changes the freight.
  */
 export function publishProfile(
   tag: Pick<Tag, 'secret' | 'pubkey' | 'name'>,
@@ -139,7 +146,7 @@ export function publishProfile(
     ...(options.crews ? { crews: options.crews } : {}),
     ...(options.putOn ? { putOn: options.putOn } : {}),
   });
-  return send(template, tag, options.first === false ? POW_BITS.post : POW_BITS.new, options);
+  return send(template, tag, POW_BITS.new, options);
 }
 
 export interface PostFlickInput extends FlickDetails, PublishOptions {

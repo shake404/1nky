@@ -525,7 +525,10 @@ export async function publishCrewProfile(
     tag: name,
     ...(input.bio !== undefined ? { bio: input.bio.slice(0, PROFILE_BIO_MAX) } : {}),
   });
-  return publishTemplate(crewSecret, crewPubkey, template, POW_BITS.post, options);
+  // A crew profile is a kind 0 like any other, and the relay always charges the
+  // newcomer tier for kind 0 (POW_NEW_KINDS) — mine at POST and every crew-info
+  // save bounces with "that did not stick".
+  return publishTemplate(crewSecret, crewPubkey, template, POW_BITS.new, options);
 }
 
 /**
