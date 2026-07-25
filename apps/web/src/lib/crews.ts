@@ -528,5 +528,23 @@ export async function publishCrewProfile(
   return publishTemplate(crewSecret, crewPubkey, template, POW_BITS.post, options);
 }
 
+/**
+ * Resolve crew pubkeys to their display names (each crew's own kind-0 `name`).
+ *
+ * A writer page reps crews by pubkey; showing the raw mark reads as noise, so
+ * the chip wants the name. Best-effort and parallel — a crew whose profile we
+ * cannot read maps to `null`, and the caller falls back to the mark.
+ */
+export async function fetchCrewNames(pubkeys: readonly string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  await Promise.allSettled(
+    [...new Set(pubkeys)].map(async (pk) => {
+      const meta = await fetchProfile(pk).catch(() => null);
+      out.set(pk, meta?.name?.trim() || null);
+    }),
+  );
+  return out;
+}
+
 /** Exposed for tests / routes that want the constant the crew definition uses. */
 export { CREW_DEFINITION_DTAG };

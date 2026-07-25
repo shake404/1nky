@@ -560,7 +560,7 @@ limit $4::int`,
 export function crewHeaderQuery(pubkey: string): Sql {
   return {
     text: `select x.pk as pubkey,
-              p.tag_name, p.city, p.avatar_sha256, p.first_seen, p.updated_at,
+              p.tag_name, p.city, p.avatar_sha256, p.about, p.first_seen, p.updated_at,
               c.name as crew_name, c.mark as crew_mark, c.founder_pubkey, c.founded_at,
               c.members, c.created_at as crew_created_at, c.updated_at as crew_updated_at,
               cb.verified_at, cb.verified_by

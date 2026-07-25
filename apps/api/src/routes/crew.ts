@@ -11,6 +11,7 @@ interface CrewHeaderSource {
   tag_name: string | null;
   city: string | null;
   avatar_sha256: string | null;
+  about: string | null;
   first_seen: number | string | null;
   updated_at: number | string | null;
   crew_name: string | null;
@@ -83,6 +84,7 @@ export function crewRoutes({ db, config }: Deps): Router {
         tag: header?.crew_name ?? header?.tag_name ?? null,
         mark: header?.crew_mark ?? markOf(pubkey),
         avatarSha256: header?.avatar_sha256 ?? null,
+        bio: header?.about && header.about.trim() ? header.about.trim() : null,
         founderPubkey: header?.founder_pubkey ?? null,
         foundedAt:
           header?.founded_at !== null && header?.founded_at !== undefined ? num(header.founded_at) : null,

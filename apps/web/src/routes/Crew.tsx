@@ -124,6 +124,40 @@ export function Crew(): JSX.Element {
     }
   };
 
+  /** Lift a writer who is repping the crew onto the signed roster in one tap. */
+  const putOnRoster = async (writer: CrewMember): Promise<void> => {
+    if (members.some((m) => m.pubkey === writer.pubkey)) {
+      say('Already on the roster.', 'hazard');
+      return;
+    }
+    const key = await getCrewKey(crew.pubkey);
+    if (!key) {
+      say('You do not hold this crew on this device.', 'hazard');
+      return;
+    }
+    setStage('spraying');
+    try {
+      await updateCrewRoster(key.secret, crew.pubkey, {
+        name: crew.tag ?? 'crew',
+        members: [...members.map((m) => m.pubkey), writer.pubkey],
+        founderPubkey: crew.founderPubkey ?? undefined,
+        foundedAt: crew.foundedAt ?? undefined,
+      }, { onStage: setStage });
+      const nextMembers = [...members, writer];
+      setPage({
+        ...page,
+        crew: { ...crew, memberCount: nextMembers.length },
+        members: nextMembers,
+        repping: repping.filter((r) => r.pubkey !== writer.pubkey),
+      });
+      say(`${writer.tag || 'That writer'} is on.`);
+    } catch (error) {
+      say(error instanceof Error ? error.message : 'That did not go up.', 'hazard');
+    } finally {
+      setStage(null);
+    }
+  };
+
   return (
     <div className="shell shell--wide pad stack stack--wide">
       {stage ? <Spraying stage={stage} /> : null}
@@ -209,11 +243,24 @@ export function Crew(): JSX.Element {
           </p>
           <div className="chips" style={{ gap: 10 }}>
             {repping.map((m) => (
-              <Link key={m.pubkey} to={`/w/${m.pubkey}`} className="writer" style={{ gap: 8 }}>
-                <Identicon pubkey={m.pubkey} size={22} />
-                <span className="writer__name">{m.tag || 'unnamed'}</span>
-                <span className="writer__mark">{m.mark}</span>
-              </Link>
+              <div key={m.pubkey} className="writer" style={{ gap: 8 }}>
+                <Link to={`/w/${m.pubkey}`} className="row" style={{ gap: 8, alignItems: 'center', minWidth: 0 }}>
+                  <Identicon pubkey={m.pubkey} size={22} />
+                  <span className="writer__name">{m.tag || 'unnamed'}</span>
+                  <span className="writer__mark">{m.mark}</span>
+                </Link>
+                {isFounder ? (
+                  <button
+                    type="button"
+                    className="btn btn--go btn--sm sticker"
+                    style={{ marginLeft: 4 }}
+                    disabled={stage !== null}
+                    onClick={() => void putOnRoster(m)}
+                  >
+                    Put on the roster
+                  </button>
+                ) : null}
+              </div>
             ))}
           </div>
         </section>
@@ -370,8 +417,14 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
     <div className="panel" style={{ marginTop: 8 }}>
       <div className="row" style={{ gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="kicker">{COPY.putOn.label}</span>
-        <span className="help" style={{ margin: 0 }}>founder only</span>
+        <span className="help" style={{ margin: 0 }}>anyone holding the crew</span>
       </div>
+      <p className="help" style={{ marginTop: 6 }}>
+        You run this crew because this device holds its blackbook. Hand that
+        blackbook to a writer you trust (they bring it in from their Crew page)
+        and they run it too — same roster, same say. Take it back by buffing
+        them off; there is no owner here, only who holds the book.
+      </p>
 
       {/* Put someone on */}
       <div style={{ marginTop: 10 }}>

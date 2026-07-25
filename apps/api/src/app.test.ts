@@ -741,6 +741,7 @@ describe('GET /crew/:pubkey', () => {
     tag_name: 'FASE CREW',
     city: 'sf-bay',
     avatar_sha256: null,
+    about: 'all city since 04',
     first_seen: '1700000000',
     updated_at: '1700000000',
     crew_name: 'FASE CREW',
@@ -768,13 +769,14 @@ describe('GET /crew/:pubkey', () => {
     const res = await request(createApp(db, TEST_CONFIG), `/crew/${AUTHOR}`);
     expect(res.status).toBe(200);
     const body = res.body as {
-      crew: { tag: string; mark: string; verified: boolean; memberCount: number; founderPubkey: string };
+      crew: { tag: string; mark: string; bio: string | null; verified: boolean; memberCount: number; founderPubkey: string };
       members: { pubkey: string; tag: string }[];
       repping: { pubkey: string; tag: string }[];
       flicks: unknown[];
       nextCursor: string | null;
     };
     expect(body.crew.tag).toBe('FASE CREW');
+    expect(body.crew.bio).toBe('all city since 04');
     expect(body.crew.verified).toBe(true);
     expect(body.crew.memberCount).toBe(2);
     expect(body.crew.founderPubkey).toBe(hex('ef'));

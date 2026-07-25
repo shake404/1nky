@@ -5,7 +5,7 @@ import { AgeDots } from '../components/AgeDots.js';
 import { FlickCard } from '../components/FlickCard.js';
 import { Identicon } from '../components/Identicon.js';
 import { IgnoreWriter, useIgnoredWriters } from '../components/IgnoreWriter.js';
-import { fetchWriterCrews } from '../lib/crews.js';
+import { fetchWriterCrews, fetchCrewNames } from '../lib/crews.js';
 import { fetchWriterPage, type Flick, type WriterSummary } from '../lib/feed.js';
 import { fetchProfile } from '../lib/profiles.js';
 import { onTheWallSince, upLine } from '../lib/reputation.js';
@@ -44,6 +44,46 @@ function Standing({ writer }: { writer: WriterSummary | null }): JSX.Element | n
 function PutOn({ writer }: { writer: WriterSummary | null }): JSX.Element | null {
   if (!writer?.putOn) return null;
   return <span className="put-on-chip">put on</span>;
+}
+
+/**
+ * The crews a writer is repping, by NAME. Each crew's name comes off its own
+ * kind-0; a crew we cannot read yet falls back to its mark rather than showing
+ * a bare id. A claim, not a roster — the crew page is where the line-up is
+ * confirmed, so the copy underneath says so.
+ */
+function ReppedCrews({ pubkeys }: { pubkeys: readonly string[] }): JSX.Element | null {
+  const [names, setNames] = useState<Map<string, string | null>>(new Map());
+
+  useEffect(() => {
+    if (pubkeys.length === 0) return;
+    let live = true;
+    void fetchCrewNames(pubkeys).then((found) => {
+      if (live) setNames(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, [pubkeys]);
+
+  if (pubkeys.length === 0) return null;
+
+  return (
+    <section className="stack" style={{ gap: 8 }}>
+      <span className="kicker">Reppin&apos;</span>
+      <div className="chips" style={{ gap: 8 }}>
+        {pubkeys.map((crewPubkey) => (
+          <Link key={crewPubkey} to={`/crew/${crewPubkey}`} className="chip">
+            <Identicon pubkey={crewPubkey} size={16} />
+            <span>{names.get(crewPubkey) || fingerprint(crewPubkey)}</span>
+          </Link>
+        ))}
+      </div>
+      <p className="help" style={{ fontSize: '0.78rem' }}>
+        A claim, not a roster — crews confirm their own line-up on their crew page.
+      </p>
+    </section>
+  );
 }
 
 /** A writer's page: tag, mark, identicon, everything they have up. */
@@ -139,22 +179,7 @@ export function Writer(): JSX.Element {
         </div>
       </div>
 
-      {crews.length > 0 ? (
-        <section className="stack" style={{ gap: 8 }}>
-          <span className="kicker">Reppin&apos;</span>
-          <div className="chips" style={{ gap: 8 }}>
-            {crews.map((crewPubkey) => (
-              <Link key={crewPubkey} to={`/crew/${crewPubkey}`} className="chip">
-                <Identicon pubkey={crewPubkey} size={16} />
-                <span className="mono">{fingerprint(crewPubkey)}</span>
-              </Link>
-            ))}
-          </div>
-          <p className="help" style={{ fontSize: '0.78rem' }}>
-            A claim, not a roster — crews confirm their own line-up on their crew page.
-          </p>
-        </section>
-      ) : null}
+      <ReppedCrews pubkeys={crews} />
 
       {isMe ? (
         <Link to="/profile/edit" className="btn btn--ghost btn--sm sticker">
@@ -244,22 +269,7 @@ export function MyWall(): JSX.Element {
         </div>
       </div>
 
-      {crews.length > 0 ? (
-        <section className="stack" style={{ gap: 8 }}>
-          <span className="kicker">Reppin&apos;</span>
-          <div className="chips" style={{ gap: 8 }}>
-            {crews.map((crewPubkey) => (
-              <Link key={crewPubkey} to={`/crew/${crewPubkey}`} className="chip">
-                <Identicon pubkey={crewPubkey} size={16} />
-                <span className="mono">{fingerprint(crewPubkey)}</span>
-              </Link>
-            ))}
-          </div>
-          <p className="help" style={{ fontSize: '0.78rem' }}>
-            A claim, not a roster — crews confirm their own line-up on their crew page.
-          </p>
-        </section>
-      ) : null}
+      <ReppedCrews pubkeys={crews} />
 
       <Link to="/profile/edit" className="btn btn--ghost btn--sm sticker">
         Edit your tag

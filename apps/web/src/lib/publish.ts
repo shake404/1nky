@@ -59,25 +59,31 @@ export function powShortfall(message: string, triedBits: number): number | null 
   return want > triedBits && want <= MAX_POW_BITS ? want : null;
 }
 
-async function send(
+/**
+ * Mine, publish, and — if the relay turns it away for too little work — mine
+ * once more at the difficulty it named and resend. EVERY publish path routes
+ * through here (a writer's own posts via {@link send}, and crew edits / invite
+ * mints / any raw template via {@link publishTemplate}), so the relay-restart
+ * newcomer-gate reset self-heals everywhere, not just on the flick path.
+ */
+async function mineSendRetry(
   template: EventTemplate,
-  tag: Pick<Tag, 'secret' | 'pubkey'>,
+  secret: Uint8Array,
+  pubkey: string,
   bits: number,
   options: PublishOptions = {},
 ): Promise<SignedEvent> {
   options.onStage?.('spraying');
-  let event = await mineAndSign(template, tag.secret, tag.pubkey, bits);
+  let event = await mineAndSign(template, secret, pubkey, bits);
 
   options.onStage?.('posting');
   let result = await relay.publish(event);
 
-  // One retry at the difficulty the relay actually wants. Covers the
-  // relay-restart case above without letting a persistent rejection loop.
   if (!result.accepted) {
     const harder = powShortfall(result.message, bits);
     if (harder !== null) {
       options.onStage?.('spraying');
-      event = await mineAndSign(template, tag.secret, tag.pubkey, harder);
+      event = await mineAndSign(template, secret, pubkey, harder);
       options.onStage?.('posting');
       result = await relay.publish(event);
     }
@@ -88,6 +94,15 @@ async function send(
   }
   options.onStage?.('done');
   return event;
+}
+
+function send(
+  template: EventTemplate,
+  tag: Pick<Tag, 'secret' | 'pubkey'>,
+  bits: number,
+  options: PublishOptions = {},
+): Promise<SignedEvent> {
+  return mineSendRetry(template, tag.secret, tag.pubkey, bits, options);
 }
 
 /** Translate whatever the far end said into something a writer should read. */
@@ -308,13 +323,5 @@ export async function publishTemplate(
   bits: number,
   options: PublishOptions = {},
 ): Promise<SignedEvent> {
-  options.onStage?.('spraying');
-  const event = await mineAndSign(template, secret, pubkey, bits);
-  options.onStage?.('posting');
-  const result = await relay.publish(event);
-  if (!result.accepted) {
-    throw new PublishError(friendly(result.message));
-  }
-  options.onStage?.('done');
-  return event;
+  return mineSendRetry(template, secret, pubkey, bits, options);
 }

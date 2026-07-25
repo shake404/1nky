@@ -23,4 +23,11 @@ describe('powShortfall', () => {
   it('refuses to chase an absurd difficulty past the ceiling', () => {
     expect(powShortfall('pow: required 99', 13)).toBeNull();
   });
+
+  it('is the gate crew edits + invite mints rely on (publishTemplate path)', () => {
+    // The same shortfall the crew-key management events hit after a relay
+    // restart. publishTemplate routes through the shared retry, so this number
+    // is what saves an "edit crew info" / "put someone on" from bouncing.
+    expect(powShortfall('pow: committed difficulty 13 is below the required 18', 13)).toBe(18);
+  });
 });
