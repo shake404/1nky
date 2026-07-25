@@ -89,6 +89,15 @@
 	}
 
 	# --- Blossom media service ----------------------------------------------
+	# Escrow before the blob namespace: mutable record, never immutable-cached.
+	handle_path /media/escrow* {
+		request_body {
+			max_size 16KB
+		}
+		header Cache-Control "no-store"
+		reverse_proxy media:3002
+	}
+
 	# /media/<sha256> -> GET /<sha256> on :3002.
 	handle_path /media/* {
 		# Hard ceiling above MAX_UPLOAD_MB=5 so an oversized PUT is cut off at
@@ -142,6 +151,15 @@ api.1nky.com, REDACTED-HOST.sslip.io {
 
 	handle_path /api/* {
 		reverse_proxy api:3001
+	}
+
+	# Escrow before the blob namespace: mutable record, never immutable-cached.
+	handle_path /media/escrow* {
+		request_body {
+			max_size 16KB
+		}
+		header Cache-Control "no-store"
+		reverse_proxy media:3002
 	}
 
 	handle_path /media/* {
@@ -280,6 +298,15 @@ api.1nky.com, REDACTED-HOST.sslip.io {
 	}
 
 	# --- Blossom media service ----------------------------------------------
+	# Escrow before the blob namespace: mutable record, never immutable-cached.
+	handle_path /media/escrow* {
+		request_body {
+			max_size 16KB
+		}
+		header Cache-Control "no-store"
+		reverse_proxy media:3002
+	}
+
 	handle_path /media/* {
 		request_body {
 			max_size 6MB

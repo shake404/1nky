@@ -8,6 +8,7 @@ import {
   type SignedEvent,
 } from '@1nky/protocol';
 
+import type { BlossomVerb } from './auth.js';
 import type { MediaConfig } from './config.js';
 import type { BlobBody, BlobHead, BlobStorage, PutBlobInput } from './storage.js';
 import type { VideoTranscoder } from './video.js';
@@ -60,6 +61,10 @@ export const TEST_CONFIG: MediaConfig = {
   publicBase: 'https://media.test',
   maxDimension: 4096,
   webpQuality: 82,
+  // Escrow and mirroring are opt-in; the suites that exercise them override.
+  escrowEnabled: false,
+  mirrorUrl: undefined,
+  mirrorConcurrency: 1,
 };
 
 export interface TestKeypair {
@@ -74,7 +79,7 @@ export function makeKeypair(): TestKeypair {
 
 export interface AuthEventOptions {
   readonly keys: TestKeypair;
-  readonly verb: 'upload' | 'delete' | 'get' | 'list' | 'media';
+  readonly verb: BlossomVerb;
   readonly hashes?: readonly string[];
   readonly expiration?: number;
   readonly createdAt?: number;

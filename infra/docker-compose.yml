@@ -336,6 +336,13 @@ services:
       R2_SECRET_ACCESS_KEY: "${R2_SECRET_ACCESS_KEY:-}"
       R2_BUCKET: "${R2_BUCKET:-1nky-media}"
       R2_ENDPOINT: "${R2_ENDPOINT:-}"
+      # Optional recovery: stores ONLY passphrase-locked blackbook ciphertext
+      # (NIP-49) keyed by pubkey. Unset/0 keeps all /escrow routes 404.
+      ESCROW_ENABLED: "${ESCROW_ENABLED:-}"
+      # Best-effort offsite blob redundancy via BUD-04 (e.g.
+      # https://blossom.band). Unset disables the mirror worker.
+      BLOSSOM_MIRROR_URL: "${BLOSSOM_MIRROR_URL:-}"
+      BLOSSOM_MIRROR_CONCURRENCY: "${BLOSSOM_MIRROR_CONCURRENCY:-1}"
     expose:
       - "3002"
     healthcheck:

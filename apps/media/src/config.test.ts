@@ -38,6 +38,40 @@ describe('loadConfig', () => {
   it('rejects a non-numeric port', () => {
     expect(() => loadConfig({ MEDIA_PORT: 'http' })).toThrow(/MEDIA_PORT/);
   });
+
+  it('keeps escrow off unless ESCROW_ENABLED is explicitly truthy', () => {
+    expect(loadConfig({}).escrowEnabled).toBe(false);
+    expect(loadConfig({ ESCROW_ENABLED: '' }).escrowEnabled).toBe(false);
+    expect(loadConfig({ ESCROW_ENABLED: '0' }).escrowEnabled).toBe(false);
+    expect(loadConfig({ ESCROW_ENABLED: 'false' }).escrowEnabled).toBe(false);
+    expect(loadConfig({ ESCROW_ENABLED: 'maybe' }).escrowEnabled).toBe(false);
+    for (const raw of ['1', 'true', 'TRUE', 'yes', 'on', 'enabled']) {
+      expect(loadConfig({ ESCROW_ENABLED: raw }).escrowEnabled).toBe(true);
+    }
+  });
+
+  it('leaves the blossom mirror off by default', () => {
+    const cfg = loadConfig({});
+    expect(cfg.mirrorUrl).toBeUndefined();
+    expect(cfg.mirrorConcurrency).toBe(1);
+  });
+
+  it('reads BLOSSOM_MIRROR_URL and trims its trailing slash', () => {
+    expect(loadConfig({ BLOSSOM_MIRROR_URL: 'https://blossom.band/' }).mirrorUrl).toBe(
+      'https://blossom.band',
+    );
+  });
+
+  it('reads BLOSSOM_MIRROR_CONCURRENCY', () => {
+    expect(loadConfig({ BLOSSOM_MIRROR_CONCURRENCY: '4' }).mirrorConcurrency).toBe(4);
+  });
+
+  it('rejects a BLOSSOM_MIRROR_URL that is not an http(s) origin', () => {
+    expect(() => loadConfig({ BLOSSOM_MIRROR_URL: 'blossom.band' })).toThrow(/BLOSSOM_MIRROR_URL/);
+    expect(() => loadConfig({ BLOSSOM_MIRROR_URL: 'ftp://blossom.band' })).toThrow(
+      /BLOSSOM_MIRROR_URL/,
+    );
+  });
 });
 
 describe('loadS3Config', () => {

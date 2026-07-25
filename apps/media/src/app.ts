@@ -21,6 +21,14 @@ import {
 } from './config.js';
 import { HttpError, isHttpError } from './errors.js';
 import {
+  ESCROW_CACHE_CONTROL,
+  ESCROW_CONTENT_TYPE,
+  ESCROW_MAX_BYTES,
+  escrowKey,
+  parseEscrowPayload,
+  parseEscrowPubkey,
+} from './escrow.js';
+import {
   drainRequest,
   isSha256Hex,
   normalizeContentType,
@@ -30,6 +38,7 @@ import {
   sha256Hex,
 } from './http.js';
 import { reencodeToWebp } from './image.js';
+import type { MirrorJob, MirrorQueue } from './mirror.js';
 import type { BlobStorage } from './storage.js';
 import { transcodeVideo as defaultTranscodeVideo, type VideoTranscoder } from './video.js';
 
@@ -43,6 +52,11 @@ export interface AppDeps {
    * inject a stub so `pnpm test` stays green without ffmpeg on CI.
    */
   readonly transcodeVideo?: VideoTranscoder;
+  /**
+   * Optional BUD-04 mirror queue. When absent, nothing is mirrored. Enqueueing
+   * is best-effort and can never affect the upload's outcome.
+   */
+  readonly mirror?: MirrorQueue;
 }
 
 /** BUD-02 blob descriptor for an image upload. */
@@ -145,9 +159,22 @@ function ifNoneMatchHits(header: string | undefined, etag: string): boolean {
 }
 
 export function createApp(deps: AppDeps): Express {
-  const { storage, config } = deps;
+  const { storage, config, mirror } = deps;
   const now = deps.now ?? ((): number => Math.floor(Date.now() / 1000));
   const transcode = deps.transcodeVideo ?? defaultTranscodeVideo;
+
+  /**
+   * Hands a stored blob to the mirror queue. Synchronous, swallows everything:
+   * offsite redundancy is never allowed to turn a good upload into a bad one.
+   */
+  const queueMirror = (job: MirrorJob): void => {
+    if (mirror === undefined) return;
+    try {
+      mirror.enqueue(job);
+    } catch {
+      // Best-effort by construction.
+    }
+  };
 
   const app = express();
   app.disable('x-powered-by');
@@ -279,6 +306,20 @@ export function createApp(deps: AppDeps): Express {
       };
 
       res.status(videoExisting === null ? 201 : 200).json(descriptor);
+
+      // Both halves of a video post are public blobs worth mirroring.
+      queueMirror({
+        sha256: videoHash,
+        url: descriptor.url,
+        size: descriptor.size,
+        mime: STORED_VIDEO_CONTENT_TYPE,
+      });
+      queueMirror({
+        sha256: posterHash,
+        url: descriptor.poster.url,
+        size: result.poster.length,
+        mime: STORED_CONTENT_TYPE,
+      });
       return;
     }
 
@@ -317,6 +358,88 @@ export function createApp(deps: AppDeps): Express {
     };
 
     res.status(existing === null ? 201 : 200).json(descriptor);
+
+    queueMirror({
+      sha256: storedHash,
+      url: descriptor.url,
+      size: descriptor.size,
+      mime: STORED_CONTENT_TYPE,
+    });
+  });
+
+  // --- Encrypted blackbook escrow -----------------------------------------
+  // Registered ahead of the `/:blob` routes: `/escrow` is not a blob address
+  // and would otherwise be rejected as a malformed hash.
+
+  /** Off by default — the endpoints do not exist until an operator says so. */
+  const requireEscrowEnabled = (): void => {
+    if (!config.escrowEnabled) {
+      throw new HttpError(404, 'not found');
+    }
+  };
+
+  app.put('/escrow', async (req, res) => {
+    requireEscrowEnabled();
+
+    // The signer IS the subject: you can only escrow your own blackbook.
+    const auth = verifyBlossomAuth(req.headers.authorization, { verb: 'escrow', now: now() });
+
+    const declaredLength = parseSizeHeader(req.headers['content-length']);
+    if (declaredLength !== undefined && declaredLength > ESCROW_MAX_BYTES) {
+      throw new HttpError(400, `escrowed blackbook exceeds the ${ESCROW_MAX_BYTES}-byte limit`);
+    }
+
+    const body = await readBodyCapped(req, ESCROW_MAX_BYTES);
+    if (body.truncated) {
+      throw new HttpError(400, `escrowed blackbook exceeds the ${ESCROW_MAX_BYTES}-byte limit`);
+    }
+
+    const payload = parseEscrowPayload(body.data);
+    const key = escrowKey(auth.pubkey);
+
+    const existing = await storage.head(key);
+    await storage.put({
+      key,
+      body: Buffer.from(payload, 'utf8'),
+      contentType: ESCROW_CONTENT_TYPE,
+      cacheControl: ESCROW_CACHE_CONTROL,
+      // Redundant with the key, but keeps the ownership convention uniform.
+      metadata: { [UPLOADER_METADATA_KEY]: auth.pubkey },
+    });
+
+    res.status(existing === null ? 201 : 200).json({ stored: true });
+  });
+
+  app.get('/escrow/:pubkey', async (req, res) => {
+    requireEscrowEnabled();
+
+    // No auth: the payload is passphrase-locked, and a writer who has lost
+    // their key cannot sign anything — which is exactly when they need this.
+    const pubkey = parseEscrowPubkey(req.params.pubkey);
+    const stored = await storage.get(escrowKey(pubkey));
+    if (stored === null) {
+      throw new HttpError(404, 'no blackbook is escrowed for this mark');
+    }
+
+    res.set('Content-Type', ESCROW_CONTENT_TYPE);
+    res.set('Cache-Control', ESCROW_CACHE_CONTROL);
+    res.status(200);
+    await pipeline(stored.body, res);
+  });
+
+  app.delete('/escrow', async (req, res) => {
+    requireEscrowEnabled();
+
+    const auth = verifyBlossomAuth(req.headers.authorization, { verb: 'escrow', now: now() });
+    const key = escrowKey(auth.pubkey);
+
+    const existing = await storage.head(key);
+    if (existing === null) {
+      throw new HttpError(404, 'no blackbook is escrowed for this mark');
+    }
+
+    await storage.delete(key);
+    res.status(200).json({ deleted: true });
   });
 
   // --- BUD-01: retrieval ---------------------------------------------------

@@ -48,6 +48,19 @@ export interface MediaConfig {
   readonly maxDimension: number;
   /** WebP quality used by the defense-in-depth image re-encode. */
   readonly webpQuality: number;
+  /**
+   * ESCROW_ENABLED — when false (the default) every `/escrow` route answers
+   * 404, so the endpoints ship dark until the web opt-in flow lands.
+   */
+  readonly escrowEnabled: boolean;
+  /**
+   * BLOSSOM_MIRROR_URL — origin of a public Blossom server that successfully
+   * uploaded blobs are mirrored to (BUD-04 `PUT /mirror`). Undefined disables
+   * mirroring entirely.
+   */
+  readonly mirrorUrl: string | undefined;
+  /** BLOSSOM_MIRROR_CONCURRENCY — in-flight mirror requests. Default 1. */
+  readonly mirrorConcurrency: number;
 }
 
 export interface S3Config {
@@ -75,6 +88,35 @@ function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+/** Truthy env spellings an operator might reasonably reach for. */
+const TRUE_VALUES: ReadonlySet<string> = new Set(['1', 'true', 'yes', 'on', 'enabled']);
+
+function boolFromEnv(env: Env, key: string): boolean {
+  const raw = env[key]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return false;
+  return TRUE_VALUES.has(raw);
+}
+
+/**
+ * Reads an optional http(s) origin. Returns undefined when unset (the feature
+ * is off), and throws on something that is not a URL rather than silently
+ * mirroring nowhere.
+ */
+function originFromEnv(env: Env, key: string): string | undefined {
+  const raw = env[key]?.trim();
+  if (raw === undefined || raw === '') return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`${key} must be an absolute http(s) URL`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`${key} must be an absolute http(s) URL`);
+  }
+  return stripTrailingSlash(raw);
+}
+
 export function loadConfig(env: Env = process.env): MediaConfig {
   return {
     port: intFromEnv(env, 'MEDIA_PORT', 3002),
@@ -84,6 +126,9 @@ export function loadConfig(env: Env = process.env): MediaConfig {
     publicBase: stripTrailingSlash(env['MEDIA_PUBLIC_BASE']?.trim() || 'http://localhost:3002'),
     maxDimension: intFromEnv(env, 'MEDIA_MAX_DIMENSION', 4096),
     webpQuality: intFromEnv(env, 'MEDIA_WEBP_QUALITY', 82),
+    escrowEnabled: boolFromEnv(env, 'ESCROW_ENABLED'),
+    mirrorUrl: originFromEnv(env, 'BLOSSOM_MIRROR_URL'),
+    mirrorConcurrency: intFromEnv(env, 'BLOSSOM_MIRROR_CONCURRENCY', 1),
   };
 }
 

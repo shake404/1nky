@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 
 import { createApp } from './app.js';
 import { loadConfig, loadS3Config } from './config.js';
+import { createMirrorQueue } from './mirror.js';
 import { createS3Client, S3BlobStorage } from './storage.js';
 
 export { createApp } from './app.js';
@@ -21,14 +22,24 @@ export { HttpError } from './errors.js';
 export { createS3Client, S3BlobStorage } from './storage.js';
 export type { BlobBody, BlobHead, BlobStorage, PutBlobInput } from './storage.js';
 export { verifyBlossomAuth } from './auth.js';
+export {
+  ESCROW_KEY_PREFIX,
+  ESCROW_MAX_BYTES,
+  escrowKey,
+  parseEscrowPayload,
+  parseEscrowPubkey,
+} from './escrow.js';
 export { reencodeToWebp } from './image.js';
+export { BlossomMirrorQueue, createMirrorQueue } from './mirror.js';
+export type { MirrorJob, MirrorOptions, MirrorQueue, MirrorStats } from './mirror.js';
 export { transcodeVideo } from './video.js';
 export type { VideoTranscoder, VideoTranscodeOptions, VideoTranscodeResult } from './video.js';
 
 export function start(): void {
   const config = loadConfig();
   const storage = new S3BlobStorage(createS3Client(loadS3Config()), config.bucket);
-  const app = createApp({ storage, config });
+  const mirror = createMirrorQueue(config);
+  const app = createApp({ storage, config, mirror });
 
   app.listen(config.port, () => {
     process.stdout.write(`media listening on :${config.port}\n`);

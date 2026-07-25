@@ -2,8 +2,12 @@ import { KINDS, verifyEvent, type SignedEvent } from '@1nky/protocol';
 
 import { HttpError } from './errors.js';
 
-/** Blossom BUD-11 verbs 1NKY implements. */
-export type BlossomVerb = 'upload' | 'delete' | 'get' | 'list' | 'media';
+/**
+ * Blossom BUD-11 verbs 1NKY implements, plus `escrow` — a 1NKY-local action
+ * that reuses the identical kind-24242 mechanism to prove a writer controls the
+ * pubkey whose blackbook is being stored or dropped.
+ */
+export type BlossomVerb = 'upload' | 'delete' | 'get' | 'list' | 'media' | 'escrow';
 
 /**
  * How far into the future a `created_at` may sit before we call it bogus.
