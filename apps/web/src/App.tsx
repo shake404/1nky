@@ -5,6 +5,7 @@ import { Conversation } from './routes/Conversation.js';
 import { CreateCrew } from './routes/CreateCrew.js';
 import { Crew } from './routes/Crew.js';
 import { Crews } from './routes/Crews.js';
+import { ImportCrew } from './routes/ImportCrew.js';
 import { Explore } from './routes/Explore.js';
 import { Feed } from './routes/Feed.js';
 import { FlickDetail } from './routes/FlickDetail.js';
@@ -65,6 +66,7 @@ export function App(): JSX.Element {
         <Route path="/w/:pubkey" element={<Writer />} />
         <Route path="/crew/:pubkey" element={<Crew />} />
         <Route path="/crew/new" element={<CreateCrew />} />
+        <Route path="/crew/import" element={<ImportCrew />} />
         <Route path="/crews" element={<Crews />} />
         <Route path="/me" element={<MyWall />} />
         <Route path="/post" element={<PostFlick />} />

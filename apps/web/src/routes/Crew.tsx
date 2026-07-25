@@ -158,6 +158,11 @@ export function Crew(): JSX.Element {
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => void repThisCrew()}>
             Rep this crew
           </button>
+          {!isFounder ? (
+            <Link to="/crew/import" className="kicker" style={{ alignSelf: 'center', textDecoration: 'underline' }}>
+              Hold this crew&apos;s blackbook? Bring it in.
+            </Link>
+          ) : null}
         </div>
       ) : null}
 

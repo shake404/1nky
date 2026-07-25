@@ -84,6 +84,9 @@ export function Crews(): JSX.Element {
         <Link to="/crew/new" className="btn btn--go btn--block sticker">
           {COPY.crew.action}
         </Link>
+        <Link to="/crew/import" className="kicker" style={{ textDecoration: 'underline' }}>
+          Already hold a crew&apos;s blackbook? Bring it in.
+        </Link>
       </div>
     );
   }
@@ -110,6 +113,9 @@ export function Crews(): JSX.Element {
 
       <Link to="/crew/new" className="btn btn--go btn--block sticker">
         {COPY.crew.action}
+      </Link>
+      <Link to="/crew/import" className="kicker" style={{ textDecoration: 'underline' }}>
+        Hold a crew&apos;s blackbook? Bring it in.
       </Link>
     </div>
   );
