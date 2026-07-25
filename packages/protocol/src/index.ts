@@ -58,6 +58,7 @@ export {
   buildCrewProfile,
   buildExpiration,
   buildFlick,
+  buildModBan,
   buildMuteList,
   buildProfile,
   buildReport,
@@ -66,7 +67,9 @@ export {
   CREW_BADGES_DTAG,
   CREW_DEFINITION_DTAG,
   imetaTag,
+  MOD_BAN_DTAG_PREFIX,
   normalizeBoard,
+  parseModBan,
   videoImetaTag,
 } from './builders.js';
 export { PROFILE_BIO_MAX } from './builders.js';
@@ -77,6 +80,7 @@ export type {
   BuildBuffOptions,
   BuildCommentOptions,
   BuildFlickInput,
+  BuildModBanOptions,
   BuildMuteListOptions,
   BuildProfileInput,
   BuildReportOptions,

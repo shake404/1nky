@@ -10,6 +10,7 @@ import {
   buildCrewProfile,
   buildExpiration,
   buildFlick,
+  buildModBan,
   buildMuteList,
   buildProfile,
   buildReport,
@@ -19,6 +20,7 @@ import {
   CREW_DEFINITION_DTAG,
   imetaTag,
   normalizeBoard,
+  parseModBan,
   PROFILE_BIO_MAX,
   videoImetaTag,
 } from './builders.js';
@@ -540,6 +542,35 @@ describe('buildReport', () => {
 
   it('rejects a malformed pubkey', () => {
     expect(() => buildReport({ pubkey: 'nope' }, 'spam')).toThrow(TypeError);
+  });
+});
+
+describe('buildModBan / parseModBan', () => {
+  it('is kind 30078 keyed d=ban:<target> with a p tag and JSON body', () => {
+    const ev = buildModBan(HEX_B, 'ban', { reason: 'illegal', createdAt: FIXED });
+    expect(ev.kind).toBe(KINDS.APP_DATA);
+    expect(first(ev.tags, 'd')).toEqual(['d', `ban:${HEX_B}`]);
+    expect(first(ev.tags, 'p')).toEqual(['p', HEX_B]);
+    expect(JSON.parse(ev.content)).toEqual({ action: 'ban', reason: 'illegal' });
+  });
+
+  it('round-trips through parseModBan, unban included', () => {
+    const ban = buildModBan(HEX_B, 'ban', { reason: 'spam' });
+    expect(parseModBan(ban)).toEqual({ targetPubkey: HEX_B, action: 'ban', reason: 'spam' });
+    const unban = buildModBan(HEX_B, 'unban');
+    expect(parseModBan(unban)).toEqual({ targetPubkey: HEX_B, action: 'unban', reason: null });
+  });
+
+  it('rejects a malformed target pubkey', () => {
+    expect(() => buildModBan('nope', 'ban')).toThrow(TypeError);
+  });
+
+  it('parseModBan returns null for other app data and junk', () => {
+    expect(parseModBan({ kind: 30078, tags: [['d', 'crew']], content: '{}' })).toBeNull();
+    expect(parseModBan({ kind: 30078, tags: [['d', `ban:${HEX_B}`]], content: 'not json' })).toBeNull();
+    expect(parseModBan({ kind: 30078, tags: [['d', 'ban:nope']], content: '{"action":"ban"}' })).toBeNull();
+    expect(parseModBan({ kind: 30078, tags: [['d', `ban:${HEX_B}`]], content: '{"action":"nuke"}' })).toBeNull();
+    expect(parseModBan({ kind: 1, tags: [['d', `ban:${HEX_B}`]], content: '{"action":"ban"}' })).toBeNull();
   });
 });
 

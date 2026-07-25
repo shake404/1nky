@@ -425,6 +425,65 @@ export function buildReport(
   return template(KINDS.REPORT, tags, options.note ?? '', options);
 }
 
+/** Prefix of the `d` tag on a kind-30078 mod ban/unban action (Phase 2, Part 6). */
+export const MOD_BAN_DTAG_PREFIX = 'ban:';
+
+export interface BuildModBanOptions extends BuilderOptions {
+  /** Why the writer is being banned. Carried into `banned_pubkeys.reason`. */
+  reason?: string;
+}
+
+/**
+ * Kind 30078 — a moderator ban / unban of a writer.
+ *
+ * Parameterized replaceable, keyed `d = "ban:<target pubkey>"`, so the latest
+ * mod action for a writer always wins and an unban replaces the ban. The
+ * indexer applies it to `banned_pubkeys` ONLY when the signer's pubkey is in
+ * `SITE_MOD_PUBKEYS`; from anyone else it is inert app data.
+ */
+export function buildModBan(
+  targetPubkey: string,
+  action: 'ban' | 'unban',
+  options: BuildModBanOptions = {},
+): EventTemplate {
+  assertHex32(targetPubkey, 'buildModBan(targetPubkey)');
+  const tags: Tag[] = [
+    ['d', `${MOD_BAN_DTAG_PREFIX}${targetPubkey}`],
+    ['p', targetPubkey],
+  ];
+  const body: { action: 'ban' | 'unban'; reason?: string } = { action };
+  if (options.reason) body.reason = options.reason;
+  return template(KINDS.APP_DATA, tags, JSON.stringify(body), options);
+}
+
+/** The target pubkey + action of a mod ban event, or null when it is not one. */
+export function parseModBan(event: {
+  kind: number;
+  tags: readonly (readonly string[])[];
+  content: string;
+}): { targetPubkey: string; action: 'ban' | 'unban'; reason: string | null } | null {
+  if (event.kind !== KINDS.APP_DATA) return null;
+  const d = event.tags.find((t) => t[0] === 'd')?.[1];
+  if (!d || !d.startsWith(MOD_BAN_DTAG_PREFIX)) return null;
+  const targetPubkey = d.slice(MOD_BAN_DTAG_PREFIX.length).toLowerCase();
+  if (!HEX64.test(targetPubkey)) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(event.content);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const body = parsed as Record<string, unknown>;
+  if (body['action'] !== 'ban' && body['action'] !== 'unban') return null;
+  return {
+    targetPubkey,
+    action: body['action'],
+    reason: typeof body['reason'] === 'string' && body['reason'] ? body['reason'] : null,
+  };
+}
+
 export interface BuildMuteListOptions extends BuilderOptions {
   /** Threads / flicks to hide. */
   events?: readonly string[];
