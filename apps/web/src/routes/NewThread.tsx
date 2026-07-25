@@ -53,7 +53,9 @@ export function NewThread(): JSX.Element {
         onStage: setStage,
       });
       say('Up.');
-      navigate(`/t/${event.id}`, { replace: true });
+      // `fresh` tells the thread page this was published a heartbeat ago, so
+      // it waits out the wall's filing delay instead of calling it gone.
+      navigate(`/t/${event.id}`, { replace: true, state: { fresh: true } });
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'That did not go up. Try again.');
       setStage(null);

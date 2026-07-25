@@ -387,3 +387,32 @@ export async function fetchBoard(
 export async function fetchThread(id: string, signal?: AbortSignal): Promise<ThreadView | null> {
   return parseThreadResponse(await getJson(`${API_BASE}/thread/${encodeURIComponent(id)}`, signal));
 }
+
+/**
+ * fetchThread, but patient. A thread that just went up takes the wall a beat
+ * to file (relay → index is ~a second), so the compose page's navigation and
+ * the post-reply refresh both land here before the row exists. A miss retries
+ * briefly before it is called gone; `expectReplies` keeps retrying until the
+ * reply count catches up, so a fresh reply does not read as lost.
+ */
+export async function fetchThreadPatient(
+  id: string,
+  options: { tries?: number; waitMs?: number; expectReplies?: number; signal?: AbortSignal } = {},
+): Promise<ThreadView | null> {
+  const tries = Math.max(1, options.tries ?? 4);
+  const waitMs = options.waitMs ?? 800;
+  const expectReplies = options.expectReplies ?? 0;
+
+  let last: ThreadView | null = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    try {
+      last = await fetchThread(id, options.signal);
+    } catch (error) {
+      if (attempt >= tries - 1) throw error;
+      continue;
+    }
+    if (last !== null && last.thread.replyCount >= expectReplies) return last;
+  }
+  return last;
+}

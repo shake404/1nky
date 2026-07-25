@@ -256,4 +256,60 @@ describe('requests', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 502 } as unknown as Response);
     await expect(boards.fetchThread('1'.repeat(64))).rejects.toThrow();
   });
+
+  it('is patient with a thread the wall has not filed yet', async () => {
+    const body = {
+      thread: {
+        id: '1'.repeat(64),
+        subject: 'Beef',
+        content: 'say it',
+        boards: ['sf-bay'],
+        writer: { pubkey: 'a'.repeat(64), tag: 'SHOCK', mark: 'aaaaaa', avatarSha256: null },
+        createdAt: 1_800_000_000,
+        expiresAt: null,
+        replyCount: 0,
+      },
+      comments: [],
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
+      .mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
+      .mockResolvedValue({ ok: true, status: 200, json: async () => body } as unknown as Response);
+
+    const view = await boards.fetchThreadPatient('1'.repeat(64), { waitMs: 0 });
+    expect(view?.thread.subject).toBe('Beef');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps asking until the reply count catches up, then settles', async () => {
+    const at = (replyCount: number): Response =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread: {
+            id: '1'.repeat(64),
+            subject: null,
+            content: 'say it',
+            boards: [],
+            writer: { pubkey: 'a'.repeat(64), tag: null, mark: 'aaaaaa', avatarSha256: null },
+            createdAt: 1_800_000_000,
+            expiresAt: null,
+            replyCount,
+          },
+          comments: [],
+        }),
+      }) as unknown as Response;
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(at(0)).mockResolvedValue(at(1));
+
+    const view = await boards.fetchThreadPatient('1'.repeat(64), { waitMs: 0, expectReplies: 1 });
+    expect(view?.thread.replyCount).toBe(1);
+  });
+
+  it('patience runs out to the stale answer, not a lie', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 404 } as unknown as Response);
+    await expect(boards.fetchThreadPatient('1'.repeat(64), { waitMs: 0, tries: 2 })).rejects.toThrow();
+  });
 });

@@ -1,13 +1,13 @@
 import { KINDS, type EventRef } from '@1nky/protocol';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { BeefChip } from '../components/BeefChip.js';
 import { FlagIt } from '../components/FlagIt.js';
 import { Spraying } from '../components/Spraying.js';
 import { WriterChip } from '../components/WriterChip.js';
 import {
   beefClock,
-  fetchThread,
+  fetchThreadPatient,
   MAX_REPLY_DEPTH,
   type ThreadReply,
   type ThreadView,
@@ -32,6 +32,10 @@ const REPLY_MAX = 2000;
  */
 export function Thread(): JSX.Element {
   const { id = '' } = useParams();
+  const location = useLocation();
+  // Set by the compose page: this thread went up a heartbeat ago, so the
+  // first read waits out the wall's filing delay instead of calling it gone.
+  const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true;
   const { tag } = useTag();
   const { say } = useToast();
 
@@ -49,9 +53,10 @@ export function Thread(): JSX.Element {
    * answer out rather than paint it over whatever is on screen now.
    */
   const load = useCallback(
-    async (alive: () => boolean = () => true): Promise<void> => {
+    async (alive: () => boolean = () => true, expectReplies = 0): Promise<void> => {
       try {
-        const found = await fetchThread(id);
+        const patient = fresh || expectReplies > 0;
+        const found = await fetchThreadPatient(id, { tries: patient ? 4 : 1, expectReplies });
         if (!alive()) return;
         setView(found);
         setMissing(found === null);
@@ -59,7 +64,7 @@ export function Thread(): JSX.Element {
         if (alive()) setMissing(true);
       }
     },
-    [id],
+    [id, fresh],
   );
 
   useEffect(() => {
@@ -112,14 +117,14 @@ export function Thread(): JSX.Element {
         } else {
           setOpDraft('');
         }
-        await load();
+        await load(() => true, (op?.replyCount ?? 0) + 1);
       } catch (problem) {
         say(problem instanceof Error ? problem.message : 'That did not go up.', 'hazard');
       } finally {
         setStage(null);
       }
     },
-    [tag, root, stage, byId, load, say],
+    [tag, root, stage, byId, load, say, op],
   );
 
   if (missing) {
