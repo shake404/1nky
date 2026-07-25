@@ -940,7 +940,30 @@ main {
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.55);
   flex: none;
   object-fit: cover;
-  background: var(--ink, #0c0a11);
+  /* Transparent pictures sit on the wall's own dark, never the ink pink. */
+  background: var(--soot);
+}
+
+/* --- Avatar cropper -------------------------------------------------------- */
+.cropper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.cropper__stage {
+  border: 2px solid var(--line-strong);
+  box-shadow: var(--drop);
+  background: var(--soot);
+  display: block;
+  touch-action: none;
+}
+
+.cropper__zoom {
+  width: 260px;
+  max-width: 100%;
+  accent-color: var(--sodium);
 }
 
 /* --- Spraying --------------------------------------------------------------

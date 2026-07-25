@@ -1,5 +1,5 @@
 import { IDBFactory } from 'fake-indexeddb';
-import { act } from 'react';
+import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,10 +17,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const UPLOADED = 'c'.repeat(64);
 const EXISTING = 'd'.repeat(64);
 
-const prepared = { full: new Blob(['full'], { type: 'image/webp' }), thumb: new Blob(['thumb']), dims: { width: 100, height: 120 } };
-const prepareImage = vi.fn(async (_file: File) => prepared);
+const CROPPED = new Blob(['cropped-square'], { type: 'image/webp' });
 const uploadBlob = vi.fn(async (_blob: Blob, _secret: Uint8Array) => ({ sha256: UPLOADED, url: `http://media/${UPLOADED}` }));
-vi.mock('../lib/flicks.js', () => ({ prepareImage, uploadBlob }));
+vi.mock('../lib/flicks.js', () => ({ uploadBlob }));
+
+// The cropper's canvas/Image work does not run under happy-dom; stand it in
+// with a button that hands back a framed square, so the pick -> frame -> save
+// path is exercised. The cropper's own geometry is unit-tested separately.
+vi.mock('../components/AvatarCropper.js', () => ({
+  AvatarCropper: (props: { onDone: (b: Blob) => void; onCancel: () => void }) =>
+    createElement(
+      'button',
+      { type: 'button', onClick: () => props.onDone(CROPPED) },
+      'Use this',
+    ),
+}));
 
 const publishProfile = vi.fn(async (_tag: unknown, _opts: Record<string, unknown>) => ({ id: 'e'.repeat(64) }));
 vi.mock('../lib/publish.js', () => ({
@@ -72,7 +83,6 @@ beforeEach(() => {
   setActEnv(true);
   resetDbHandle();
   profileMeta = null;
-  prepareImage.mockClear();
   uploadBlob.mockClear();
   publishProfile.mockClear();
   fetchProfile.mockClear();
@@ -149,19 +159,20 @@ function lastPublish(): Record<string, unknown> {
 }
 
 describe('editing your tag with a picture', () => {
-  it('strips, uploads, and puts the returned address on the tag', async () => {
+  it('frames, uploads, and puts the returned address on the tag', async () => {
     await createTag('SHOCK');
     await mount();
     publishProfile.mockClear();
 
     await pick();
-    expect(prepareImage).toHaveBeenCalledTimes(1);
+    // Picking opens the cropper; framing it hands back the square.
+    await press('Use this');
 
     await press('Put it up');
 
-    // Uploaded the prepared bytes, signed with this tag's own secret.
+    // Uploaded the framed square, signed with this tag's own secret.
     expect(uploadBlob).toHaveBeenCalledTimes(1);
-    expect(uploadBlob.mock.calls[0]![0]).toBe(prepared.full);
+    expect(uploadBlob.mock.calls[0]![0]).toBe(CROPPED);
 
     // The address the server returned is what went onto the kind-0.
     expect(publishProfile).toHaveBeenCalledTimes(1);

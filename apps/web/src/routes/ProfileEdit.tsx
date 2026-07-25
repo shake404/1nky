@@ -2,9 +2,10 @@ import { fingerprint, PROFILE_BIO_MAX } from '@1nky/protocol';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/Avatar.js';
+import { AvatarCropper } from '../components/AvatarCropper.js';
 import { Spraying } from '../components/Spraying.js';
 import { fetchWriterCrews } from '../lib/crews.js';
-import { prepareImage, uploadBlob, type PreparedImage } from '../lib/flicks.js';
+import { uploadBlob } from '../lib/flicks.js';
 import { fetchProfile } from '../lib/profiles.js';
 import { publishProfile, type Stage } from '../lib/publish.js';
 import { useTag } from '../state/TagProvider.js';
@@ -37,11 +38,14 @@ export function ProfileEdit(): JSX.Element {
   const [loaded, setLoaded] = useState(false);
   const [stage, setStage] = useState<Stage | null>(null);
 
-  // The picture. `avatarSha256` is what is on the wall now; `picked` is a fresh
-  // one the writer chose that has not gone up yet; `preview` is its object URL.
+  // The picture. `avatarSha256` is what is on the wall now; `picked` is the
+  // freshly-framed square (a blob) that has not gone up yet; `preview` is its
+  // object URL; `cropFile` is a just-picked file waiting to be framed (the
+  // cropper is open while it is set).
   const [avatarSha256, setAvatarSha256] = useState<string | null>(null);
-  const [picked, setPicked] = useState<PreparedImage | null>(null);
+  const [picked, setPicked] = useState<Blob | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -70,15 +74,18 @@ export function ProfileEdit(): JSX.Element {
 
   if (!tag) return <div className="shell empty" />;
 
-  const pickPicture = async (file: File): Promise<void> => {
-    try {
-      const prepared = await prepareImage(file);
-      if (preview) URL.revokeObjectURL(preview);
-      setPicked(prepared);
-      setPreview(URL.createObjectURL(prepared.full));
-    } catch (error) {
-      say(error instanceof Error ? error.message : 'Could not read that picture.', 'hazard');
-    }
+  /** A framed square came back from the cropper — hold it for upload on save. */
+  const onCropped = (blob: Blob): void => {
+    if (preview) URL.revokeObjectURL(preview);
+    setPicked(blob);
+    setPreview(URL.createObjectURL(blob));
+    setCropFile(null);
+    if (fileInput.current) fileInput.current.value = '';
+  };
+
+  const cancelCrop = (): void => {
+    setCropFile(null);
+    if (fileInput.current) fileInput.current.value = '';
   };
 
   const removePicture = (): void => {
@@ -86,6 +93,7 @@ export function ProfileEdit(): JSX.Element {
     setPicked(null);
     setPreview(null);
     setAvatarSha256(null);
+    setCropFile(null);
     if (fileInput.current) fileInput.current.value = '';
   };
 
@@ -97,7 +105,7 @@ export function ProfileEdit(): JSX.Element {
       let sha = avatarSha256 ?? '';
       if (picked) {
         setStage('uploading');
-        const upload = await uploadBlob(picked.full, tag.secret);
+        const upload = await uploadBlob(picked, tag.secret);
         sha = upload.sha256;
       } else {
         setStage('spraying');
@@ -159,23 +167,29 @@ export function ProfileEdit(): JSX.Element {
 
       <div className="field">
         <label htmlFor="avatar">Put a face on it</label>
-        <input
-          ref={fileInput}
-          id="avatar"
-          type="file"
-          accept="image/*"
-          disabled={!loaded || stage !== null}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) void pickPicture(file);
-          }}
-        />
-        <p className="help muted">A picture for your tag. Optional — the block-mark stands in without one.</p>
-        {hasPicture ? (
-          <button type="button" className="btn btn--ghost btn--sm" onClick={removePicture} disabled={stage !== null}>
-            Take it off
-          </button>
-        ) : null}
+        {cropFile ? (
+          <AvatarCropper file={cropFile} onDone={onCropped} onCancel={cancelCrop} />
+        ) : (
+          <>
+            <input
+              ref={fileInput}
+              id="avatar"
+              type="file"
+              accept="image/*"
+              disabled={!loaded || stage !== null}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) setCropFile(file);
+              }}
+            />
+            <p className="help muted">A picture for your tag. Optional — the block-mark stands in without one.</p>
+            {hasPicture ? (
+              <button type="button" className="btn btn--ghost btn--sm" onClick={removePicture} disabled={stage !== null}>
+                Take it off
+              </button>
+            ) : null}
+          </>
+        )}
       </div>
 
       <hr className="rule" />
