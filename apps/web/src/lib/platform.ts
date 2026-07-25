@@ -31,6 +31,20 @@ export function downloadText(filename: string, contents: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+/**
+ * Put text on the clipboard. Returns false when the browser would not do it,
+ * so the caller can fall back to "select it yourself" rather than lying.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (!navigator.clipboard?.writeText) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Human "3h ago" for timestamps. */
 export function ago(unixSeconds: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000) - unixSeconds);

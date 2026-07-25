@@ -35,6 +35,17 @@ function Standing({ writer }: { writer: WriterSummary | null }): JSX.Element | n
   );
 }
 
+/**
+ * "put on" — a writer already on here vouched for them.
+ *
+ * Stated once, quietly, next to the standing. It is not a rank and there is
+ * nothing to collect: either somebody put them on or the wall says nothing.
+ */
+function PutOn({ writer }: { writer: WriterSummary | null }): JSX.Element | null {
+  if (!writer?.putOn) return null;
+  return <span className="put-on-chip">put on</span>;
+}
+
 /** A writer's page: tag, mark, identicon, everything they have up. */
 export function Writer(): JSX.Element {
   const { pubkey = '' } = useParams();
@@ -123,6 +134,7 @@ export function Writer(): JSX.Element {
           </p>
           <p className="help">{COPY.mark.hint}</p>
           <Standing writer={summary} />
+          <PutOn writer={summary} />
           {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>
@@ -227,6 +239,7 @@ export function MyWall(): JSX.Element {
           </p>
           <p className="help">{COPY.mark.hint}</p>
           <Standing writer={summary} />
+          <PutOn writer={summary} />
           {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>

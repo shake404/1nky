@@ -1904,6 +1904,21 @@ main {
   box-shadow: 1px 1px 0 var(--keyline);
 }
 
+/* Somebody already on here vouched for them. Deliberately small and flat —
+ * a fact stated once, not a badge to be collected or climbed. */
+.put-on-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  color: var(--buff);
+  border: 1px solid var(--line-strong);
+  background: var(--soot-2);
+}
+
 /* --- Roadmap ---------------------------------------------------------------
  * A list of what is coming reads better as a stack of slips than as bullets:
  * each item hangs off a left keyline with a stencilled tick, so a long lane

@@ -20,7 +20,11 @@ interface TagContextValue {
   ready: boolean;
   /** True when the browser promised not to evict us. */
   persisted: boolean;
-  createTag: (name: string) => Promise<Tag>;
+  /**
+   * Make a tag. `putOn` is passed straight through to the writer's first
+   * profile — the only event that can carry it (see `lib/invites.ts`).
+   */
+  createTag: (name: string, putOn?: { inviteId: string; inviterPubkey: string }) => Promise<Tag>;
   restoreTag: (secret: Uint8Array, name: string) => Promise<Tag>;
   setBackedUp: () => Promise<void>;
   rename: (name: string) => Promise<void>;
@@ -60,16 +64,20 @@ export function TagProvider({ children }: { children: ReactNode }): JSX.Element 
     };
   }, []);
 
-  const createTag = useCallback(async (name: string): Promise<Tag> => {
-    const created = await createTagRecord(name);
-    setTag(created);
-    relay.connect();
-    // The profile is the writer's first event, so it pays the newcomer's
-    // work. Fire and forget — a wall that is briefly unreachable must not
-    // block someone from getting in.
-    void publishProfile(created, { first: true }).catch(() => undefined);
-    return created;
-  }, []);
+  const createTag = useCallback(
+    async (name: string, putOn?: { inviteId: string; inviterPubkey: string }): Promise<Tag> => {
+      const created = await createTagRecord(name);
+      setTag(created);
+      relay.connect();
+      // The profile is the writer's first event, so it pays the newcomer's
+      // work. Fire and forget — a wall that is briefly unreachable must not
+      // block someone from getting in. A put-on rides on this one event and
+      // no other: it is the record of who vouched for them turning up.
+      void publishProfile(created, { first: true, ...(putOn ? { putOn } : {}) }).catch(() => undefined);
+      return created;
+    },
+    [],
+  );
 
   const restoreTag = useCallback(async (secret: Uint8Array, name: string): Promise<Tag> => {
     const restored = await adoptTag(secret, name);

@@ -222,6 +222,27 @@ describe('a writer’s page', () => {
     expect(container.querySelector(`a[href="/f/${FLICK}"]`)).not.toBeNull();
   });
 
+  it('says "put on" when a writer already on here vouched for them', async () => {
+    await createTag('WRITER');
+    answering(answer({ ...SEEN, putOn: true }));
+
+    await mount();
+
+    const chip = container.querySelector('.put-on-chip');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toBe('put on');
+  });
+
+  it('says nothing about it when nobody put them on', async () => {
+    await createTag('WRITER');
+    answering(answer(SEEN));
+
+    await mount();
+
+    expect(container.querySelector('.put-on-chip')).toBeNull();
+    expect((container.textContent ?? '').toLowerCase()).not.toContain('put on');
+  });
+
   it('says nothing from the jargon blocklist', async () => {
     await createTag('WRITER');
     answering(answer(SEEN));

@@ -328,6 +328,12 @@ export interface WriterSummary {
   /** Everything they have ever put up, of any sort (wire field `eventCount`). */
   postCount: number | null;
   banned: boolean;
+  /**
+   * True when a writer already on here put them on. A fact off the wall, not a
+   * claim: it comes from the vouching event plus their own first profile, and
+   * nobody can set it on themselves.
+   */
+  putOn: boolean;
   /** Crews they are repping — a claim on their own profile, not a roster. */
   crews: string[];
 }
@@ -371,6 +377,7 @@ function writerSummaryFrom(value: unknown, pubkey: string): WriterSummary | null
     flickCount: int('flickCount'),
     postCount: int('eventCount'),
     banned: raw['banned'] === true,
+    putOn: raw['putOn'] === true,
     crews: Array.isArray(raw['crews'])
       ? (raw['crews'] as unknown[]).filter((c): c is string => typeof c === 'string')
       : [],

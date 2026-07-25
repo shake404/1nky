@@ -67,7 +67,12 @@ function friendly(message: string): string {
   return 'That did not go up. Try again.';
 }
 
-/** Kind 0 — the writer's tag. First event from a fresh tag pays full freight. */
+/**
+ * Kind 0 — the writer's tag. First event from a fresh tag pays full freight.
+ *
+ * `putOn` only ever belongs on that first one: it is how somebody who got put
+ * on says so, and it is read once, when they turn up.
+ */
 export function publishProfile(
   tag: Pick<Tag, 'secret' | 'pubkey' | 'name'>,
   options: PublishOptions & {
@@ -76,6 +81,7 @@ export function publishProfile(
     bio?: string;
     avatarSha256?: string;
     crews?: readonly string[];
+    putOn?: { inviteId: string; inviterPubkey: string };
   } = {},
 ): Promise<SignedEvent> {
   const template = profileTemplate(tag, {
@@ -83,6 +89,7 @@ export function publishProfile(
     ...(options.bio !== undefined ? { bio: options.bio } : {}),
     ...(options.avatarSha256 ? { avatarSha256: options.avatarSha256 } : {}),
     ...(options.crews ? { crews: options.crews } : {}),
+    ...(options.putOn ? { putOn: options.putOn } : {}),
   });
   return send(template, tag, options.first === false ? POW_BITS.post : POW_BITS.new, options);
 }

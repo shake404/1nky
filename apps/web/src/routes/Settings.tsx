@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Identicon } from '../components/Identicon.js';
 import { IgnoreWriter, useIgnoredWriters } from '../components/IgnoreWriter.js';
+import { PutSomeoneOn } from '../components/PutSomeoneOn.js';
 import { QrBlock } from '../components/QrBlock.js';
 import { API_BASE, MEDIA_BASE, POW_BITS, RELAY_WS_URL, SHOW_FLAGS } from '../lib/config.js';
 import { exportBlackbook } from '../lib/identity.js';
@@ -136,6 +137,10 @@ export function Settings(): JSX.Element {
           this device&apos;s single active tag to the crew. Restore your own blackbook when you are done.
         </p>
       </section>
+
+      <hr className="rule" />
+
+      <PutSomeoneOn />
 
       <hr className="rule" />
 

@@ -19,10 +19,22 @@ export interface ProfileMeta {
   crews?: string[];
 }
 
-/** Build a kind-0 template from the editable fields. Pure — no mining, no send. */
+/**
+ * Build a kind-0 template from the editable fields. Pure — no mining, no send.
+ *
+ * `putOn` is the one field that is not editable: it rides on a writer's FIRST
+ * profile and nowhere else (see `invites.ts`), because it records who vouched
+ * for them at the moment they turned up.
+ */
 export function profileTemplate(
   tag: Pick<Tag, 'name'>,
-  opts: { city?: string; bio?: string; avatarSha256?: string; crews?: readonly string[] } = {},
+  opts: {
+    city?: string;
+    bio?: string;
+    avatarSha256?: string;
+    crews?: readonly string[];
+    putOn?: { inviteId: string; inviterPubkey: string };
+  } = {},
 ): EventTemplate {
   return buildProfile({
     tag: tag.name,
@@ -30,6 +42,7 @@ export function profileTemplate(
     ...(opts.bio !== undefined ? { bio: opts.bio } : {}),
     ...(opts.avatarSha256 ? { avatarSha256: opts.avatarSha256 } : {}),
     ...(opts.crews ? { crews: opts.crews } : {}),
+    ...(opts.putOn ? { invite: opts.putOn } : {}),
   });
 }
 
