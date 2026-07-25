@@ -1,4 +1,4 @@
-import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import { generateSecretKey, getPublicKey, verifyEvent } from 'nostr-tools/pure';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,6 +9,7 @@ import {
   wrapMessage,
 } from './dm.js';
 import { KINDS } from './kinds.js';
+import { committedPowTarget, hasValidPow, powBits } from './pow.js';
 import type { SignedEvent } from './types.js';
 
 const alice = generateSecretKey();
@@ -71,7 +72,10 @@ describe('wrapMessage', () => {
   it('leaks nothing but the recipient in the plaintext tags', () => {
     const wrap = wrapMessage(alice, bobPub, 'the wall on 3rd')[0] as SignedEvent;
 
-    expect(wrap.tags).toEqual([['p', bobPub]]);
+    // The p tag names the recipient; the only other plaintext tag is the
+    // NIP-13 nonce tag, which carries no identity.
+    expect(wrap.tags.filter((t) => t[0] === 'p')).toEqual([['p', bobPub]]);
+    expect(wrap.tags.filter((t) => t[0] === 'nonce')).toHaveLength(1);
     expect(wrap.content).not.toContain('3rd');
     expect(JSON.stringify(wrap)).not.toContain(alicePub);
   });
@@ -93,6 +97,73 @@ describe('wrapMessage', () => {
   it('stays well inside the relay 64KB event cap at maximum length', () => {
     const wrap = wrapMessage(alice, bobPub, 'x'.repeat(DM_TEXT_MAX))[0] as SignedEvent;
     expect(Buffer.byteLength(JSON.stringify(wrap), 'utf8')).toBeLessThan(65_536);
+  });
+});
+
+describe('wrapMessage — NIP-13 proof of work on the gift wrap', () => {
+  it('mines 8 committed bits into every outer wrap (the relay default)', () => {
+    const wraps = wrapMessage(alice, bobPub, 'pow wrap');
+
+    expect(wraps.length).toBeGreaterThanOrEqual(1);
+    for (const wrap of wraps) {
+      expect(wrap.kind).toBe(KINDS.GIFT_WRAP);
+      expect(powBits(wrap.id)).toBeGreaterThanOrEqual(8);
+      expect(committedPowTarget(wrap)).toBeGreaterThanOrEqual(8);
+      // The exact check the relay write-policy runs (requireCommitment:true).
+      expect(hasValidPow(wrap, 8, { requireCommitment: true })).toBe(true);
+    }
+  });
+
+  it('mines the single self-wrap too', () => {
+    const wrap = wrapMessage(alice, alicePub, 'note to self with pow')[0] as SignedEvent;
+    expect(powBits(wrap.id)).toBeGreaterThanOrEqual(8);
+    expect(committedPowTarget(wrap)).toBeGreaterThanOrEqual(8);
+    expect(hasValidPow(wrap, 8, { requireCommitment: true })).toBe(true);
+  });
+
+  it('verifies the outer signature after mining (real check, no memo)', () => {
+    for (const wrap of wrapMessage(alice, bobPub, 'sig still good')) {
+      // overTheWire drops nostr-tools' verified-symbol cache, forcing a real
+      // schnorr verification against the mined id.
+      expect(verifyEvent(overTheWire(wrap as SignedEvent))).toBe(true);
+    }
+  });
+
+  it('round-trips through unwrap after mining', () => {
+    const [forBob, forAlice] = wrapMessage(alice, bobPub, 'pow round trip');
+    expect(unwrapMessage(bob, overTheWire(forBob as SignedEvent))?.text).toBe('pow round trip');
+    expect(unwrapMessage(alice, overTheWire(forAlice as SignedEvent))?.text).toBe('pow round trip');
+  });
+
+  it('keeps the wrap backdated while mining (NIP-59 still holds)', () => {
+    const before = now();
+    const wraps = Array.from({ length: 8 }, () =>
+      wrapMessage(alice, bobPub, 'backdated and mined')[0] as SignedEvent,
+    );
+    const after = now();
+
+    for (const wrap of wraps) {
+      // Mining never bumped the timestamp to "now" to find a hash: each wrap is
+      // still in the backdated window AND carries valid committed PoW.
+      expect(wrap.created_at).toBeLessThanOrEqual(after);
+      expect(wrap.created_at).toBeGreaterThanOrEqual(before - GIFT_WRAP_MAX_BACKDATE_SECONDS);
+      expect(hasValidPow(wrap, 8, { requireCommitment: true })).toBe(true);
+    }
+    // Across 8 draws the odds of every random offset flooring to 0 are
+    // vanishingly small, so at least one wrap is genuinely backdated.
+    expect(Math.min(...wraps.map((w) => w.created_at))).toBeLessThan(before);
+  });
+
+  it('honours a custom powBits target above the default', () => {
+    const wrap = wrapMessage(alice, bobPub, 'harder', 10)[0] as SignedEvent;
+    expect(powBits(wrap.id)).toBeGreaterThanOrEqual(10);
+    expect(committedPowTarget(wrap)).toBeGreaterThanOrEqual(10);
+    expect(hasValidPow(wrap, 10, { requireCommitment: true })).toBe(true);
+  });
+
+  it('rejects an out-of-range powBits', () => {
+    expect(() => wrapMessage(alice, bobPub, 'x', -1)).toThrow(TypeError);
+    expect(() => wrapMessage(alice, bobPub, 'x', 1.5)).toThrow(TypeError);
   });
 });
 

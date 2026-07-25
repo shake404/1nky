@@ -49,6 +49,10 @@ export function Settings(): JSX.Element {
       </div>
       <p className="help">{COPY.mark.hint}</p>
 
+      <Link to="/profile/edit" className="btn btn--ghost btn--sm sticker">
+        Edit your tag
+      </Link>
+
       <hr className="rule" />
 
       <section className="stack">

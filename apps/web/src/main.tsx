@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import { App } from './App.js';
+import { DmProvider } from './state/DmProvider.js';
 import { TagProvider } from './state/TagProvider.js';
 import { ToastProvider } from './state/ToastProvider.js';
 import './styles/global.css';
@@ -14,9 +15,11 @@ createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
       <TagProvider>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
+        <DmProvider>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </DmProvider>
       </TagProvider>
     </BrowserRouter>
   </StrictMode>,

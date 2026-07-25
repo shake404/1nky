@@ -1,7 +1,6 @@
 import {
   buildBuff,
   buildComment,
-  buildProfile,
   KINDS,
   type EventRef,
   type EventTemplate,
@@ -11,6 +10,7 @@ import { POW_BITS } from './config.js';
 import { flickTemplate, prepareImage, uploadBlob, type FlickDetails, type UploadResult } from './flicks.js';
 import { markHasPosted, rememberOwnPost, type Tag } from './identity.js';
 import { mineAndSign } from './pow.js';
+import { profileTemplate } from './profiles.js';
 import { relay } from './relay.js';
 
 /**
@@ -58,11 +58,12 @@ function friendly(message: string): string {
 /** Kind 0 — the writer's tag. First event from a fresh tag pays full freight. */
 export function publishProfile(
   tag: Pick<Tag, 'secret' | 'pubkey' | 'name'>,
-  options: PublishOptions & { first?: boolean; city?: string } = {},
+  options: PublishOptions & { first?: boolean; city?: string; bio?: string; avatarSha256?: string } = {},
 ): Promise<SignedEvent> {
-  const template = buildProfile({
-    tag: tag.name,
+  const template = profileTemplate(tag, {
     ...(options.city ? { city: options.city } : {}),
+    ...(options.bio !== undefined ? { bio: options.bio } : {}),
+    ...(options.avatarSha256 ? { avatarSha256: options.avatarSha256 } : {}),
   });
   return send(template, tag, options.first === false ? POW_BITS.post : POW_BITS.new, options);
 }

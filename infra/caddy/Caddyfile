@@ -120,7 +120,7 @@
 # else changes.
 # =============================================================================
 
-REDACTED-HOST.sslip.io {
+api.1nky.com, REDACTED-HOST.sslip.io {
 	import scrub_headers
 
 	encode zstd gzip
@@ -129,6 +129,14 @@ REDACTED-HOST.sslip.io {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Frame-Options "DENY"
 	}
+
+	# CORS for the Vercel-hosted PWA. Auth is signed events, so a permissive
+	# origin is safe; the API is read-only and the relay/media verify signatures.
+	header Access-Control-Allow-Origin "*"
+	header Access-Control-Allow-Methods "GET, HEAD, PUT, DELETE, OPTIONS"
+	header Access-Control-Allow-Headers "Authorization, Content-Type, X-SHA-256, X-Content-Type, X-Content-Length"
+	@options method OPTIONS
+	respond @options 204
 
 	@relay path /relay /relay/*
 	handle @relay {
@@ -147,9 +155,9 @@ REDACTED-HOST.sslip.io {
 		reverse_proxy media:3002
 	}
 
-	# The PWA itself lives on Vercel until 1nky.com points here.
+	# This host is the backend only; the PWA is served from 1nky.com (Vercel).
 	handle {
-		redir https://1nky.vercel.app{uri} temporary
+		redir https://1nky.com{uri} temporary
 	}
 }
 

@@ -1,12 +1,15 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Shell } from './components/Shell.js';
 import { Backup } from './routes/Backup.js';
+import { Conversation } from './routes/Conversation.js';
 import { Feed } from './routes/Feed.js';
 import { FlickDetail } from './routes/FlickDetail.js';
 import { HangItUp } from './routes/HangItUp.js';
 import { Landing } from './routes/Landing.js';
+import { Messages } from './routes/Messages.js';
 import { PickTag } from './routes/PickTag.js';
 import { PostFlick } from './routes/PostFlick.js';
+import { ProfileEdit } from './routes/ProfileEdit.js';
 import { Restore } from './routes/Restore.js';
 import { Settings } from './routes/Settings.js';
 import { MyWall, Writer } from './routes/Writer.js';
@@ -57,6 +60,9 @@ export function App(): JSX.Element {
         <Route path="/w/:pubkey" element={<Writer />} />
         <Route path="/me" element={<MyWall />} />
         <Route path="/post" element={<PostFlick />} />
+        <Route path="/messages" element={<Messages />} />
+        <Route path="/messages/:pubkey" element={<Conversation />} />
+        <Route path="/profile/edit" element={<ProfileEdit />} />
         <Route path="/backup" element={<Backup />} />
         <Route path="/restore" element={<Restore />} />
         <Route path="/settings" element={<Settings />} />

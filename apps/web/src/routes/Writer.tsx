@@ -1,10 +1,10 @@
-import { COPY, fingerprint, KINDS } from '@1nky/protocol';
+import { COPY, fingerprint } from '@1nky/protocol';
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { FlickCard } from '../components/FlickCard.js';
 import { Identicon } from '../components/Identicon.js';
 import { fetchWriterFlicks, type Flick } from '../lib/feed.js';
-import { relay } from '../lib/relay.js';
+import { fetchProfile } from '../lib/profiles.js';
 import { useTag } from '../state/TagProvider.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -14,6 +14,7 @@ export function Writer(): JSX.Element {
   const { pubkey = '' } = useParams();
   const { tag } = useTag();
   const [name, setName] = useState<string>('');
+  const [bio, setBio] = useState<string>('');
   const [flicks, setFlicks] = useState<Flick[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -35,26 +36,24 @@ export function Writer(): JSX.Element {
     };
   }, [pubkey, valid]);
 
-  // The tag name lives in the writer's own profile event.
+  // The tag name and bio live in the writer's own profile event.
   useEffect(() => {
     if (!valid) return;
+    let live = true;
     if (isMe && tag) {
       setName(tag.name);
-      return;
-    }
-    let live = true;
-    void relay
-      .query([{ kinds: [KINDS.PROFILE], authors: [pubkey], limit: 1 }], 5000)
-      .then((events) => {
-        const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
-        if (!latest || !live) return;
-        try {
-          const parsed = JSON.parse(latest.content) as { name?: unknown };
-          if (typeof parsed.name === 'string') setName(parsed.name);
-        } catch {
-          /* an unreadable profile is just an unnamed writer */
-        }
+      void fetchProfile(tag.pubkey).then((meta) => {
+        if (live) setBio(meta?.bio ?? '');
       });
+      return () => {
+        live = false;
+      };
+    }
+    void fetchProfile(pubkey).then((meta) => {
+      if (!live || !meta) return;
+      setName(meta.name?.trim() || '');
+      setBio(meta.bio ?? '');
+    });
     return () => {
       live = false;
     };
@@ -78,8 +77,19 @@ export function Writer(): JSX.Element {
             {fingerprint(pubkey)}
           </p>
           <p className="help">{COPY.mark.hint}</p>
+          {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>
+
+      {isMe ? (
+        <Link to="/profile/edit" className="btn btn--ghost btn--sm sticker">
+          Edit your tag
+        </Link>
+      ) : (
+        <Link to={`/messages/${pubkey}`} className="btn btn--go btn--sm sticker">
+          Send a message
+        </Link>
+      )}
 
       <hr className="rule" />
 
@@ -107,6 +117,7 @@ export function Writer(): JSX.Element {
 export function MyWall(): JSX.Element {
   const { tag } = useTag();
   const [flicks, setFlicks] = useState<Flick[]>([]);
+  const [bio, setBio] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -117,6 +128,9 @@ export function MyWall(): JSX.Element {
         setFlicks(found);
         setLoading(false);
       }
+    });
+    void fetchProfile(tag.pubkey).then((meta) => {
+      if (live) setBio(meta?.bio ?? '');
     });
     return () => {
       live = false;
@@ -135,8 +149,13 @@ export function MyWall(): JSX.Element {
             {tag.mark}
           </p>
           <p className="help">{COPY.mark.hint}</p>
+          {bio ? <p className="bio">{bio}</p> : null}
         </div>
       </div>
+
+      <Link to="/profile/edit" className="btn btn--ghost btn--sm sticker">
+        Edit your tag
+      </Link>
 
       <hr className="rule" />
 

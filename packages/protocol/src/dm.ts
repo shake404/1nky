@@ -22,12 +22,13 @@
  * caller.
  */
 
-import { wrapEvent as nip59WrapEvent } from 'nostr-tools/nip59';
-import { decrypt as nip44Decrypt, getConversationKey } from 'nostr-tools/nip44';
-import { getPublicKey, verifyEvent } from 'nostr-tools/pure';
+import { createRumor, createSeal } from 'nostr-tools/nip59';
+import { decrypt as nip44Decrypt, encrypt as nip44Encrypt, getConversationKey } from 'nostr-tools/nip44';
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, verifyEvent } from 'nostr-tools/pure';
 
 import { KINDS } from './kinds.js';
-import type { SignedEvent } from './types.js';
+import { powBits as countPowBits, powTag } from './pow.js';
+import type { SignedEvent, UnsignedEvent } from './types.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -55,6 +56,92 @@ function assertPubkey(value: string, what: string): string {
 }
 
 /**
+ * Randomised, backdated `created_at` for a gift wrap (NIP-59: up to two days
+ * old). Floored so the stamp can never sit above `now` and trip a freshness
+ * check downstream.
+ */
+function randomBackdatedCreatedAt(): number {
+  return Math.floor(Date.now() / 1000 - Math.random() * GIFT_WRAP_MAX_BACKDATE_SECONDS);
+}
+
+/**
+ * Mine a NIP-13 committed-target proof of work into an unsigned gift-wrap
+ * template, grinding the nonce counter only so the wrap's NIP-59 backdated
+ * `created_at` is preserved.
+ *
+ * Returns the template with a `["nonce", n, target]` tag appended and its
+ * `id` set to a hash with at least `targetBits` leading zero bits; the
+ * committed target equals `targetBits`, so `hasValidPow(_, targetBits,`
+ * `{requireCommitment:true})` holds. The id is computed with `getEventHash`,
+ * the same serialisation `finalizeEvent` uses, so a later signature on the
+ * same four fields reproduces it exactly.
+ */
+function mineGiftWrapPow(
+  template: UnsignedEvent,
+  targetBits: number,
+): UnsignedEvent & { id: string } {
+  const nonceTag = powTag(0, Math.max(0, targetBits));
+  const event: UnsignedEvent = {
+    pubkey: template.pubkey,
+    kind: template.kind,
+    content: template.content,
+    created_at: template.created_at,
+    tags: [...template.tags, nonceTag],
+  };
+  let nonce = 0;
+  let id = getEventHash(event);
+  while (countPowBits(id) < targetBits) {
+    nonce += 1;
+    nonceTag[1] = String(nonce);
+    id = getEventHash(event);
+  }
+  return { ...event, id };
+}
+
+/**
+ * Build one PoW-mined kind-1059 gift wrap delivering `rumor` to
+ * `recipientPubkey`.
+ *
+ * The seal (kind 13) is signed by the sender and needs no PoW — it never
+ * touches the relay. Only the outer 1059 is mined, and it is signed by a
+ * one-shot ephemeral key generated here, so the nonce can be ground before
+ * signing. NIP-59 conventions hold: the only plaintext `p` tag names the
+ * recipient, the recipient is hidden inside the ciphertext, and the
+ * `created_at` is randomly backdated.
+ */
+function giftWrapWithPow(
+  rumor: ReturnType<typeof createRumor>,
+  senderSecretKey: Uint8Array,
+  recipientPubkey: string,
+  targetBits: number,
+): SignedEvent {
+  const seal = createSeal(rumor, senderSecretKey, recipientPubkey);
+
+  const ephemeralSecretKey = generateSecretKey();
+  const ephemeralPubkey = getPublicKey(ephemeralSecretKey);
+  const content = nip44Encrypt(
+    JSON.stringify(seal),
+    getConversationKey(ephemeralSecretKey, recipientPubkey),
+  );
+
+  const mined = mineGiftWrapPow(
+    {
+      pubkey: ephemeralPubkey,
+      kind: KINDS.GIFT_WRAP,
+      content,
+      created_at: randomBackdatedCreatedAt(),
+      tags: [['p', recipientPubkey]],
+    },
+    targetBits,
+  );
+
+  return finalizeEvent(
+    { kind: mined.kind, tags: mined.tags, content: mined.content, created_at: mined.created_at },
+    ephemeralSecretKey,
+  );
+}
+
+/**
  * Send `text` privately.
  *
  * Returns the gift wraps to publish, **all of them**:
@@ -66,16 +153,24 @@ function assertPubkey(value: string, what: string): string {
  * Both wraps carry the *same* kind-14 rumor, whose `p` tag names the
  * recipient. (`nip17.wrapManyEvents` rewrites that tag per recipient, so the
  * sender's own copy would say "to: me" and the conversation it belonged to
- * would be unrecoverable. We wrap one shared rumor with `nip59.wrapEvent`
- * instead — same NIP-17 shape on the recipient's side, useful on ours.)
+ * would be unrecoverable. We wrap one shared rumor instead — same NIP-17
+ * shape on the recipient's side, useful on ours.)
  *
  * Each returned wrap has its own freshly generated ephemeral pubkey, so the
  * two are unlinkable to an observer.
+ *
+ * Each outer wrap carries a NIP-13 proof of work mined into it before it is
+ * signed with its ephemeral key: a `["nonce", n, powBits]` tag committed to
+ * `powBits` (default 8, matching the relay's `POW_BITS_REACTION`), and an id
+ * with at least that many leading zero bits. Without it the relay write-policy
+ * rejects kind 1059 and private messages silently fail to send. The seal and
+ * rumor are unchanged — only the outer envelope is mined.
  */
 export function wrapMessage(
   senderSecretKey: Uint8Array,
   recipientPubkey: string,
   text: string,
+  powBits: number = 8,
 ): SignedEvent[] {
   assertPubkey(recipientPubkey, 'wrapMessage(recipientPubkey)');
   if (typeof text !== 'string' || text.length === 0) {
@@ -84,22 +179,28 @@ export function wrapMessage(
   if (text.length > DM_TEXT_MAX) {
     throw new TypeError(`wrapMessage: text must be at most ${DM_TEXT_MAX} characters`);
   }
+  if (!Number.isInteger(powBits) || powBits < 0) {
+    throw new TypeError('wrapMessage: powBits must be a non-negative integer');
+  }
 
   const senderPubkey = getPublicKey(senderSecretKey);
 
   // The NIP-17 rumor. Unsigned by design — an unsigned event cannot be
   // forwarded as proof of who said what. `created_at` is pinned here so both
   // wraps carry a byte-identical rumor (and therefore the same rumor id).
-  const rumor = {
-    kind: KINDS.DM,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [['p', recipientPubkey]],
-    content: text,
-  };
+  const rumor = createRumor(
+    {
+      kind: KINDS.DM,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['p', recipientPubkey]],
+      content: text,
+    },
+    senderSecretKey,
+  );
 
-  const wraps: SignedEvent[] = [nip59WrapEvent(rumor, senderSecretKey, recipientPubkey)];
+  const wraps: SignedEvent[] = [giftWrapWithPow(rumor, senderSecretKey, recipientPubkey, powBits)];
   if (recipientPubkey !== senderPubkey) {
-    wraps.push(nip59WrapEvent(rumor, senderSecretKey, senderPubkey));
+    wraps.push(giftWrapWithPow(rumor, senderSecretKey, senderPubkey, powBits));
   }
   return wraps;
 }

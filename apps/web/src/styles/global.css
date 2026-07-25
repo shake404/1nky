@@ -398,7 +398,7 @@ main {
   bottom: 0;
   z-index: 70;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background: rgba(12, 10, 17, 0.95);
   backdrop-filter: blur(10px);
   border-top: 1px solid var(--line);
@@ -412,7 +412,7 @@ main {
     left: 50%;
     right: auto;
     transform: translateX(-50%);
-    width: 560px;
+    width: 640px;
     border: 1px solid var(--line);
     border-bottom: 0;
     box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.5);
@@ -1053,4 +1053,157 @@ main {
     transform: none;
     box-shadow: var(--drop);
   }
+}
+
+/* --- Bio ------------------------------------------------------------------ */
+.bio {
+  margin-top: 10px;
+  font-size: 0.95rem;
+  color: var(--chalk);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 52ch;
+}
+
+/* --- Messages: inbox ------------------------------------------------------- */
+.dm-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+  transition: border-color 120ms ease;
+}
+
+.dm-row:hover {
+  border-color: var(--line-strong);
+}
+
+.dm-row--unread {
+  border-left: 3px solid var(--ink);
+  padding-left: 10px;
+}
+
+.dm-row__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dm-row__preview {
+  font-size: 0.9rem;
+  color: var(--buff);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A live unread mark — ink, because it is the one thing asking for attention. */
+.dm-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  background: var(--ink);
+  box-shadow: 0 0 8px rgba(255, 61, 138, 0.55);
+}
+
+/* --- Messages: thread ------------------------------------------------------ */
+.dm-thread-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - var(--tap) - 84px);
+}
+
+.dm-head {
+  position: sticky;
+  top: 56px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px var(--gutter);
+  background: rgba(12, 10, 17, 0.9);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+.dm-head .writer {
+  min-width: 0;
+}
+
+.dm-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px var(--gutter) 24px;
+  overflow-y: auto;
+}
+
+/* Bubbles are paint on the wall: hard keyline, hard shadow, no radius. */
+.bubble {
+  max-width: 78%;
+  padding: 10px 13px;
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--drop-sm);
+  word-break: break-word;
+}
+
+.bubble__text {
+  font-size: 0.95rem;
+  white-space: pre-wrap;
+}
+
+.bubble__time {
+  display: block;
+  margin-top: 5px;
+  font-size: 0.62rem;
+}
+
+/* Mine: a chrome throwie, knocked to the right. */
+.bubble--mine {
+  align-self: flex-end;
+  background-color: #dfe4e9;
+  background-image: var(--spray-speck), var(--chrome-face);
+  background-size: 90px 90px, auto;
+  background-blend-mode: overlay, normal;
+  border-color: var(--keyline);
+  color: var(--keyline);
+}
+
+.bubble--mine .bubble__time {
+  color: rgba(12, 10, 17, 0.55);
+}
+
+/* Theirs: the wall itself, knocked to the left. */
+.bubble--theirs {
+  align-self: flex-start;
+  background: var(--soot-2);
+}
+
+.dm-composer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px var(--gutter) calc(20px + env(safe-area-inset-bottom));
+  background: rgba(12, 10, 17, 0.95);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line);
+}
+
+.dm-composer__input {
+  flex: 1;
+  min-height: 52px;
+  max-height: 160px;
+  resize: none;
 }

@@ -37,6 +37,7 @@ export function TopBar(): JSX.Element {
 const TABS = [
   { to: '/', glyph: '▚', label: 'Wall', end: true },
   { to: '/post', glyph: '✚', label: 'Post', end: false },
+  { to: '/messages', glyph: '✉', label: 'Word', end: false },
   { to: '/me', glyph: '◱', label: 'Mine', end: false },
   { to: '/settings', glyph: '⚙', label: 'Setup', end: false },
 ] as const;
