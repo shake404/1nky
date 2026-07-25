@@ -252,15 +252,27 @@ body::after {
 }
 
 /* --- Type ----------------------------------------------------------------- */
+/* Bodega is the PAINT: wordmark, page titles, writer names, the giant tag
+   input. Everything else — buttons, nav, labels, chips — is the WALL and sets
+   in the body sans or the mono stencil voice. A tag lands because the wall
+   around it is mundane; when every control shouts in spray-can caps, nothing
+   reads as a tag at all. */
 .display,
 h1,
-h2,
-h3 {
+h2 {
   font-family: var(--display);
   font-weight: 700;
   text-transform: uppercase;
   line-height: 0.9;
   font-stretch: condensed;
+}
+
+/* Section headers inside a page are structure, not pieces. */
+h3 {
+  font-family: var(--body);
+  font-weight: 700;
+  text-transform: uppercase;
+  line-height: 1.1;
 }
 
 /* Headings are painted, so they carry the drop. */
@@ -282,8 +294,8 @@ h2 {
 }
 
 h3 {
-  font-size: 1.15rem;
-  letter-spacing: 0.05em;
+  font-size: 0.95rem;
+  letter-spacing: 0.09em;
 }
 
 .chrome {
@@ -311,11 +323,12 @@ h3 {
   letter-spacing: 0.14em;
 }
 
+/* Kickers are annotations scrawled next to the piece — stencil, not paint. */
 .kicker {
-  font-family: var(--display);
+  font-family: var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.28em;
-  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  font-size: 0.68rem;
   color: var(--buff-deep);
 }
 
@@ -428,9 +441,10 @@ main {
 }
 
 .topnav a {
-  font-family: var(--display);
+  font-family: var(--body);
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   font-size: 0.72rem;
   color: var(--buff-deep);
   padding: 8px 10px;
@@ -455,7 +469,7 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--display);
+  font-family: var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.7rem;
@@ -522,10 +536,11 @@ main {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  font-family: var(--display);
+  font-family: var(--body);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  font-size: 0.66rem;
   color: var(--buff-deep);
   border-top: 3px solid transparent;
 }
@@ -561,11 +576,11 @@ main {
   gap: 8px;
   min-height: var(--tap);
   padding: 0 22px;
-  font-family: var(--display);
+  font-family: var(--body);
   font-weight: 700;
-  font-size: 1.05rem;
+  font-size: 0.92rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
   border: 2px solid var(--chalk);
   background: transparent;
   color: var(--chalk);
@@ -660,11 +675,12 @@ main {
   gap: 8px;
 }
 
+/* Stencilled like the spec markings on a can. */
 .field > label {
-  font-family: var(--display);
+  font-family: var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.2em;
-  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  font-size: 0.7rem;
   color: var(--buff);
 }
 
@@ -1079,15 +1095,16 @@ main {
   transform-origin: left bottom;
 }
 
-/* A strip of tape, torn off and stuck down crooked. */
+/* A strip of tape, torn off and stuck down crooked. Marker-on-tape is utility
+   writing, not paint — it sets in the stencil voice. */
 .tape {
   display: inline-block;
   background: #e6dfcd;
   color: var(--soot);
-  font-family: var(--display);
+  font-family: var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  font-size: 0.7rem;
   padding: 4px 10px;
   transform: rotate(-0.4deg);
   box-shadow: var(--drop-sm);
@@ -1347,10 +1364,10 @@ main {
 }
 
 .facet-group__label {
-  font-family: var(--display);
+  font-family: var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.22em;
-  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  font-size: 0.68rem;
   color: var(--buff);
 }
 
@@ -1366,10 +1383,11 @@ main {
   gap: 6px;
   min-height: 38px;
   padding: 0 14px;
-  font-family: var(--display);
+  font-family: var(--body);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  font-size: 0.78rem;
   color: var(--buff);
   border: 1px solid var(--line-strong);
   background: var(--soot-2);
@@ -1404,10 +1422,10 @@ main {
   align-items: center;
   gap: 8px;
   padding: 4px 10px;
-  font-family: var(--display);
+  font-family: var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   background: #e6dfcd;
   color: var(--soot);
   box-shadow: var(--drop-sm);
@@ -1427,10 +1445,11 @@ main {
   align-items: center;
   gap: 10px;
   cursor: pointer;
-  font-family: var(--display);
+  font-family: var(--body);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
   color: var(--buff);
 }
 
