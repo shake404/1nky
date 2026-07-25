@@ -7,6 +7,7 @@ import {
   buildModBan,
   buildProfile,
   buildReport,
+  buildThreadOp,
   buildVideo,
   CREW_BADGES_DTAG,
   CREW_DEFINITION_DTAG,
@@ -34,6 +35,7 @@ import {
   toFlickRow,
   toProfileRow,
   toReportRow,
+  toThreadRow,
   toVideoRow,
 } from './mappers.js';
 import { hex, makeEvent } from './testing/fixtures.js';
@@ -301,6 +303,72 @@ describe('toVideoRow (kind 22)', () => {
 
   it('rejects a video with no url or blob hash', () => {
     expect(toVideoRow(makeEvent({ kind: 22, tags: [['t', 'sf']] }))).toBeNull();
+  });
+});
+
+describe('toThreadRow (kind 1)', () => {
+  it('maps the subject and the boards of a thread OP', () => {
+    const template = buildThreadOp({
+      subject: 'Who buffed the Alameda wall?',
+      boards: ['SF Bay', 'oakland'],
+      content: 'gone as of this morning',
+      createdAt: 1_700_000_000,
+    });
+    const row = toThreadRow(makeEvent({ ...template, id: hex('55'), pubkey: AUTHOR }));
+
+    expect(row).toEqual({
+      event_id: hex('55'),
+      pubkey: AUTHOR,
+      subject: 'Who buffed the Alameda wall?',
+      boards: ['sf-bay', 'oakland'],
+      created_at: 1_700_000_000,
+    });
+  });
+
+  it('leaves the subject null when the OP has no subject tag', () => {
+    const template = buildThreadOp({ boards: ['sf'], content: 'no title, still a thread' });
+    const row = toThreadRow(makeEvent({ ...template, id: hex('56') }));
+
+    expect(row.subject).toBeNull();
+    expect(row.boards).toEqual(['sf']);
+  });
+
+  it('indexes a bare kind 1 with neither a subject nor a board', () => {
+    // A thread with nothing on it is still a thread here — reachable by id and
+    // by search — so it is indexed rather than dropped.
+    const row = toThreadRow(makeEvent({ kind: KINDS.NOTE, id: hex('57'), content: 'oi' }));
+
+    expect(row.subject).toBeNull();
+    expect(row.boards).toEqual([]);
+    expect(row.event_id).toBe(hex('57'));
+  });
+
+  it('does not copy the content or the expiry — those stay in events', () => {
+    const template = buildThreadOp({
+      subject: 'beef',
+      content: 'secret sauce',
+      expiration: 1_700_086_400,
+    });
+    const row = toThreadRow(makeEvent({ ...template }));
+
+    expect(Object.keys(row).sort()).toEqual(['boards', 'created_at', 'event_id', 'pubkey', 'subject']);
+    expect(JSON.stringify(row)).not.toContain('secret sauce');
+  });
+
+  it('dedupes and normalises repeated board tags', () => {
+    const row = toThreadRow(
+      makeEvent({
+        kind: KINDS.NOTE,
+        tags: [
+          ['subject', 'x'],
+          ['t', 'SF'],
+          ['t', 'sf'],
+          ['t', ''],
+          ['t', 'Oakland'],
+        ],
+      }),
+    );
+    expect(row.boards).toEqual(['sf', 'oakland']);
   });
 });
 
@@ -627,7 +695,7 @@ describe('routeOf', () => {
     expect(routeOf(KINDS.REPORT)).toBe('report');
     expect(routeOf(KINDS.DELETE)).toBe('deletion');
     expect(routeOf(KINDS.APP_DATA)).toBe('registry');
-    expect(routeOf(KINDS.NOTE)).toBe('event');
+    expect(routeOf(KINDS.NOTE)).toBe('thread');
     expect(routeOf(KINDS.MUTE_LIST)).toBe('event');
   });
 });

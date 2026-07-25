@@ -161,6 +161,85 @@ export function shapeFeedItem(row: FeedItemSource): FeedItemJson {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Threads — a kind-1 OP on a city board, "beef" when it carries an expiry
+// ---------------------------------------------------------------------------
+
+export interface ThreadSummarySource extends WriterSource {
+  event_id: string;
+  subject: string | null;
+  excerpt: string | null;
+  created_at: number | string;
+  expires_at: number | string | null;
+  reply_count?: number | string;
+  last_reply_at?: number | string | null;
+}
+
+export interface ThreadSummaryJson {
+  id: string;
+  subject: string | null;
+  /** The first ~160 characters of the OP, cut in Postgres. */
+  excerpt: string;
+  writer: WriterJson;
+  createdAt: number;
+  /**
+   * When this thread disappears (unix seconds), or null when it is permanent.
+   * The copy deck calls a thread with one a **beef**; the field name is the
+   * mechanism, the UI supplies the word.
+   */
+  expiresAt: number | null;
+  replyCount: number;
+  /** When the newest reply landed, or null when nobody has replied. */
+  lastReplyAt: number | null;
+}
+
+export function shapeThreadSummary(row: ThreadSummarySource): ThreadSummaryJson {
+  return {
+    id: row.event_id,
+    subject: row.subject ?? null,
+    excerpt: row.excerpt ?? '',
+    writer: shapeWriter(row),
+    createdAt: num(row.created_at),
+    expiresAt: nullableNum(row.expires_at),
+    replyCount: num(row.reply_count),
+    lastReplyAt: nullableNum(row.last_reply_at),
+  };
+}
+
+export interface ThreadSource extends WriterSource {
+  event_id: string;
+  subject: string | null;
+  content: string | null;
+  boards: string[] | null;
+  created_at: number | string;
+  expires_at: number | string | null;
+  reply_count?: number | string;
+}
+
+export interface ThreadJson {
+  id: string;
+  subject: string | null;
+  content: string;
+  boards: string[];
+  writer: WriterJson;
+  createdAt: number;
+  expiresAt: number | null;
+  replyCount: number;
+}
+
+export function shapeThread(row: ThreadSource): ThreadJson {
+  return {
+    id: row.event_id,
+    subject: row.subject ?? null,
+    content: row.content ?? '',
+    boards: row.boards ?? [],
+    writer: shapeWriter(row),
+    createdAt: num(row.created_at),
+    expiresAt: nullableNum(row.expires_at),
+    replyCount: num(row.reply_count),
+  };
+}
+
 export interface ProfileSource extends WriterSource {
   first_seen?: number | string;
   updated_at?: number | string;

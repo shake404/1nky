@@ -8,10 +8,19 @@ import {
   shapeFeedItem,
   shapeFlick,
   shapeProfile,
+  shapeThread,
+  shapeThreadSummary,
   shapeWriter,
   threadComments,
 } from './shape.js';
-import { commentRow, flickRow, hex, videoRow } from './testing/fixtures.js';
+import {
+  commentRow,
+  flickRow,
+  hex,
+  threadRow,
+  threadSummaryRow,
+  videoRow,
+} from './testing/fixtures.js';
 
 const AUTHOR = hex('ab');
 
@@ -100,6 +109,76 @@ describe('shapeProfile', () => {
     expect(profile.updatedAt).toBe(1_700_000_900);
     expect(profile.eventCount).toBe(12);
     expect(profile.banned).toBe(false);
+  });
+});
+
+describe('shapeThreadSummary', () => {
+  it('maps a board row into the product vocabulary', () => {
+    const thread = shapeThreadSummary(threadSummaryRow() as never);
+    expect(thread).toMatchObject({
+      id: hex('55'),
+      subject: 'Who buffed the Alameda wall?',
+      excerpt: 'gone as of this morning',
+      createdAt: 1_700_000_000,
+      expiresAt: null,
+      replyCount: 3,
+      lastReplyAt: 1_700_000_900,
+    });
+    expect(thread.writer.tag).toBe('SMOG');
+    expect(thread.writer.mark).toHaveLength(6);
+  });
+
+  it('reports a beef expiry as a number the client can count down from', () => {
+    const thread = shapeThreadSummary(threadSummaryRow({ expires_at: '1700086400' }) as never);
+    expect(thread.expiresAt).toBe(1_700_086_400);
+  });
+
+  it('defaults a subject-less, reply-less thread rather than emitting nulls', () => {
+    const thread = shapeThreadSummary(
+      threadSummaryRow({
+        subject: null,
+        excerpt: null,
+        reply_count: undefined,
+        last_reply_at: null,
+      }) as never,
+    );
+    expect(thread.subject).toBeNull();
+    expect(thread.excerpt).toBe('');
+    expect(thread.replyCount).toBe(0);
+    expect(thread.lastReplyAt).toBeNull();
+  });
+
+  it('says nothing about the protocol', () => {
+    const json = JSON.stringify(shapeThreadSummary(threadSummaryRow() as never));
+    for (const word of ['nsec', 'npub', 'relay', 'kind', 'event_id', 'nostr']) {
+      expect(json.toLowerCase()).not.toContain(word);
+    }
+  });
+});
+
+describe('shapeThread', () => {
+  it('carries the whole OP, its boards and its expiry', () => {
+    const thread = shapeThread(threadRow() as never);
+    expect(thread).toMatchObject({
+      id: hex('55'),
+      subject: 'Who buffed the Alameda wall?',
+      content: 'gone as of this morning, whole panel',
+      boards: ['sf', 'oakland'],
+      createdAt: 1_700_000_000,
+      expiresAt: null,
+      replyCount: 3,
+    });
+    expect(thread.writer.tag).toBe('SMOG');
+  });
+
+  it('defaults missing optional columns', () => {
+    const thread = shapeThread(
+      threadRow({ subject: null, content: null, boards: null, reply_count: undefined }) as never,
+    );
+    expect(thread.subject).toBeNull();
+    expect(thread.content).toBe('');
+    expect(thread.boards).toEqual([]);
+    expect(thread.replyCount).toBe(0);
   });
 });
 

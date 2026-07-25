@@ -58,6 +58,7 @@ pnpm --filter @1nky/indexer reindex    # throw the cache away and replay
 |---|---|---|
 | `events` | `id` | Every accepted event, verbatim, plus a generated `content_tsv` for search. |
 | `flicks` | `event_id` | Kind 20, denormalised for the feed (url, sha256, dims, blurhash, caption, boards). |
+| `threads` | `event_id` | Kind 1 thread OPs — subject and boards. Content and the NIP-40 expiry stay in `events`, which every thread read joins anyway. |
 | `profiles` | `pubkey` | Kind 0 — tag name, city, avatar hash. |
 | `comments` | `event_id` | Kind 1111, with `root_id` / `parent_id`. |
 | `reports` | `event_id` | Kind 1984 — reporter, target, reason, note. |
@@ -80,6 +81,7 @@ makes a buff a single statement.
 | Kind | Routed to |
 |---|---|
 | 0 | `profiles` + `events` |
+| 1 | `threads` + `events` (+ auto-registers the boards it names). A bare kind 1 with no subject and no board tag is still a thread OP and is still indexed. |
 | 20 | `flicks` + `events` (+ auto-registers the boards it names) |
 | 1111 | `comments` + `events` |
 | 1984 | `reports` + `events`, and increments the **reported** writer's `report_count` |

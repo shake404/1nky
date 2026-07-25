@@ -1,4 +1,15 @@
-import { buildBuff, buildFlick, buildModBan, buildProfile, finalizeEvent, generateSecretKey, getPublicKey } from '@1nky/protocol';
+import {
+  buildBuff,
+  buildComment,
+  buildFlick,
+  buildModBan,
+  buildProfile,
+  buildThreadOp,
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  KINDS,
+} from '@1nky/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { connect, type Database } from './db.js';
@@ -116,6 +127,92 @@ describe.skipIf(!enabled)('schema against a live Postgres', () => {
       ['rooftop'],
     );
     expect(found.rows.map((r) => r.event_id)).toContain(flick.id);
+  });
+
+  it('stores a thread OP, its board and its replies', async () => {
+    const counters = newCounters();
+    const op = finalizeEvent(
+      buildThreadOp({
+        subject: 'Who buffed the Alameda wall?',
+        boards: ['sf', 'oakland'],
+        content: 'gone as of this morning',
+        createdAt: now - 300,
+      }),
+      sk,
+    );
+    await indexEvent(db, op, counters, { now });
+
+    const reply = finalizeEvent(
+      buildComment(
+        { id: op.id, pubkey: op.pubkey, kind: KINDS.NOTE },
+        { content: 'saw the truck', createdAt: now - 100 },
+      ),
+      sk,
+    );
+    await indexEvent(db, reply, counters, { now });
+
+    const { rows } = await db.query<{ subject: string | null; boards: string[]; replies: string }>(
+      `select t.subject, t.boards,
+              (select count(*)::text from comments c where c.root_id = t.event_id) as replies
+         from threads t where t.event_id = $1`,
+      [op.id],
+    );
+    expect(rows[0]?.subject).toBe('Who buffed the Alameda wall?');
+    expect(rows[0]?.boards).toEqual(['sf', 'oakland']);
+    expect(rows[0]?.replies).toBe('1');
+
+    // The board was auto-discovered from the thread's `t` tags.
+    const boards = await db.query('select 1 from boards where slug = $1', ['oakland']);
+    expect(boards.rows).toHaveLength(1);
+  });
+
+  it('buffs a thread OP and cascades the row out of threads', async () => {
+    const counters = newCounters();
+    const op = finalizeEvent(
+      buildThreadOp({ subject: 'buff me', boards: ['sf'], content: 'temporary' }),
+      sk,
+    );
+    await indexEvent(db, op, counters, { now });
+    await indexEvent(db, finalizeEvent(buildBuff([op.id], { kinds: [1] }), sk), counters, { now });
+
+    expect((await db.query('select 1 from threads where event_id = $1', [op.id])).rows).toEqual([]);
+    expect((await db.query('select 1 from events where id = $1', [op.id])).rows).toEqual([]);
+  });
+
+  it('repopulates threads after a rebuild truncates them', async () => {
+    const counters = newCounters();
+    const op = finalizeEvent(
+      buildThreadOp({ subject: 'rebuild me', boards: ['sf'], content: 'replayed' }),
+      sk,
+    );
+    await indexEvent(db, op, counters, { now });
+    expect((await db.query('select 1 from threads where event_id = $1', [op.id])).rows).toHaveLength(1);
+
+    // `threads` is DERIVED: a rebuild throws it away...
+    await truncateDerived(db);
+    expect((await db.query('select 1 from threads where event_id = $1', [op.id])).rows).toEqual([]);
+
+    // ...and replaying the same event from the relay puts it back.
+    await indexEvent(db, op, newCounters(), { now });
+    expect((await db.query('select 1 from threads where event_id = $1', [op.id])).rows).toHaveLength(1);
+  });
+
+  it('sweeps an expired beef out of threads too', async () => {
+    const counters = newCounters();
+    const beef = finalizeEvent(
+      buildThreadOp({
+        subject: 'beef',
+        boards: ['sf'],
+        content: '24h only',
+        expiration: now + 60,
+      }),
+      sk,
+    );
+    await indexEvent(db, beef, counters, { now });
+    expect((await db.query('select 1 from threads where event_id = $1', [beef.id])).rows).toHaveLength(1);
+
+    expect(await sweepExpired(db, now + 61)).toBeGreaterThanOrEqual(1);
+    expect((await db.query('select 1 from threads where event_id = $1', [beef.id])).rows).toEqual([]);
   });
 
   it('buffs a flick and cascades it out of every derived table', async () => {

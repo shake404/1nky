@@ -16,6 +16,7 @@ import {
   toFlickRow,
   toProfileRow,
   toReportRow,
+  toThreadRow,
   toVideoRow,
 } from './mappers.js';
 import * as q from './queries.js';
@@ -26,6 +27,8 @@ export interface Counters {
   profiles: number;
   flicks: number;
   videos: number;
+  /** Kind-1 thread OPs on city boards. */
+  threads: number;
   comments: number;
   reports: number;
   deletions: number;
@@ -53,6 +56,7 @@ export function newCounters(): Counters {
     profiles: 0,
     flicks: 0,
     videos: 0,
+    threads: 0,
     comments: 0,
     reports: 0,
     deletions: 0,
@@ -146,6 +150,19 @@ export async function indexEvent(
     case 'profile': {
       await run(db, q.upsertProfile(toProfileRow(event)));
       counters.profiles += 1;
+      return;
+    }
+
+    case 'thread': {
+      // A thread OP always maps — a bare kind 1 with no subject and no board
+      // tag is still a thread on this platform, so there is no `invalid` path
+      // here. Boards are auto-registered exactly as a flick's are, so a board
+      // that only has threads still shows up in GET /boards.
+      await run(db, q.upsertThread(toThreadRow(event)));
+      counters.threads += 1;
+      for (const board of boardRowsFromFlick(event)) {
+        await run(db, q.upsertBoard(board, 'discovered'));
+      }
       return;
     }
 
@@ -284,7 +301,7 @@ export async function indexEvent(
     }
 
     default:
-      // Stored in `events` only (kind 1 thread OPs, kind 10000 mute lists).
+      // Stored in `events` only (kind 10000 mute lists).
       return;
   }
 }

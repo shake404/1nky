@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
-import { encodeCursor } from './cursor.js';
+import { decodeCursor, encodeCursor } from './cursor.js';
 import {
   brokenDb,
   commentRow,
@@ -12,6 +12,8 @@ import {
   request,
   type Responder,
   TEST_CONFIG,
+  threadRow,
+  threadSummaryRow,
   videoRow,
 } from './testing/fixtures.js';
 
@@ -31,7 +33,16 @@ const responder: Responder = (text) => {
   if (text.includes('from boards b')) {
     return {
       rows: [
-        { slug: 'sf', title: 'San Francisco', kind: 'city', created_at: '1', flick_count: 3, latest_at: '5' },
+        {
+          slug: 'sf',
+          title: 'San Francisco',
+          kind: 'city',
+          region_slug: 'region-bay-area',
+          created_at: '1',
+          flick_count: 3,
+          thread_count: 7,
+          latest_at: '5',
+        },
       ],
     };
   }
@@ -69,7 +80,10 @@ const responder: Responder = (text) => {
       ],
     };
   }
+  // `from flicks f` first: the unified feed/explore queries name both tables.
   if (text.includes('from flicks f')) return { rows: [flickRow()] };
+  if (text.includes('from videos v')) return { rows: [videoRow()] };
+  if (text.includes('from threads t')) return { rows: [threadSummaryRow()] };
   if (text.includes('from comments c')) return { rows: [commentRow()] };
   if (text.includes('from profiles p')) {
     return {
@@ -200,9 +214,254 @@ describe('GET /boards', () => {
     const res = await request(app(responder), '/boards');
     expect(res.body).toEqual({
       boards: [
-        { slug: 'sf', title: 'San Francisco', kind: 'city', createdAt: 1, flickCount: 3, latestAt: 5 },
+        {
+          slug: 'sf',
+          title: 'San Francisco',
+          kind: 'city',
+          regionSlug: 'region-bay-area',
+          createdAt: 1,
+          flickCount: 3,
+          threadCount: 7,
+          latestAt: 5,
+        },
       ],
     });
+  });
+
+  it('passes ?kind= through to the query', async () => {
+    const db = fakeDb(responder);
+    await request(createApp(db, TEST_CONFIG), '/boards?kind=type');
+    expect(db.matching('from boards b')[0]?.params).toEqual(['type']);
+  });
+
+  it('rejects a kind that is not a facet', async () => {
+    const res = await request(app(responder), '/boards?kind=nonsense');
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: { code: 'bad_request' } });
+  });
+
+  it('reports zero rather than null for a board nobody has posted to', async () => {
+    const db = fakeDb((text) =>
+      text.includes('from boards b')
+        ? {
+            rows: [
+              {
+                slug: 'fresno',
+                title: 'fresno',
+                kind: 'city',
+                region_slug: null,
+                created_at: '1',
+                flick_count: 0,
+                thread_count: 0,
+                latest_at: null,
+              },
+            ],
+          }
+        : undefined,
+    );
+    const res = await request(createApp(db, TEST_CONFIG), '/boards');
+    expect((res.body as { boards: Record<string, unknown>[] }).boards[0]).toMatchObject({
+      flickCount: 0,
+      threadCount: 0,
+      latestAt: null,
+      regionSlug: null,
+    });
+  });
+});
+
+describe('GET /board/:slug', () => {
+  const boardDb = (threads: unknown[] = [threadSummaryRow()], header?: Record<string, unknown>) =>
+    fakeDb((text) => {
+      if (text.includes('from (select $1::text as slug) x')) {
+        return {
+          rows: [
+            {
+              slug: 'sf',
+              title: 'San Francisco',
+              kind: 'city',
+              region_slug: 'region-bay-area',
+              has_media: true,
+              ...header,
+            },
+          ],
+        };
+      }
+      if (text.includes('from threads t')) return { rows: threads };
+      return undefined;
+    });
+
+  it('returns the board and its threads', async () => {
+    const res = await request(createApp(boardDb(), TEST_CONFIG), '/board/sf');
+    expect(res.status).toBe(200);
+    const body = res.body as {
+      board: { slug: string; title: string; kind: string; regionSlug: string | null };
+      threads: {
+        id: string;
+        subject: string;
+        excerpt: string;
+        createdAt: number;
+        expiresAt: number | null;
+        replyCount: number;
+        lastReplyAt: number | null;
+        writer: { tag: string; mark: string };
+      }[];
+      nextCursor: string | null;
+    };
+    expect(body.board).toEqual({
+      slug: 'sf',
+      title: 'San Francisco',
+      kind: 'city',
+      regionSlug: 'region-bay-area',
+    });
+    expect(body.threads).toHaveLength(1);
+    expect(body.threads[0]).toMatchObject({
+      id: hex('55'),
+      subject: 'Who buffed the Alameda wall?',
+      excerpt: 'gone as of this morning',
+      createdAt: 1_700_000_000,
+      expiresAt: null,
+      replyCount: 3,
+      lastReplyAt: 1_700_000_900,
+    });
+    expect(body.threads[0]?.writer.tag).toBe('SMOG');
+    expect(body.threads[0]?.writer.mark).toHaveLength(6);
+    expect(body.nextCursor).toBeNull();
+  });
+
+  it('normalises the slug before querying', async () => {
+    const db = boardDb();
+    await request(createApp(db, TEST_CONFIG), '/board/SF%20Bay');
+    expect(db.matching('from threads t')[0]?.params[0]).toBe('sf-bay');
+  });
+
+  it('paginates on the activity sort key, not the OP timestamp', async () => {
+    const rows = Array.from({ length: 2 }, (_, i) =>
+      threadSummaryRow({ event_id: hex(String(i + 1).repeat(2)), sort_at: '1700009999' }),
+    );
+    const res = await request(createApp(boardDb(rows), TEST_CONFIG), '/board/sf?limit=2');
+    const cursor = (res.body as { nextCursor: string | null }).nextCursor;
+    expect(cursor).toBeTypeOf('string');
+    expect(decodeCursor(cursor as string)?.createdAt).toBe(1_700_009_999);
+  });
+
+  it('passes a cursor through as the keyset bound', async () => {
+    const db = boardDb();
+    const cursor = encodeCursor({ createdAt: 1_700_000_900, eventId: hex('55') });
+    await request(createApp(db, TEST_CONFIG), `/board/sf?cursor=${cursor}`);
+    const params = db.matching('from threads t')[0]?.params;
+    expect(params?.[1]).toBe(1_700_000_900);
+    expect(params?.[2]).toBe(hex('55'));
+  });
+
+  it('surfaces a beef expiry so the client can count down', async () => {
+    const res = await request(
+      createApp(boardDb([threadSummaryRow({ expires_at: '1700086400' })]), TEST_CONFIG),
+      '/board/sf',
+    );
+    expect((res.body as { threads: { expiresAt: number }[] }).threads[0]?.expiresAt).toBe(1_700_086_400);
+  });
+
+  it('200s for a board nobody registered but writers have been tagging', async () => {
+    const res = await request(
+      createApp(boardDb([threadSummaryRow()], { title: null, kind: null, has_media: false }), TEST_CONFIG),
+      '/board/sf',
+    );
+    expect(res.status).toBe(200);
+    // With no registry row the slug is its own title.
+    expect((res.body as { board: { title: string; kind: string } }).board).toMatchObject({
+      title: 'sf',
+      kind: 'city',
+    });
+  });
+
+  it('404s for a slug with no board, no threads and no media', async () => {
+    const res = await request(
+      createApp(boardDb([], { title: null, kind: null, has_media: false }), TEST_CONFIG),
+      '/board/nowhere',
+    );
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ error: { code: 'not_found' } });
+  });
+
+  it('400s for a slug that normalises to nothing', async () => {
+    expect((await request(app(responder), '/board/%23%23%23')).status).toBe(400);
+  });
+});
+
+describe('GET /thread/:id', () => {
+  const threadDb = (overrides: Record<string, unknown> = {}) =>
+    fakeDb((text) => {
+      if (text.includes('from threads t')) return { rows: [threadRow(overrides)] };
+      if (text.includes('from comments c')) {
+        return {
+          rows: [
+            commentRow({ event_id: hex('66'), parent_id: hex('55'), root_id: hex('55') }),
+            commentRow({ event_id: hex('77'), parent_id: hex('66'), root_id: hex('55') }),
+          ],
+        };
+      }
+      return undefined;
+    });
+
+  it('returns the OP with its nested replies', async () => {
+    const res = await request(createApp(threadDb(), TEST_CONFIG), `/thread/${hex('55')}`);
+    expect(res.status).toBe(200);
+    const body = res.body as {
+      thread: {
+        id: string;
+        subject: string;
+        content: string;
+        boards: string[];
+        createdAt: number;
+        expiresAt: number | null;
+        replyCount: number;
+        writer: { tag: string; mark: string };
+      };
+      comments: { id: string; replies: { id: string }[] }[];
+    };
+    expect(body.thread).toMatchObject({
+      id: hex('55'),
+      subject: 'Who buffed the Alameda wall?',
+      content: 'gone as of this morning, whole panel',
+      boards: ['sf', 'oakland'],
+      createdAt: 1_700_000_000,
+      expiresAt: null,
+    });
+    expect(body.thread.writer.tag).toBe('SMOG');
+    // Nested, not flat: the second reply hangs off the first.
+    expect(body.comments).toHaveLength(1);
+    expect(body.comments[0]?.id).toBe(hex('66'));
+    expect(body.comments[0]?.replies[0]?.id).toBe(hex('77'));
+    // And the count is of the tree actually returned, at any depth.
+    expect(body.thread.replyCount).toBe(2);
+  });
+
+  it('shows a thread with no subject — a bare OP is still a thread', async () => {
+    const res = await request(createApp(threadDb({ subject: null }), TEST_CONFIG), `/thread/${hex('55')}`);
+    expect(res.status).toBe(200);
+    expect((res.body as { thread: { subject: null } }).thread.subject).toBeNull();
+  });
+
+  it('carries the beef expiry', async () => {
+    const res = await request(
+      createApp(threadDb({ expires_at: '1700086400' }), TEST_CONFIG),
+      `/thread/${hex('55')}`,
+    );
+    expect((res.body as { thread: { expiresAt: number } }).thread.expiresAt).toBe(1_700_086_400);
+  });
+
+  it('404s for an unknown thread', async () => {
+    const res = await request(app(), `/thread/${hex('55')}`);
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ error: { code: 'not_found' } });
+  });
+
+  it('400s for an id that is not an event id', async () => {
+    expect((await request(app(responder), '/thread/nope')).status).toBe(400);
+  });
+
+  it('refuses writes (read-only)', async () => {
+    expect((await request(app(), `/thread/${hex('55')}`, { method: 'POST' })).status).toBe(405);
   });
 });
 
@@ -448,6 +707,31 @@ describe('GET /search', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ q: 'oakland', boards: ['oakland'] });
     expect((res.body as { flicks: unknown[] }).flicks).toHaveLength(1);
+  });
+
+  it('also returns videos and threads, without disturbing flicks', async () => {
+    const res = await request(app(responder), '/search?q=oakland');
+    const body = res.body as {
+      flicks: { id: string }[];
+      videos: { id: string; mediaType: string; duration: number | null }[];
+      threads: { id: string; subject: string; excerpt: string; replyCount: number }[];
+    };
+    // `flicks` is exactly the field it always was — an older client is fine.
+    expect(body.flicks[0]?.id).toBe(FLICK_ID);
+    expect(body.videos).toHaveLength(1);
+    expect(body.videos[0]).toMatchObject({ mediaType: 'video', duration: 12 });
+    expect(body.threads).toHaveLength(1);
+    expect(body.threads[0]).toMatchObject({
+      id: hex('55'),
+      subject: 'Who buffed the Alameda wall?',
+      replyCount: 3,
+    });
+  });
+
+  it('answers with empty lists rather than 404 when nothing matches', async () => {
+    const res = await request(app(), '/search?q=nothingatall');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ flicks: [], videos: [], threads: [] });
   });
 
   it('rejects an absurdly long query', async () => {

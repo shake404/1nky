@@ -1,10 +1,11 @@
 import type { Express } from 'express';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from './app.js';
 import { type ApiConfig, loadConfig } from './config.js';
 import { connect, type Database } from './db.js';
-import { request } from './testing/fixtures.js';
+import { hex, request } from './testing/fixtures.js';
 
 /**
  * Integration tests against a real Postgres. Skipped unless `PGTEST=1`,
@@ -48,9 +49,16 @@ describe.skipIf(!enabled)('endpoints against a live Postgres', () => {
     ['/feed'],
     ['/feed?board=sf&limit=5'],
     ['/boards'],
+    ['/boards?kind=city'],
+    ['/board/sf'],
+    ['/board/sf?limit=5'],
+    ['/explore'],
+    ['/explore/facets'],
     ['/search?q=rooftop'],
     [`/writer/${'a'.repeat(64)}`],
     [`/flick/${'a'.repeat(64)}`],
+    [`/thread/${'a'.repeat(64)}`],
+    [`/crew/${'a'.repeat(64)}`],
   ])('runs the SQL behind %s', async (path) => {
     const res = await request(app, path);
     // 404 is a valid answer for an id that is not there; 500 is not.
@@ -67,5 +75,124 @@ describe.skipIf(!enabled)('endpoints against a live Postgres', () => {
   it('refuses to write even if asked nicely', async () => {
     const res = await request(app, '/feed', { method: 'POST' });
     expect(res.status).toBe(405);
+  });
+});
+
+/**
+ * NIP-40 at read time, end to end.
+ *
+ * The unit tests prove the predicate is in the SQL; only this proves it does
+ * what it is for. Two thread OPs are seeded directly — one permanent, one whose
+ * expiry passed an hour ago and which NO sweep has run on — and the endpoints
+ * are asked through real HTTP whether they can still see the expired one. They
+ * must not: a beef that says it lasts 24h has to be gone at 24h, not at 24h
+ * plus however long until the next sweep.
+ *
+ * The app's own pool is read-only by design, so seeding uses a separate pool.
+ */
+describe.skipIf(!enabled)('expired rows are hidden before the sweep reaches them', () => {
+  let config: ApiConfig;
+  let db: Database;
+  let app: Express;
+  let seed: pg.Pool;
+
+  const WRITER = hex('a1');
+  const LIVE = hex('b1');
+  const DOOMED = hex('b2');
+  const REPLY = hex('b3');
+  const BOARD = 'pgtest-expiry';
+  const now = Math.floor(Date.now() / 1000);
+
+  const insertEvent = async (id: string, kind: number, content: string, expiresAt: number | null) => {
+    await seed.query(
+      `insert into events (id, pubkey, kind, created_at, content, tags, raw, expires_at)
+       values ($1, $2, $3, $4, $5, '[]'::jsonb, '{}'::jsonb, $6)
+       on conflict (id) do nothing`,
+      [id, WRITER, kind, now - 600, content, expiresAt],
+    );
+  };
+
+  beforeAll(async () => {
+    config = loadConfig({
+      ...process.env,
+      MOD_API_KEY: process.env['MOD_API_KEY'] ?? 'pgtest-mod-key',
+    });
+    db = connect(config.databaseUrl);
+    app = createApp(db, config);
+    seed = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
+
+    for (const id of [LIVE, DOOMED, REPLY]) {
+      await seed.query('delete from events where id = $1', [id]);
+    }
+
+    // Permanent thread, and a beef whose 24h ran out an hour ago.
+    await insertEvent(LIVE, 1, 'still standing', null);
+    await insertEvent(DOOMED, 1, 'gone by now', now - 3600);
+    // A reply on the live thread that has itself expired.
+    await insertEvent(REPLY, 1111, 'stale reply', now - 3600);
+
+    for (const [id, board] of [
+      [LIVE, BOARD],
+      [DOOMED, BOARD],
+    ] as const) {
+      await seed.query(
+        `insert into threads (event_id, pubkey, subject, boards, created_at)
+         values ($1, $2, $3, array[$4]::text[], $5)
+         on conflict (event_id) do nothing`,
+        [id, WRITER, id === LIVE ? 'live thread' : 'expired beef', board, now - 600],
+      );
+    }
+    await seed.query(
+      `insert into comments (event_id, parent_id, root_id, pubkey, created_at, content)
+       values ($1, $2, $2, $3, $4, 'stale reply') on conflict (event_id) do nothing`,
+      [REPLY, LIVE, WRITER, now - 300],
+    );
+  });
+
+  afterAll(async () => {
+    if (seed) {
+      for (const id of [LIVE, DOOMED, REPLY]) {
+        await seed.query('delete from events where id = $1', [id]);
+      }
+      await seed.end();
+    }
+    if (db) await db.end();
+  });
+
+  it('lists the live thread on the board and not the expired one', async () => {
+    const res = await request(app, `/board/${BOARD}`);
+    expect(res.status).toBe(200);
+    const body = res.body as { threads: { id: string; subject: string }[] };
+    const ids = body.threads.map((t) => t.id);
+    expect(ids).toContain(LIVE);
+    expect(ids).not.toContain(DOOMED);
+  });
+
+  it('serves the live thread and 404s the expired one', async () => {
+    expect((await request(app, `/thread/${LIVE}`)).status).toBe(200);
+    expect((await request(app, `/thread/${DOOMED}`)).status).toBe(404);
+  });
+
+  it('leaves an expired reply out of the thread and out of its reply count', async () => {
+    const res = await request(app, `/thread/${LIVE}`);
+    const body = res.body as { thread: { replyCount: number }; comments: unknown[] };
+    expect(body.comments).toEqual([]);
+    expect(body.thread.replyCount).toBe(0);
+  });
+
+  it('counts only the live thread in the board thread count', async () => {
+    const res = await request(app, '/boards');
+    const board = (res.body as { boards: { slug: string; threadCount: number }[] }).boards.find(
+      (b) => b.slug === BOARD,
+    );
+    // The board row itself only exists if the indexer registered it; when it
+    // does, the count must be 1, never 2.
+    if (board) expect(board.threadCount).toBe(1);
+  });
+
+  it('does not surface an expired thread through search either', async () => {
+    const res = await request(app, '/search?q=gone');
+    const ids = (res.body as { threads: { id: string }[] }).threads.map((t) => t.id);
+    expect(ids).not.toContain(DOOMED);
   });
 });

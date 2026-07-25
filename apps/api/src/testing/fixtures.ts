@@ -148,6 +148,44 @@ export function videoRow(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
+/** A `boardThreadsQuery` / `searchThreadsQuery` row. */
+export function threadSummaryRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    event_id: hex('55'),
+    pubkey: hex('ab'),
+    subject: 'Who buffed the Alameda wall?',
+    excerpt: 'gone as of this morning',
+    created_at: '1700000000',
+    expires_at: null,
+    reply_count: 3,
+    last_reply_at: '1700000900',
+    sort_at: '1700000900',
+    tag_name: 'SMOG',
+    city: 'sf',
+    avatar_sha256: null,
+    ...overrides,
+  };
+}
+
+/** A `threadQuery` row — the OP with its content. */
+export function threadRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    event_id: hex('55'),
+    pubkey: hex('ab'),
+    subject: 'Who buffed the Alameda wall?',
+    boards: ['sf', 'oakland'],
+    created_at: '1700000000',
+    content: 'gone as of this morning, whole panel',
+    expires_at: null,
+    reply_count: 3,
+    last_reply_at: '1700000900',
+    tag_name: 'SMOG',
+    city: 'sf',
+    avatar_sha256: null,
+    ...overrides,
+  };
+}
+
 export function commentRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     event_id: hex('22'),

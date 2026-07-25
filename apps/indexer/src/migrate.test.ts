@@ -17,6 +17,7 @@ describe('loadMigrations', () => {
       '003_profile_about.sql',
       '004_videos.sql',
       '005_explore_crews.sql',
+      '006_threads.sql',
     ]);
     expect(migrations[0]?.sql).toContain('create table if not exists events');
   });
@@ -32,6 +33,10 @@ describe('loadMigrations', () => {
     expect(byVersion.get('003_profile_about.sql')).toContain(
       'alter table profiles add column if not exists about text',
     );
+
+    // Same for `threads`, added in 006.
+    expect(byVersion.get('001_init.sql')).not.toContain('create table if not exists threads');
+    expect(byVersion.get('006_threads.sql')).toContain('create table if not exists threads');
   });
 });
 

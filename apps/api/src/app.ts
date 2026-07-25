@@ -11,6 +11,7 @@ import { flickRoutes } from './routes/flick.js';
 import { healthRoutes } from './routes/health.js';
 import { modRoutes } from './routes/mod.js';
 import { searchRoutes } from './routes/search.js';
+import { threadRoutes } from './routes/thread.js';
 import { writerRoutes } from './routes/writer.js';
 import type { Queryable } from './types.js';
 
@@ -47,6 +48,7 @@ export function createApp(db: Queryable, config: ApiConfig): Express {
   app.use(exploreRoutes(deps));
   app.use(flickRoutes(deps));
   app.use(boardRoutes(deps));
+  app.use(threadRoutes(deps));
   app.use(writerRoutes(deps));
   app.use(crewRoutes(deps));
   app.use(searchRoutes(deps));

@@ -9,6 +9,7 @@ import type {
   FlickRow,
   ProfileRow,
   ReportRow,
+  ThreadRow,
   VideoRow,
 } from './mappers.js';
 import type { Sql } from './types.js';
@@ -129,6 +130,21 @@ export function upsertVideo(row: VideoRow): Sql {
       row.caption,
       row.boards,
     ],
+  };
+}
+
+/**
+ * A kind-1 thread OP. `do nothing` rather than `do update`: a kind 1 is not
+ * replaceable, so the same event id always carries the same subject and boards
+ * and a re-delivery has nothing to say. (`upsertEvent` already short-circuits
+ * the duplicate before this runs; this is the second lock.)
+ */
+export function upsertThread(row: ThreadRow): Sql {
+  return {
+    text: `insert into threads (event_id, pubkey, subject, boards, created_at)
+           values ($1, $2, $3, $4::text[], $5)
+           on conflict (event_id) do nothing`,
+    params: [row.event_id, row.pubkey, row.subject, row.boards, row.created_at],
   };
 }
 
@@ -428,6 +444,7 @@ export const DERIVED_TABLES = [
   'events',
   'flicks',
   'videos',
+  'threads',
   'profiles',
   'comments',
   'reports',

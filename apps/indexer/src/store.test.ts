@@ -6,6 +6,7 @@ import {
   buildModBan,
   buildProfile,
   buildReport,
+  buildThreadOp,
   buildVideo,
   KINDS,
 } from '@1nky/protocol';
@@ -300,12 +301,92 @@ describe('indexEvent', () => {
   it('stores unrouted kinds in events only', async () => {
     const db = fakeDb();
     const counters = newCounters();
-    await indexEvent(db, makeEvent({ kind: KINDS.NOTE, content: 'thread op' }), counters, {
+    await indexEvent(db, makeEvent({ kind: KINDS.MUTE_LIST, content: '[]' }), counters, {
       now: NOW,
     });
 
     expect(counters.events).toBe(1);
     expect(db.calls.map((c) => c.text).filter((t) => t.includes('insert into'))).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Thread OPs — kind 1 with a `subject` tag and board `t` tags
+// ---------------------------------------------------------------------------
+
+describe('thread OPs (kind 1)', () => {
+  function threadOp(overrides: Parameters<typeof makeEvent>[0] = {}) {
+    const template = buildThreadOp({
+      subject: 'Who buffed the Alameda wall?',
+      boards: ['sf'],
+      content: 'gone as of this morning',
+      createdAt: NOW - 20,
+    });
+    return makeEvent({ ...template, id: hex('55'), pubkey: AUTHOR, ...overrides });
+  }
+
+  it('routes a thread OP to the threads table and bumps the author stats', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, threadOp(), counters, { now: NOW });
+
+    expect(counters.threads).toBe(1);
+    expect(counters.events).toBe(1);
+    expect(db.matching('insert into threads')).toHaveLength(1);
+    expect(db.matching('insert into pubkey_stats')).toHaveLength(1);
+
+    const params = db.matching('insert into threads')[0]?.params;
+    expect(params?.[0]).toBe(hex('55'));
+    expect(params?.[2]).toBe('Who buffed the Alameda wall?');
+    expect(params?.[3]).toEqual(['sf']);
+  });
+
+  it('auto-registers the boards a thread was posted to', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, threadOp(), counters, { now: NOW });
+
+    // A board with only threads on it still shows up in GET /boards.
+    expect(db.matching('insert into boards')).toHaveLength(1);
+    expect(db.matching('insert into boards')[0]?.params[0]).toBe('sf');
+  });
+
+  it('indexes a bare kind 1 with no subject and no board — never "invalid"', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, makeEvent({ kind: KINDS.NOTE, id: hex('56'), content: 'oi' }), counters, {
+      now: NOW,
+    });
+
+    expect(counters.threads).toBe(1);
+    expect(counters.invalid).toBe(0);
+    expect(db.matching('insert into threads')).toHaveLength(1);
+    expect(db.matching('insert into threads')[0]?.params[2]).toBeNull();
+    // No board tags means no board rows.
+    expect(db.matching('insert into boards')).toHaveLength(0);
+  });
+
+  it('skips an already-expired beef entirely (NIP-40)', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, threadOp({ tags: [['expiration', String(NOW - 1)]] }), counters, {
+      now: NOW,
+    });
+
+    expect(counters.threads).toBe(0);
+    expect(db.calls).toHaveLength(0);
+  });
+
+  it('does no derived work for a re-delivered thread OP', async () => {
+    const db = fakeDb((text) =>
+      text.includes('insert into events') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    await indexEvent(db, threadOp(), counters, { now: NOW });
+
+    expect(counters.duplicates).toBe(1);
+    expect(counters.threads).toBe(0);
+    expect(db.matching('insert into threads')).toHaveLength(0);
   });
 });
 

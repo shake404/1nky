@@ -319,6 +319,34 @@ export function toVideoRow(event: SignedEvent): VideoRow | null {
   };
 }
 
+export interface ThreadRow {
+  event_id: string;
+  pubkey: string;
+  subject: string | null;
+  boards: string[];
+  created_at: number;
+}
+
+/**
+ * Kind 1 — a thread OP on one or more city boards.
+ *
+ * Never returns null. On this platform a bare kind 1 with neither a subject nor
+ * a board tag is still a thread OP (the UI shows its first line as the title
+ * and it is reachable by id and by search), so it is indexed with a null
+ * subject and an empty board array rather than dropped. `content` and the
+ * NIP-40 `expires_at` deliberately stay in `events`, which every thread read
+ * joins anyway — one copy, no drift.
+ */
+export function toThreadRow(event: SignedEvent): ThreadRow {
+  return {
+    event_id: event.id,
+    pubkey: event.pubkey,
+    subject: tagValue(event.tags, 'subject') ?? null,
+    boards: boardsOf(event),
+    created_at: event.created_at,
+  };
+}
+
 export interface CommentRow {
   event_id: string;
   parent_id: string | null;
@@ -643,10 +671,21 @@ export function modBanActionFromEvent(event: SignedEvent): ModBanAction | null {
 /** Which derived table an event feeds, by kind. */
 export function routeOf(
   kind: number,
-): 'profile' | 'flick' | 'video' | 'comment' | 'report' | 'deletion' | 'registry' | 'event' {
+):
+  | 'profile'
+  | 'thread'
+  | 'flick'
+  | 'video'
+  | 'comment'
+  | 'report'
+  | 'deletion'
+  | 'registry'
+  | 'event' {
   switch (kind) {
     case KINDS.PROFILE:
       return 'profile';
+    case KINDS.NOTE:
+      return 'thread';
     case KINDS.FLICK:
       return 'flick';
     case KINDS.VIDEO:

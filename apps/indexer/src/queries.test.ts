@@ -13,6 +13,7 @@ import {
   upsertBan,
   upsertBoard,
   upsertEvent,
+  upsertThread,
   writeWatermark,
 } from './queries.js';
 import { hex } from './testing/fixtures.js';
@@ -140,6 +141,32 @@ describe('upserts', () => {
     );
   });
 
+  it('inserts a thread OP idempotently and binds every value', () => {
+    const sql = upsertThread({
+      event_id: hex('55'),
+      pubkey: AUTHOR,
+      subject: 'who buffed it',
+      boards: ['sf', 'oakland'],
+      created_at: 1_700_000_000,
+    });
+    expect(sql.text).toContain('insert into threads');
+    expect(sql.text).toContain('on conflict (event_id) do nothing');
+    expect(sql.text).not.toContain(AUTHOR);
+    expect(sql.params).toEqual([hex('55'), AUTHOR, 'who buffed it', ['sf', 'oakland'], 1_700_000_000]);
+  });
+
+  it('stores neither the thread content nor its expiry — those live in events', () => {
+    const sql = upsertThread({
+      event_id: hex('55'),
+      pubkey: AUTHOR,
+      subject: null,
+      boards: [],
+      created_at: 1,
+    });
+    expect(sql.text).not.toContain('content');
+    expect(sql.text).not.toContain('expires_at');
+  });
+
   it('lets the signed registry set a title but never a discovered board', () => {
     const row = { slug: 'sf', title: 'San Francisco', kind: 'city', created_by: null, created_at: 1 };
     expect(upsertBoard(row, 'registry').text).toContain('title = excluded.title');
@@ -153,6 +180,7 @@ describe('rebuild', () => {
       'events',
       'flicks',
       'videos',
+      'threads',
       'profiles',
       'comments',
       'reports',
@@ -164,6 +192,11 @@ describe('rebuild', () => {
       'sync_state',
     ]);
     expect(truncateDerived().text).toContain('truncate table events');
+  });
+
+  it('repopulates threads on a rebuild, like every other derived table', () => {
+    expect(DERIVED_TABLES).toContain('threads');
+    expect(truncateDerived().text).toContain('threads');
   });
 
   it('never unbans anyone', () => {

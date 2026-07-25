@@ -21,16 +21,56 @@ const FLICK_COLUMNS = `f.event_id, f.pubkey, f.created_at, f.url, f.sha256,
 
 const WRITER_COLUMNS = `p.tag_name, p.city, p.avatar_sha256`;
 
+/** Columns shared by every thread-shaped response. `t` is `threads`. */
+const THREAD_COLUMNS = `t.event_id, t.pubkey, t.subject, t.boards, t.created_at`;
+
 /** Banned writers disappear from every public read path. */
-const NOT_BANNED = `not exists (select 1 from banned_pubkeys b where b.pubkey = f.pubkey)`;
+const notBanned = (pubkeyColumn: string): string =>
+  `not exists (select 1 from banned_pubkeys b where b.pubkey = ${pubkeyColumn})`;
 
 /**
- * "Buffed" flicks. The indexer hard-deletes on kind 5, so this is belt and
+ * "Buffed" rows. The indexer hard-deletes on kind 5, so this is belt and
  * braces for the window between a deletion arriving and the row going away.
  */
-const NOT_BUFFED = `not exists (
-    select 1 from deletions d where d.pubkey = f.pubkey and f.event_id = any(d.targets)
+const notBuffed = (pubkeyColumn: string, idColumn: string): string => `not exists (
+    select 1 from deletions d where d.pubkey = ${pubkeyColumn} and ${idColumn} = any(d.targets)
   )`;
+
+const NOT_BANNED = notBanned('f.pubkey');
+const NOT_BUFFED = notBuffed('f.pubkey', 'f.event_id');
+
+/**
+ * NIP-40, applied at read time as well as by the sweep.
+ *
+ * `events.expires_at` is enforced by two background jobs — strfry purges an
+ * expired event roughly every 9s and the indexer sweeps Postgres every 60s —
+ * but "roughly" is not "immediately". Between an event's expiry and the next
+ * sweep its row is still here, and a beef that says it lasts 24h has to be gone
+ * at 24h, not at 24h plus a minute. So every public read that serves an
+ * event-backed row joins `events e` and applies this predicate.
+ *
+ * The one deliberate exception is the mod queue: a moderator may need to see
+ * reported content right up until it is actually swept.
+ */
+const NOT_EXPIRED = `(e.expires_at is null or e.expires_at > extract(epoch from now())::bigint)`;
+
+/** The same rule for the `comments -> events` join inside a reply count. */
+const NOT_EXPIRED_COMMENT = `(ce.expires_at is null or ce.expires_at > extract(epoch from now())::bigint)`;
+
+/**
+ * The reply-count lateral, shared by every read that reports one. It also
+ * carries `last_reply_at`, which is what orders a board by liveliest thread.
+ *
+ * An expired comment counts towards a reply total no more than it appears in a
+ * thread, hence the join.
+ */
+const replyCounts = (idColumn: string): string => `left join lateral (
+  select count(*)::int as reply_count, max(c.created_at) as last_reply_at
+  from comments c
+  join events ce on ce.id = c.event_id
+  where c.root_id = ${idColumn}
+    and ${NOT_EXPIRED_COMMENT}
+) r on true`;
 
 export function healthQuery(): Sql {
   return { text: 'select 1 as ok', params: [] };
@@ -63,23 +103,23 @@ from (
   select ${FLICK_COLUMNS}, 'flick'::text as media_type,
          null::text as poster_url, null::integer as duration
   from flicks f
+  join events e on e.id = f.event_id
   where ${NOT_BANNED}
     and ${NOT_BUFFED}
+    and ${NOT_EXPIRED}
   union all
   select v.event_id, v.pubkey, v.created_at, v.url, v.sha256,
          v.width, v.height, v.blurhash, v.caption, v.boards,
          'video'::text as media_type,
          v.poster_url, v.duration
   from videos v
-  where not exists (select 1 from banned_pubkeys b where b.pubkey = v.pubkey)
-    and not exists (
-      select 1 from deletions d where d.pubkey = v.pubkey and v.event_id = any(d.targets)
-    )
+  join events e on e.id = v.event_id
+  where ${notBanned('v.pubkey')}
+    and ${notBuffed('v.pubkey', 'v.event_id')}
+    and ${NOT_EXPIRED}
 ) m
 left join profiles p on p.pubkey = m.pubkey
-left join lateral (
-  select count(*)::int as reply_count from comments c where c.root_id = m.event_id
-) r on true
+${replyCounts('m.event_id')}
 where ($1::text is null or $1::text = any(m.boards))
   and ($2::bigint is null or (m.created_at, m.event_id) < ($2::bigint, $3::text))
 order by m.created_at desc, m.event_id desc
@@ -145,23 +185,23 @@ from (
   select ${FLICK_COLUMNS}, 'flick'::text as media_type,
          null::text as poster_url, null::integer as duration
   from flicks f
+  join events e on e.id = f.event_id
   where ${NOT_BANNED}
     and ${NOT_BUFFED}
+    and ${NOT_EXPIRED}
   union all
   select v.event_id, v.pubkey, v.created_at, v.url, v.sha256,
          v.width, v.height, v.blurhash, v.caption, v.boards,
          'video'::text as media_type,
          v.poster_url, v.duration
   from videos v
-  where not exists (select 1 from banned_pubkeys b where b.pubkey = v.pubkey)
-    and not exists (
-      select 1 from deletions d where d.pubkey = v.pubkey and v.event_id = any(d.targets)
-    )
+  join events e on e.id = v.event_id
+  where ${notBanned('v.pubkey')}
+    and ${notBuffed('v.pubkey', 'v.event_id')}
+    and ${NOT_EXPIRED}
 ) m
 left join profiles p on p.pubkey = m.pubkey
-left join lateral (
-  select count(*)::int as reply_count from comments c where c.root_id = m.event_id
-) r on true
+${replyCounts('m.event_id')}
 where ($1::text[] is null or m.boards && $1::text[])
   and ($2::text[] is null or m.boards && $2::text[])
   and ($3::text[] is null or m.boards && $3::text[])
@@ -195,13 +235,17 @@ export function exploreFacetsQuery(): Sql {
 from (
   select f.boards as boards
   from flicks f
-  where not exists (select 1 from banned_pubkeys b where b.pubkey = f.pubkey)
-    and not exists (select 1 from deletions d where d.pubkey = f.pubkey and f.event_id = any(d.targets))
+  join events e on e.id = f.event_id
+  where ${NOT_BANNED}
+    and ${NOT_BUFFED}
+    and ${NOT_EXPIRED}
   union all
   select v.boards as boards
   from videos v
-  where not exists (select 1 from banned_pubkeys b where b.pubkey = v.pubkey)
-    and not exists (select 1 from deletions d where d.pubkey = v.pubkey and v.event_id = any(d.targets))
+  join events e on e.id = v.event_id
+  where ${notBanned('v.pubkey')}
+    and ${notBuffed('v.pubkey', 'v.event_id')}
+    and ${NOT_EXPIRED}
 ) m, unnest(m.boards) as tag(slug)
 group by tag.slug
 order by tag.slug`,
@@ -215,26 +259,31 @@ export function flickQuery(eventId: string): Sql {
        ${WRITER_COLUMNS},
        coalesce(r.reply_count, 0) as reply_count
 from flicks f
+join events e on e.id = f.event_id
 left join profiles p on p.pubkey = f.pubkey
-left join lateral (
-  select count(*)::int as reply_count from comments c where c.root_id = f.event_id
-) r on true
+${replyCounts('f.event_id')}
 where f.event_id = $1
   and ${NOT_BANNED}
-  and ${NOT_BUFFED}`,
+  and ${NOT_BUFFED}
+  and ${NOT_EXPIRED}`,
     params: [eventId],
   };
 }
 
-/** Every comment anchored to a root, oldest first, ready for threading. */
+/**
+ * Every comment anchored to a root, oldest first, ready for threading. Shared
+ * by `GET /flick/:id` and `GET /thread/:id` — a reply is a reply either way.
+ */
 export function commentsQuery(rootId: string): Sql {
   return {
     text: `select c.event_id, c.parent_id, c.root_id, c.pubkey, c.created_at, c.content,
        p.tag_name, p.avatar_sha256
 from comments c
+join events e on e.id = c.event_id
 left join profiles p on p.pubkey = c.pubkey
 where c.root_id = $1
-  and not exists (select 1 from banned_pubkeys b where b.pubkey = c.pubkey)
+  and ${notBanned('c.pubkey')}
+  and ${NOT_EXPIRED}
 order by c.created_at asc, c.event_id asc`,
     params: [rootId],
   };
@@ -253,20 +302,142 @@ where p.pubkey = $1`,
   };
 }
 
+/**
+ * `GET /boards` — every board with how busy it is.
+ *
+ * Two cheap lateral counts rather than one grouped scan: a board's media count
+ * and its thread count come from different tables, and a lateral keeps a board
+ * with neither in the list (which is what a freshly registered board is).
+ * `latest_at` is media-only, unchanged, so the field means what it always did.
+ */
 export function boardsQuery(kind?: string): Sql {
   return {
-    text: `select b.slug, b.title, b.kind, b.created_at,
+    text: `select b.slug, b.title, b.kind, b.region_slug, b.created_at,
        coalesce(c.flick_count, 0) as flick_count,
-       c.latest_at
+       c.latest_at,
+       coalesce(th.thread_count, 0) as thread_count
 from boards b
 left join lateral (
   select count(*)::int as flick_count, max(f.created_at) as latest_at
   from flicks f
+  join events e on e.id = f.event_id
   where b.slug = any(f.boards)
+    and ${NOT_BANNED}
+    and ${NOT_BUFFED}
+    and ${NOT_EXPIRED}
 ) c on true
+left join lateral (
+  select count(*)::int as thread_count
+  from threads t
+  join events e on e.id = t.event_id
+  where b.slug = any(t.boards)
+    and ${notBanned('t.pubkey')}
+    and ${notBuffed('t.pubkey', 't.event_id')}
+    and ${NOT_EXPIRED}
+) th on true
 ${kind ? 'where b.kind = $1' : ''}
 order by b.slug asc`,
     params: kind ? [kind] : [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Boards and threads — GET /board/:slug, GET /thread/:id
+// ---------------------------------------------------------------------------
+
+/**
+ * The board "header". Anchored on the slug itself rather than on `boards`, so
+ * it always returns exactly one row: a board that exists only because writers
+ * tagged it (never registered, so no `boards` row yet) still has a title of
+ * null and `has_media` true, and the route decides from that whether the board
+ * exists at all.
+ */
+export function boardQuery(slug: string): Sql {
+  return {
+    text: `select x.slug as slug, b.title, b.kind, b.region_slug,
+       exists (
+         select 1 from flicks f
+         join events e on e.id = f.event_id
+         where x.slug = any(f.boards) and ${NOT_EXPIRED}
+       ) as has_media
+from (select $1::text as slug) x
+left join boards b on b.slug = x.slug`,
+    params: [slug],
+  };
+}
+
+export interface BoardThreadsOptions {
+  slug?: string | undefined;
+  cursor?: Cursor | undefined;
+  limit: number;
+}
+
+/**
+ * `GET /board/:slug` — a board's threads, liveliest first.
+ *
+ * The sort key is `greatest(created_at, last_reply_at)`: a thread with a fresh
+ * reply floats, which is what a board is for. Because that is a computed value
+ * it is produced in the inner select and both filtered and ordered on the
+ * outside, so the keyset page bound `(sort_at, event_id)` stays exact rather
+ * than approximate — a page boundary cannot shift under a scrolling reader.
+ *
+ * `excerpt` is the first 160 characters of the OP, cut in Postgres so a 60KB
+ * note never crosses the wire to be thrown away by the client.
+ */
+export function boardThreadsQuery(options: BoardThreadsOptions): Sql {
+  return {
+    text: `select s.event_id, s.pubkey, s.subject, s.excerpt, s.created_at, s.expires_at,
+       s.reply_count, s.last_reply_at, s.sort_at,
+       s.tag_name, s.city, s.avatar_sha256
+from (
+  select ${THREAD_COLUMNS},
+         e.expires_at,
+         left(e.content, 160) as excerpt,
+         ${WRITER_COLUMNS},
+         coalesce(r.reply_count, 0) as reply_count,
+         r.last_reply_at,
+         greatest(t.created_at, coalesce(r.last_reply_at, t.created_at)) as sort_at
+  from threads t
+  join events e on e.id = t.event_id
+  left join profiles p on p.pubkey = t.pubkey
+  ${replyCounts('t.event_id')}
+  where ${notBanned('t.pubkey')}
+    and ${notBuffed('t.pubkey', 't.event_id')}
+    and ${NOT_EXPIRED}
+) s
+where ($1::text is null or $1::text = any(s.boards))
+  and ($2::bigint is null or (s.sort_at, s.event_id) < ($2::bigint, $3::text))
+order by s.sort_at desc, s.event_id desc
+limit $4::int`,
+    params: [
+      options.slug ?? null,
+      options.cursor?.createdAt ?? null,
+      options.cursor?.eventId ?? null,
+      options.limit,
+    ],
+  };
+}
+
+/**
+ * `GET /thread/:id` — one thread OP with its content and expiry. The replies
+ * come from `commentsQuery`, the same one `GET /flick/:id` uses.
+ */
+export function threadQuery(eventId: string): Sql {
+  return {
+    text: `select ${THREAD_COLUMNS},
+       e.content, e.expires_at,
+       ${WRITER_COLUMNS},
+       coalesce(r.reply_count, 0) as reply_count,
+       r.last_reply_at
+from threads t
+join events e on e.id = t.event_id
+left join profiles p on p.pubkey = t.pubkey
+${replyCounts('t.event_id')}
+where t.event_id = $1
+  and ${notBanned('t.pubkey')}
+  and ${notBuffed('t.pubkey', 't.event_id')}
+  and ${NOT_EXPIRED}`,
+    params: [eventId],
   };
 }
 
@@ -281,12 +452,12 @@ export function writerFlicksQuery(options: WriterFlicksOptions): Sql {
     text: `select ${FLICK_COLUMNS},
        coalesce(r.reply_count, 0) as reply_count
 from flicks f
-left join lateral (
-  select count(*)::int as reply_count from comments c where c.root_id = f.event_id
-) r on true
+join events e on e.id = f.event_id
+${replyCounts('f.event_id')}
 where f.pubkey = $1
   and ($2::bigint is null or (f.created_at, f.event_id) < ($2::bigint, $3::text))
   and ${NOT_BUFFED}
+  and ${NOT_EXPIRED}
 order by f.created_at desc, f.event_id desc
 limit $4::int`,
     params: [
@@ -347,23 +518,25 @@ from (
   select ${FLICK_COLUMNS}, 'flick'::text as media_type,
          null::text as poster_url, null::integer as duration
   from flicks f
+  join events e on e.id = f.event_id
   where f.pubkey = $1
     and ${NOT_BANNED}
     and ${NOT_BUFFED}
+    and ${NOT_EXPIRED}
   union all
   select v.event_id, v.pubkey, v.created_at, v.url, v.sha256,
          v.width, v.height, v.blurhash, v.caption, v.boards,
          'video'::text as media_type,
          v.poster_url, v.duration
   from videos v
+  join events e on e.id = v.event_id
   where v.pubkey = $1
-    and not exists (select 1 from banned_pubkeys b where b.pubkey = v.pubkey)
-    and not exists (select 1 from deletions d where d.pubkey = v.pubkey and v.event_id = any(d.targets))
+    and ${notBanned('v.pubkey')}
+    and ${notBuffed('v.pubkey', 'v.event_id')}
+    and ${NOT_EXPIRED}
 ) m
 left join profiles p on p.pubkey = m.pubkey
-left join lateral (
-  select count(*)::int as reply_count from comments c where c.root_id = m.event_id
-) r on true
+${replyCounts('m.event_id')}
 where ($2::bigint is null or (m.created_at, m.event_id) < ($2::bigint, $3::text))
 order by m.created_at desc, m.event_id desc
 limit $4::int`,
@@ -400,6 +573,9 @@ export function searchBoardTerms(q: string): string[] {
   return [...terms];
 }
 
+/** `websearch_to_tsquery('english', $1)`, spelled once. */
+const TSQUERY = `websearch_to_tsquery('english', $1)`;
+
 /**
  * Postgres full-text search over event content, OR a board-tag match.
  * `websearch_to_tsquery` accepts what people actually type ("quotes", -minus,
@@ -410,17 +586,78 @@ export function searchQuery(q: string, limit: number): Sql {
     text: `select ${FLICK_COLUMNS},
        ${WRITER_COLUMNS},
        coalesce(r.reply_count, 0) as reply_count,
-       ts_rank(e.content_tsv, websearch_to_tsquery('english', $1)) as rank
+       ts_rank(e.content_tsv, ${TSQUERY}) as rank
 from flicks f
 join events e on e.id = f.event_id
 left join profiles p on p.pubkey = f.pubkey
-left join lateral (
-  select count(*)::int as reply_count from comments c where c.root_id = f.event_id
-) r on true
-where (e.content_tsv @@ websearch_to_tsquery('english', $1) or f.boards && $2::text[])
+${replyCounts('f.event_id')}
+where (e.content_tsv @@ ${TSQUERY} or f.boards && $2::text[])
   and ${NOT_BANNED}
   and ${NOT_BUFFED}
+  and ${NOT_EXPIRED}
 order by rank desc, f.created_at desc, f.event_id desc
+limit $3::int`,
+    params: [q, searchBoardTerms(q), limit],
+  };
+}
+
+/**
+ * The same search over `videos`. A separate statement rather than a UNION with
+ * the flicks half, because the two are ranked and returned separately — the
+ * `flicks` field of the response is unchanged for every existing client, and
+ * `videos` is additive.
+ */
+export function searchVideosQuery(q: string, limit: number): Sql {
+  return {
+    text: `select v.event_id, v.pubkey, v.created_at, v.url, v.sha256,
+       v.width, v.height, v.blurhash, v.caption, v.boards,
+       'video'::text as media_type, v.poster_url, v.duration,
+       ${WRITER_COLUMNS},
+       coalesce(r.reply_count, 0) as reply_count,
+       ts_rank(e.content_tsv, ${TSQUERY}) as rank
+from videos v
+join events e on e.id = v.event_id
+left join profiles p on p.pubkey = v.pubkey
+${replyCounts('v.event_id')}
+where (e.content_tsv @@ ${TSQUERY} or v.boards && $2::text[])
+  and ${notBanned('v.pubkey')}
+  and ${notBuffed('v.pubkey', 'v.event_id')}
+  and ${NOT_EXPIRED}
+order by rank desc, v.created_at desc, v.event_id desc
+limit $3::int`,
+    params: [q, searchBoardTerms(q), limit],
+  };
+}
+
+/**
+ * The same search over threads. A thread has two searchable pieces of text —
+ * the OP's content (already indexed as `events.content_tsv`) and its subject —
+ * so both are matched and both contribute to the rank, with the subject
+ * weighted above the body: a thread *titled* "oakland" is a better hit for
+ * "oakland" than one that merely mentions it.
+ */
+export function searchThreadsQuery(q: string, limit: number): Sql {
+  const subjectTsv = `to_tsvector('english', coalesce(t.subject, ''))`;
+  return {
+    text: `select ${THREAD_COLUMNS},
+       e.expires_at,
+       left(e.content, 160) as excerpt,
+       ${WRITER_COLUMNS},
+       coalesce(r.reply_count, 0) as reply_count,
+       r.last_reply_at,
+       ts_rank(e.content_tsv, ${TSQUERY})
+         + 2 * ts_rank(${subjectTsv}, ${TSQUERY}) as rank
+from threads t
+join events e on e.id = t.event_id
+left join profiles p on p.pubkey = t.pubkey
+${replyCounts('t.event_id')}
+where (e.content_tsv @@ ${TSQUERY}
+       or ${subjectTsv} @@ ${TSQUERY}
+       or t.boards && $2::text[])
+  and ${notBanned('t.pubkey')}
+  and ${notBuffed('t.pubkey', 't.event_id')}
+  and ${NOT_EXPIRED}
+order by rank desc, t.created_at desc, t.event_id desc
 limit $3::int`,
     params: [q, searchBoardTerms(q), limit],
   };

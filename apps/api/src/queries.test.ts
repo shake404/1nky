@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   banlistQuery,
+  boardQuery,
   boardsQuery,
+  boardThreadsQuery,
   commentsQuery,
   crewHeaderQuery,
   crewMediaQuery,
@@ -16,6 +18,9 @@ import {
   profileQuery,
   searchBoardTerms,
   searchQuery,
+  searchThreadsQuery,
+  searchVideosQuery,
+  threadQuery,
   writerFlicksQuery,
 } from './queries.js';
 import { hex } from './testing/fixtures.js';
@@ -38,7 +43,33 @@ const ALL = [
   crewMediaQuery({ pubkey: hex('ab'), limit: 24 }),
   crewReppingQuery(hex('ab')),
   crewMembersQuery([hex('ab')]),
+  boardQuery('sf'),
+  boardThreadsQuery({ slug: 'sf', limit: 24 }),
+  boardThreadsQuery({ limit: 24, cursor: { createdAt: 100, eventId: hex('55') } }),
+  threadQuery(hex('55')),
+  searchVideosQuery('burner', 24),
+  searchThreadsQuery('burner', 24),
 ];
+
+/**
+ * Every public read that serves an event-backed row. The mod queue and the ban
+ * list are deliberately absent — see `NOT_EXPIRED` in queries.ts.
+ */
+const PUBLIC_EVENT_READS = [
+  ['feed', feedQuery({ limit: 24 })],
+  ['explore', exploreQuery({ limit: 24 })],
+  ['explore facets', exploreFacetsQuery()],
+  ['flick detail', flickQuery(hex('11'))],
+  ['comments', commentsQuery(hex('11'))],
+  ['writer flicks', writerFlicksQuery({ pubkey: hex('ab'), limit: 24 })],
+  ['crew media', crewMediaQuery({ pubkey: hex('ab'), limit: 24 })],
+  ['boards', boardsQuery()],
+  ['board threads', boardThreadsQuery({ slug: 'sf', limit: 24 })],
+  ['thread detail', threadQuery(hex('55'))],
+  ['search flicks', searchQuery('burner', 24)],
+  ['search videos', searchVideosQuery('burner', 24)],
+  ['search threads', searchThreadsQuery('burner', 24)],
+] as const;
 
 describe('the API is read-only (hard rule #4)', () => {
   it.each(ALL.map((sql, i) => [i, sql] as const))('query %i only selects', (_i, sql) => {
@@ -129,6 +160,141 @@ describe('modQueueQuery', () => {
     expect(text).toContain('tf.url      as thumbnail_url');
     expect(text).toContain('left join pubkey_stats rs on rs.pubkey = r.reporter');
     expect(text).toContain('order by r.created_at desc');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NIP-40 at read time
+// ---------------------------------------------------------------------------
+
+describe('expired events are filtered at read time, not just swept', () => {
+  it.each(PUBLIC_EVENT_READS)('%s excludes an expired row', (_name, sql) => {
+    expect(sql.text).toContain('e.expires_at is null or e.expires_at > extract(epoch from now())::bigint');
+  });
+
+  it.each(PUBLIC_EVENT_READS)('%s joins events to get at expires_at', (_name, sql) => {
+    // A derived table has no expiry of its own — the one copy lives in `events`.
+    expect(sql.text).toMatch(/join events e on e\.id = \w+\.event_id/);
+  });
+
+  it('binds no clock: `now()` is evaluated by Postgres, not by this process', () => {
+    for (const [, sql] of PUBLIC_EVENT_READS) {
+      expect(sql.params).not.toContain(Math.floor(Date.now() / 1000));
+    }
+  });
+
+  it('does not filter the mod queue — a mod sees reported content until it is swept', () => {
+    expect(modQueueQuery(50).text).not.toContain('expires_at');
+    expect(banlistQuery().text).not.toContain('expires_at');
+  });
+
+  it('leaves an expired reply out of a reply count as well as out of a thread', () => {
+    expect(feedQuery({ limit: 10 }).text).toContain('join events ce on ce.id = c.event_id');
+    expect(commentsQuery(hex('11')).text).toContain('e.expires_at is null');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Boards and threads
+// ---------------------------------------------------------------------------
+
+describe('boardsQuery', () => {
+  it('counts threads alongside flicks, per board', () => {
+    const text = boardsQuery().text;
+    expect(text).toContain('thread_count');
+    expect(text).toContain('from threads t');
+    expect(text).toContain('flick_count');
+  });
+
+  it('keeps a board with neither a flick nor a thread in the list', () => {
+    // Lateral + LEFT JOIN, not an inner join or a GROUP BY over posts.
+    const text = boardsQuery().text;
+    expect(text).toContain('left join lateral');
+    expect(text).toContain('coalesce(th.thread_count, 0)');
+  });
+});
+
+describe('boardQuery', () => {
+  it('always returns one row, anchored on the slug rather than on boards', () => {
+    const sql = boardQuery('sf');
+    expect(sql.text).toContain('from (select $1::text as slug) x');
+    expect(sql.text).toContain('left join boards b on b.slug = x.slug');
+    expect(sql.text).toContain('as has_media');
+    expect(sql.params).toEqual(['sf']);
+  });
+});
+
+describe('boardThreadsQuery', () => {
+  it('orders by newest activity, not by when the thread was started', () => {
+    const sql = boardThreadsQuery({ slug: 'sf', limit: 24 });
+    expect(sql.text).toContain('greatest(t.created_at, coalesce(r.last_reply_at, t.created_at)) as sort_at');
+    expect(sql.text).toContain('order by s.sort_at desc, s.event_id desc');
+  });
+
+  it('paginates by keyset on the same key it sorts by', () => {
+    const sql = boardThreadsQuery({ slug: 'sf', limit: 24, cursor: { createdAt: 100, eventId: hex('55') } });
+    expect(sql.text).toContain('(s.sort_at, s.event_id) < ($2::bigint, $3::text)');
+    expect(sql.text).not.toContain('offset');
+    expect(sql.params).toEqual(['sf', 100, hex('55'), 24]);
+  });
+
+  it('makes the board filter optional in one statement', () => {
+    const sql = boardThreadsQuery({ limit: 10 });
+    expect(sql.params).toEqual([null, null, null, 10]);
+    expect(sql.text).toContain('$1::text is null or $1::text = any(s.boards)');
+  });
+
+  it('cuts the excerpt in Postgres so a 60KB note never crosses the wire', () => {
+    expect(boardThreadsQuery({ limit: 10 }).text).toContain('left(e.content, 160) as excerpt');
+  });
+
+  it('hides banned writers and buffed threads', () => {
+    const text = boardThreadsQuery({ limit: 10 }).text;
+    expect(text).toContain('b.pubkey = t.pubkey');
+    expect(text).toContain('t.event_id = any(d.targets)');
+  });
+
+  it('reports the expiry so the client can show a beef countdown', () => {
+    expect(boardThreadsQuery({ limit: 10 }).text).toContain('e.expires_at');
+  });
+});
+
+describe('threadQuery', () => {
+  it('joins the OP content out of events rather than duplicating it', () => {
+    const sql = threadQuery(hex('55'));
+    expect(sql.text).toContain('from threads t');
+    expect(sql.text).toContain('join events e on e.id = t.event_id');
+    expect(sql.text).toContain('e.content');
+    expect(sql.text).toContain('where t.event_id = $1');
+    expect(sql.params).toEqual([hex('55')]);
+  });
+
+  it('hides a banned writer and a buffed thread', () => {
+    const text = threadQuery(hex('55')).text;
+    expect(text).toContain('b.pubkey = t.pubkey');
+    expect(text).toContain('t.event_id = any(d.targets)');
+  });
+});
+
+describe('search over videos and threads', () => {
+  it('searches videos with the same FTS join and tags them as video rows', () => {
+    const sql = searchVideosQuery('burner', 10);
+    expect(sql.text).toContain('from videos v');
+    expect(sql.text).toContain("websearch_to_tsquery('english', $1)");
+    expect(sql.text).toContain("'video'::text as media_type");
+    expect(sql.text).toContain('v.boards && $2::text[]');
+    expect(sql.params).toEqual(['burner', ['burner'], 10]);
+  });
+
+  it('ranks a thread on its subject as well as its body, subject weighted up', () => {
+    const sql = searchThreadsQuery('oakland', 10);
+    expect(sql.text).toContain("to_tsvector('english', coalesce(t.subject, ''))");
+    expect(sql.text).toContain("+ 2 * ts_rank(to_tsvector('english', coalesce(t.subject, ''))");
+    expect(sql.text).toContain('order by rank desc');
+  });
+
+  it('matches a thread by board tag too', () => {
+    expect(searchThreadsQuery('oakland', 10).text).toContain('t.boards && $2::text[]');
   });
 });
 

@@ -33,9 +33,11 @@ people in this database.
 | `GET` | `/healthz` | `{ status, db }`. Pings the database; `503` when it cannot. Used by the compose healthcheck. |
 | `GET` | `/feed?board=&cursor=&limit=` | Flicks joined with profiles, newest first, with reply counts and a `nextCursor`. |
 | `GET` | `/flick/:id` | One flick, its writer, and the whole comment thread nested. |
-| `GET` | `/boards` | Every board with its flick count and latest activity. |
+| `GET` | `/boards?kind=` | Every board with its flick count, thread count and latest activity. `kind` filters by facet (`city`, `type`, `surface`, `region`, `legal`). |
+| `GET` | `/board/:slug?cursor=&limit=` | One board's threads, liveliest first, with an excerpt and reply count each. Paginated. |
+| `GET` | `/thread/:id` | One thread OP, its writer, and the whole reply tree nested. |
 | `GET` | `/writer/:pubkey` | A writer's profile and their flicks, buffed ones excluded. Paginated. |
-| `GET` | `/search?q=&limit=` | Full-text search over captions plus a board-tag match. Flicks only for now. |
+| `GET` | `/search?q=&limit=` | Full-text search over captions, thread subjects and thread bodies, plus a board-tag match. Returns `{ q, boards, flicks, videos, threads }`. |
 | `GET` | `/mod/queue?limit=` | Reports with the reported content, its thumbnail, and reporter stats. **Requires `X-Mod-Key`.** |
 | `GET` | `/mod/banlist` | Banned pubkeys with their counts. **Requires `X-Mod-Key`.** |
 
@@ -51,6 +53,24 @@ is capped at 50.
 
 Offset pagination would drift as new flicks land at the top, re-showing rows to
 anyone scrolling. Keyset pagination cannot.
+
+`/board/:slug` paginates the same way but on `greatest(created_at,
+last_reply_at)`, so a thread with a fresh reply floats to the top of the board.
+The cursor carries that activity timestamp rather than the OP's own, which is
+why a board cursor and a feed cursor are not interchangeable.
+
+### Expiring content
+
+An event may carry an expiry (a thread with one is a **beef**). Two background
+jobs remove them — the relay purges its own copy, the indexer sweeps Postgres
+every 60s — but between the expiry passing and the next sweep the row is still
+in the index. So every public read here also filters on it: an expired thread,
+flick, video or reply is absent from `/feed`, `/explore`, `/board/:slug`,
+`/thread/:id`, `/flick/:id`, `/writer/:pubkey`, `/crew/:pubkey`, `/search` and
+the `/boards` counts the moment it expires, and `/thread/:id` 404s.
+
+`/mod/*` is the one exception and deliberately so: a moderator may need to see
+reported content right up until it is actually swept.
 
 ### Errors
 
