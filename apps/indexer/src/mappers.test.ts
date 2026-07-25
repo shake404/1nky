@@ -4,6 +4,7 @@ import {
   buildCrewBadgeRegistry,
   buildCrewDefinition,
   buildFlick,
+  buildInvite,
   buildModBan,
   buildProfile,
   buildReport,
@@ -23,6 +24,8 @@ import {
   crewBadgeRowsFromRegistry,
   crewDefinitionRowFromEvent,
   expirationOf,
+  inviteRedemptionFromEvent,
+  inviteRowFromEvent,
   isExpired,
   modBanActionFromEvent,
   parseImeta,
@@ -638,8 +641,27 @@ describe('modBanActionFromEvent', () => {
     });
     expect(modBanActionFromEvent(event)).toEqual({
       action: 'ban',
+      subtree: false,
       row: { pubkey: target, reason: 'illegal', banned_at: 777, banned_by: AUTHOR },
     });
+  });
+
+  it('carries the subtree flag when the ban asks for the whole branch', () => {
+    const event = makeEvent({
+      ...buildModBan(target, 'ban', { reason: 'tag farm', subtree: true, createdAt: 777 }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+    });
+    expect(modBanActionFromEvent(event)?.subtree).toBe(true);
+  });
+
+  it('never marks an unban as a subtree action', () => {
+    const event = makeEvent({
+      ...buildModBan(target, 'unban', { subtree: true, createdAt: 778 }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+    });
+    expect(modBanActionFromEvent(event)?.subtree).toBe(false);
   });
 
   it('reads an unban, with no reason', () => {
@@ -683,6 +705,111 @@ describe('modBanActionFromEvent', () => {
         }),
       ),
     ).toBeNull();
+  });
+});
+
+describe('inviteRowFromEvent', () => {
+  const inviteId = 'ab12cd34ef567890';
+
+  it('reads a mint, attributed to the signer and stamped from the event', () => {
+    const event = makeEvent({
+      ...buildInvite(inviteId, { note: 'kid from 3rd', createdAt: 777 }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR,
+    });
+    expect(inviteRowFromEvent(event)).toEqual({
+      invite_id: inviteId,
+      inviter: AUTHOR,
+      created_at: 777,
+    });
+  });
+
+  it('lowercases the signer, so the not-banned check is case-insensitive', () => {
+    const event = makeEvent({
+      ...buildInvite(inviteId, { createdAt: 1 }),
+      kind: KINDS.APP_DATA,
+      pubkey: AUTHOR.toUpperCase(),
+    });
+    expect(inviteRowFromEvent(event)?.inviter).toBe(AUTHOR);
+  });
+
+  it('lets every other kind-30078 event through untouched', () => {
+    expect(
+      inviteRowFromEvent(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'crew']], content: '{"name":"FASE"}' }),
+      ),
+    ).toBeNull();
+    expect(
+      inviteRowFromEvent(makeEvent({ kind: KINDS.APP_DATA, tags: [['d', `ban:${hex('be')}`]], content: '{"action":"ban"}' })),
+    ).toBeNull();
+    expect(inviteRowFromEvent(makeEvent({ kind: KINDS.FLICK }))).toBeNull();
+  });
+
+  it('refuses a d-tag whose id is not 16-64 hex', () => {
+    expect(
+      inviteRowFromEvent(
+        makeEvent({ kind: KINDS.APP_DATA, tags: [['d', 'invite:short']], content: '{"v":1}' }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('inviteRedemptionFromEvent', () => {
+  const inviteId = 'ab12cd34ef567890';
+  const inviter = hex('1a');
+
+  it('reads the claim off a kind 0 — every field, none of it trusted yet', () => {
+    const event = makeEvent({
+      ...buildProfile({
+        tag: 'NEWJACK',
+        invite: { inviteId, inviterPubkey: inviter },
+        createdAt: 900,
+      }),
+      kind: KINDS.PROFILE,
+      pubkey: AUTHOR,
+    });
+    expect(inviteRedemptionFromEvent(event)).toEqual({
+      invite_id: inviteId,
+      inviter,
+      child: AUTHOR,
+      redeemed_at: 900,
+    });
+  });
+
+  it('is null for a profile that redeems nothing', () => {
+    const event = makeEvent({ ...buildProfile({ tag: 'SMOG' }), kind: KINDS.PROFILE });
+    expect(inviteRedemptionFromEvent(event)).toBeNull();
+  });
+
+  it('is null for a malformed tag and for the wrong kind', () => {
+    expect(
+      inviteRedemptionFromEvent(
+        makeEvent({ kind: KINDS.PROFILE, tags: [['invite', 'short', inviter]] }),
+      ),
+    ).toBeNull();
+    expect(
+      inviteRedemptionFromEvent(
+        makeEvent({ kind: KINDS.PROFILE, tags: [['invite', inviteId, 'nope']] }),
+      ),
+    ).toBeNull();
+    expect(
+      inviteRedemptionFromEvent(
+        makeEvent({ kind: KINDS.NOTE, tags: [['invite', inviteId, inviter]] }),
+      ),
+    ).toBeNull();
+  });
+
+  it('lowercases both sides and the child', () => {
+    const event = makeEvent({
+      kind: KINDS.PROFILE,
+      tags: [['invite', inviteId.toUpperCase(), inviter.toUpperCase()]],
+      pubkey: AUTHOR.toUpperCase(),
+    });
+    expect(inviteRedemptionFromEvent(event)).toMatchObject({
+      invite_id: inviteId,
+      inviter,
+      child: AUTHOR,
+    });
   });
 });
 

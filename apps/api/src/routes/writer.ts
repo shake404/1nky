@@ -50,6 +50,10 @@ export function writerRoutes({ db, config }: Deps): Router {
           eventCount: 0,
           banned: false,
           crews: [],
+          // No profile row means no kind 0, and a redemption rides on a kind 0,
+          // so a writer with no profile cannot have been put on. False is not a
+          // fallback here, it is the answer.
+          putOn: false,
         };
 
     res.json({

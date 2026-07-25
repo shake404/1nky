@@ -9,11 +9,9 @@
  *
  * TWO THINGS MATTER HERE.
  *
- * 1. ATOMICITY. The write policy re-reads the file the instant the mtime moves.
- *    A partial write would be unparseable JSON, and while the policy is careful
- *    enough to keep its last good list rather than fail open, relying on that is
- *    not a design. So the bytes go to `<path>.tmp` in the SAME directory and are
- *    then renamed over the target — one atomic replace, never a half file.
+ * 1. ATOMICITY. The write policy re-reads the file the instant the mtime moves,
+ *    so the replace must be atomic — see `writeFileAtomic` in `atomic.ts`, which
+ *    `invited-export.ts` shares for exactly the same reason.
  *
  * 2. NO LOGGING (CLAUDE.md hard rule #1). The rows here are pubkeys. Not one of
  *    them is ever written to stderr. `exportBanListSafe` logs the fact that an
@@ -21,8 +19,7 @@
  *    path but cannot contain event data.
  */
 
-import { rename, writeFile } from 'node:fs/promises';
-
+import { writeFileAtomic } from './atomic.js';
 import * as log from './log.js';
 import * as q from './queries.js';
 import type { Queryable } from './types.js';
@@ -86,11 +83,7 @@ export async function exportBanList(db: Queryable, path: string | undefined): Pr
   const { rows } = await db.query<BanListSource>(sql.text, sql.params);
   const entries = banListEntries(rows);
 
-  // Same directory as the target, so the rename is a rename and not a
-  // cross-device copy (which would not be atomic).
-  const tmp = `${path}.tmp`;
-  await writeFile(tmp, serialize(entries), 'utf8');
-  await rename(tmp, path);
+  await writeFileAtomic(path, serialize(entries));
   return entries.length;
 }
 

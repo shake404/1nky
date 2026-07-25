@@ -2,6 +2,7 @@ import {
   buildBuff,
   buildComment,
   buildFlick,
+  buildInvite,
   buildModBan,
   buildProfile,
   buildThreadOp,
@@ -13,6 +14,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { connect, type Database } from './db.js';
+import { invitedListJson } from './invited-export.js';
 import { migrate } from './migrate.js';
 import { indexEvent, newCounters, sweepExpired, truncateDerived } from './store.js';
 
@@ -398,5 +400,402 @@ describe.skipIf(!enabled)('schema against a live Postgres', () => {
 
     const events = await db.query(`select id from events where id = $1`, [doomed.id]);
     expect(events.rows).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invite trees ("getting put on") against a live Postgres.
+//
+// These live here rather than in store.test.ts because the rules that matter are
+// the ones Postgres enforces: every redemption guard is a predicate on one
+// UPDATE, and the subtree cascade is a recursive CTE. A fake database can assert
+// that the statement was issued; only a real one proves it does the right thing.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!enabled)('invite trees against a live Postgres', () => {
+  let db: Database;
+  const now = Math.floor(Date.now() / 1000);
+
+  /** A fresh keypair per call, so no test can inherit another's edges. */
+  let seq = 0;
+  function writer(): { sk: Uint8Array; pk: string } {
+    seq += 1;
+    const sk = generateSecretKey();
+    return { sk, pk: getPublicKey(sk) };
+  }
+
+  /** A 16-hex invite id, unique per label. */
+  function inviteId(label: string): string {
+    return `${label}${String(seq).padStart(2, '0')}`.padEnd(16, '0').slice(0, 16);
+  }
+
+  async function mint(sk: Uint8Array, id: string, createdAt = now): Promise<void> {
+    await indexEvent(db, finalizeEvent(buildInvite(id, { createdAt }), sk), newCounters(), { now });
+  }
+
+  /** Redeems and returns how many edges were created (0 = the claim was refused). */
+  async function redeem(
+    sk: Uint8Array,
+    id: string,
+    inviter: string,
+    createdAt = now + 1,
+  ): Promise<number> {
+    const counters = newCounters();
+    await indexEvent(
+      db,
+      finalizeEvent(
+        buildProfile({
+          tag: 'NEWJACK',
+          invite: { inviteId: id, inviterPubkey: inviter },
+          createdAt,
+        }),
+        sk,
+      ),
+      counters,
+      { now: createdAt },
+    );
+    return counters.putOn;
+  }
+
+  async function parentOf(child: string): Promise<string | undefined> {
+    const { rows } = await db.query<{ parent: string }>(
+      'select parent from invite_edges where child = $1',
+      [child],
+    );
+    return rows[0]?.parent;
+  }
+
+  async function isBanned(pubkey: string): Promise<boolean> {
+    const { rows } = await db.query('select 1 from banned_pubkeys where pubkey = $1', [pubkey]);
+    return rows.length === 1;
+  }
+
+  beforeAll(async () => {
+    db = connect(DATABASE_URL);
+    await migrate(db);
+    await truncateDerived(db);
+    await db.query('delete from banned_pubkeys');
+  });
+
+  afterAll(async () => {
+    if (db) await db.end();
+  });
+
+  it('mints an invite and redeems it into an edge', async () => {
+    const a = writer();
+    const b = writer();
+    const id = inviteId('aa');
+
+    await mint(a.sk, id);
+    const minted = await db.query<{ inviter: string; redeemed_by: string | null }>(
+      'select inviter, redeemed_by from invites where invite_id = $1',
+      [id],
+    );
+    expect(minted.rows[0]?.inviter).toBe(a.pk);
+    expect(minted.rows[0]?.redeemed_by).toBeNull();
+
+    expect(await redeem(b.sk, id, a.pk)).toBe(1);
+    expect(await parentOf(b.pk)).toBe(a.pk);
+
+    const after = await db.query<{ redeemed_by: string | null; redeemed_at: string | null }>(
+      'select redeemed_by, redeemed_at from invites where invite_id = $1',
+      [id],
+    );
+    expect(after.rows[0]?.redeemed_by).toBe(b.pk);
+    expect(after.rows[0]?.redeemed_at).not.toBeNull();
+  });
+
+  it('keeps the first mint of an id and ignores a later claim on it', async () => {
+    const a = writer();
+    const b = writer();
+    const id = inviteId('bb');
+
+    await mint(a.sk, id, now - 100);
+    await mint(b.sk, id, now);
+
+    const { rows } = await db.query<{ inviter: string }>(
+      'select inviter from invites where invite_id = $1',
+      [id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.inviter).toBe(a.pk);
+  });
+
+  it('lets a banned writer mint nothing', async () => {
+    const a = writer();
+    const id = inviteId('cc');
+    await db.query(
+      'insert into banned_pubkeys (pubkey, reason, banned_at, banned_by) values ($1, $2, $3, $4)',
+      [a.pk, 'spam', now, a.pk],
+    );
+    try {
+      await mint(a.sk, id);
+      expect((await db.query('select 1 from invites where invite_id = $1', [id])).rows).toEqual([]);
+    } finally {
+      await db.query('delete from banned_pubkeys where pubkey = $1', [a.pk]);
+    }
+  });
+
+  it('refuses a self-invite', async () => {
+    const a = writer();
+    const id = inviteId('dd');
+    await mint(a.sk, id);
+    expect(await redeem(a.sk, id, a.pk)).toBe(0);
+    expect(await parentOf(a.pk)).toBeUndefined();
+  });
+
+  it('refuses a redemption naming an inviter who did not mint it', async () => {
+    const a = writer();
+    const impostor = writer();
+    const b = writer();
+    const id = inviteId('ee');
+
+    await mint(a.sk, id);
+    expect(await redeem(b.sk, id, impostor.pk)).toBe(0);
+    expect(await parentOf(b.pk)).toBeUndefined();
+    // Still open for the writer it was actually meant for.
+    expect(await redeem(b.sk, id, a.pk)).toBe(1);
+  });
+
+  it('refuses a redemption when the inviter has since been banned', async () => {
+    const a = writer();
+    const b = writer();
+    const id = inviteId('ff');
+    await mint(a.sk, id);
+    await db.query(
+      'insert into banned_pubkeys (pubkey, reason, banned_at, banned_by) values ($1, $2, $3, $4)',
+      [a.pk, 'spam', now, a.pk],
+    );
+    try {
+      expect(await redeem(b.sk, id, a.pk)).toBe(0);
+      expect(await parentOf(b.pk)).toBeUndefined();
+    } finally {
+      await db.query('delete from banned_pubkeys where pubkey = $1', [a.pk]);
+    }
+  });
+
+  it('gives a writer ONE parent, forever - the first redemption wins', async () => {
+    const a = writer();
+    const c = writer();
+    const b = writer();
+    const first = inviteId('1a');
+    const second = inviteId('1b');
+
+    await mint(a.sk, first);
+    await mint(c.sk, second);
+
+    expect(await redeem(b.sk, first, a.pk)).toBe(1);
+    expect(await redeem(b.sk, second, c.pk, now + 500)).toBe(0);
+    expect(await parentOf(b.pk)).toBe(a.pk);
+
+    // The refused invite is untouched and still open for somebody else.
+    const { rows } = await db.query<{ redeemed_by: string | null }>(
+      'select redeemed_by from invites where invite_id = $1',
+      [second],
+    );
+    expect(rows[0]?.redeemed_by).toBeNull();
+  });
+
+  it('is idempotent on a replayed redemption', async () => {
+    const a = writer();
+    const b = writer();
+    const id = inviteId('1c');
+    await mint(a.sk, id);
+
+    expect(await redeem(b.sk, id, a.pk, now + 1)).toBe(1);
+    // A second kind-0 making the same claim: the invite still passes the
+    // redeemed_by check (same writer), but the edge already exists.
+    expect(await redeem(b.sk, id, a.pk, now + 2)).toBe(0);
+
+    const edges = await db.query('select 1 from invite_edges where child = $1', [b.pk]);
+    expect(edges.rows).toHaveLength(1);
+  });
+
+  it('bans a whole branch from the middle, leaving the root alone', async () => {
+    const modSk = generateSecretKey();
+    const mod = getPublicKey(modSk);
+    const mods: ReadonlySet<string> = new Set([mod]);
+
+    // root -> middle -> leafOne -> leafTwo: four generations, so the cascade has
+    // to be transitive rather than one level deep.
+    const root = writer();
+    const middle = writer();
+    const leafOne = writer();
+    const leafTwo = writer();
+
+    const one = inviteId('2a');
+    const two = inviteId('2b');
+    const three = inviteId('2c');
+    await mint(root.sk, one);
+    expect(await redeem(middle.sk, one, root.pk)).toBe(1);
+    await mint(middle.sk, two);
+    expect(await redeem(leafOne.sk, two, middle.pk)).toBe(1);
+    await mint(leafOne.sk, three);
+    expect(await redeem(leafTwo.sk, three, leafOne.pk)).toBe(1);
+
+    const counters = newCounters();
+    await indexEvent(
+      db,
+      finalizeEvent(
+        buildModBan(middle.pk, 'ban', { reason: 'tag farm', subtree: true, createdAt: now + 10 }),
+        modSk,
+      ),
+      counters,
+      { now: now + 10, modPubkeys: mods },
+    );
+
+    expect(counters.bans).toBe(1);
+    expect(counters.subtreeBans).toBe(2);
+    expect(await isBanned(middle.pk)).toBe(true);
+    expect(await isBanned(leafOne.pk)).toBe(true);
+    expect(await isBanned(leafTwo.pk)).toBe(true);
+    // Upward is untouched: vouching for somebody who turned out bad is not a
+    // crime, and a cascade that walked up would ban half the site.
+    expect(await isBanned(root.pk)).toBe(false);
+
+    // Every descendant carries the same reason, moderator and instant, so the
+    // moderation log reads as one action.
+    const { rows } = await db.query<{ reason: string; banned_at: string; banned_by: string }>(
+      'select reason, banned_at, banned_by from banned_pubkeys where pubkey = any($1::text[])',
+      [[middle.pk, leafOne.pk, leafTwo.pk]],
+    );
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.reason).toBe('tag farm');
+      expect(Number(row.banned_at)).toBe(now + 10);
+      expect(row.banned_by).toBe(mod);
+    }
+
+    // An unban of the middle lifts ONLY the middle: each descendant may have
+    // earned their own ban since, so lifting never cascades.
+    await indexEvent(
+      db,
+      finalizeEvent(buildModBan(middle.pk, 'unban', { createdAt: now + 20 }), modSk),
+      newCounters(),
+      { now: now + 20, modPubkeys: mods },
+    );
+    expect(await isBanned(middle.pk)).toBe(false);
+    expect(await isBanned(leafOne.pk)).toBe(true);
+    expect(await isBanned(leafTwo.pk)).toBe(true);
+
+    await db.query('delete from banned_pubkeys where pubkey = any($1::text[])', [
+      [leafOne.pk, leafTwo.pk],
+    ]);
+  });
+
+  it('terminates on a cycle instead of recursing forever', async () => {
+    const modSk = generateSecretKey();
+    const mods: ReadonlySet<string> = new Set([getPublicKey(modSk)]);
+
+    // Legal in the schema: a puts b on, then later b puts a on, because a had no
+    // parent at the time. `union all` in the cascade would spin on this.
+    const a = writer();
+    const b = writer();
+    const one = inviteId('3a');
+    const two = inviteId('3b');
+
+    await mint(a.sk, one);
+    expect(await redeem(b.sk, one, a.pk)).toBe(1);
+    await mint(b.sk, two);
+    expect(await redeem(a.sk, two, b.pk, now + 5)).toBe(1);
+
+    await indexEvent(
+      db,
+      finalizeEvent(buildModBan(a.pk, 'ban', { subtree: true, createdAt: now + 10 }), modSk),
+      newCounters(),
+      { now: now + 10, modPubkeys: mods },
+    );
+
+    expect(await isBanned(a.pk)).toBe(true);
+    expect(await isBanned(b.pk)).toBe(true);
+
+    await db.query('delete from banned_pubkeys where pubkey = any($1::text[])', [[a.pk, b.pk]]);
+  });
+
+  it('leaves the branch alone for an ordinary ban', async () => {
+    const modSk = generateSecretKey();
+    const mods: ReadonlySet<string> = new Set([getPublicKey(modSk)]);
+    const a = writer();
+    const b = writer();
+    const id = inviteId('4a');
+
+    await mint(a.sk, id);
+    expect(await redeem(b.sk, id, a.pk)).toBe(1);
+
+    await indexEvent(
+      db,
+      finalizeEvent(buildModBan(a.pk, 'ban', { reason: 'spam', createdAt: now + 10 }), modSk),
+      newCounters(),
+      { now: now + 10, modPubkeys: mods },
+    );
+
+    expect(await isBanned(a.pk)).toBe(true);
+    expect(await isBanned(b.pk)).toBe(false);
+    await db.query('delete from banned_pubkeys where pubkey = $1', [a.pk]);
+  });
+
+  it('rebuilds the whole forest from the relay - both tables are derived', async () => {
+    const a = writer();
+    const b = writer();
+    const id = inviteId('5a');
+
+    const mintEvent = finalizeEvent(buildInvite(id, { createdAt: now }), a.sk);
+    const redeemEvent = finalizeEvent(
+      buildProfile({
+        tag: 'NEWJACK',
+        invite: { inviteId: id, inviterPubkey: a.pk },
+        createdAt: now + 1,
+      }),
+      b.sk,
+    );
+    await indexEvent(db, mintEvent, newCounters(), { now });
+    await indexEvent(db, redeemEvent, newCounters(), { now: now + 1 });
+    expect(await parentOf(b.pk)).toBe(a.pk);
+
+    await truncateDerived(db);
+    expect(await parentOf(b.pk)).toBeUndefined();
+    expect((await db.query('select 1 from invites where invite_id = $1', [id])).rows).toEqual([]);
+
+    // Replaying the same two events puts the whole branch back.
+    await indexEvent(db, mintEvent, newCounters(), { now });
+    await indexEvent(db, redeemEvent, newCounters(), { now: now + 1 });
+    expect(await parentOf(b.pk)).toBe(a.pk);
+  });
+
+  it('exports exactly what the relay write policy will load', async () => {
+    const { rows } = await db.query<{ pubkey: string }>(
+      'select child as pubkey from invite_edges order by child',
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    const json = invitedListJson(rows);
+    // Bare hex strings, sorted, no reasons and nothing about the tree.
+    expect(JSON.parse(json)).toEqual(rows.map((r) => r.pubkey));
+    expect(json).not.toContain('parent');
+  });
+
+  it('walks the same branch the API tree endpoint serves', async () => {
+    // The mod console's "ban the whole branch" preview and the indexer's cascade
+    // must agree, so the recursive CTE the API runs is exercised here too.
+    const a = writer();
+    const b = writer();
+    const c = writer();
+    const one = inviteId('6a');
+    const two = inviteId('6b');
+
+    await mint(a.sk, one);
+    expect(await redeem(b.sk, one, a.pk)).toBe(1);
+    await mint(b.sk, two);
+    expect(await redeem(c.sk, two, b.pk)).toBe(1);
+
+    const { rows } = await db.query<{ pubkey: string; parent: string }>(
+      `with recursive sub as (
+         select e.child, e.parent, e.redeemed_at from invite_edges e where e.parent = $1
+         union
+         select e.child, e.parent, e.redeemed_at from invite_edges e join sub on e.parent = sub.child
+       )
+       select sub.child as pubkey, sub.parent from sub order by sub.redeemed_at asc, sub.child asc`,
+      [a.pk],
+    );
+    expect(rows.map((r) => r.pubkey).sort()).toEqual([b.pk, c.pk].sort());
   });
 });

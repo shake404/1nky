@@ -6,6 +6,8 @@ import {
   boardRowsFromRegistry,
   crewBadgeRowsFromRegistry,
   crewDefinitionRowFromEvent,
+  inviteRedemptionFromEvent,
+  inviteRowFromEvent,
   isExpired,
   modBanActionFromEvent,
   routeOf,
@@ -39,6 +41,15 @@ export interface Counters {
   bans: number;
   /** Moderator bans lifted. */
   unbans: number;
+  /**
+   * Writers banned by a subtree cascade rather than named directly. Counts only,
+   * never who.
+   */
+  subtreeBans: number;
+  /** Invites minted ("getting put on"). Counts only, never which. */
+  invites: number;
+  /** Invites redeemed — one new invite-tree edge each. */
+  putOn: number;
   buffed: number;
   duplicates: number;
   expired: number;
@@ -65,6 +76,9 @@ export function newCounters(): Counters {
     crewBadges: 0,
     bans: 0,
     unbans: 0,
+    subtreeBans: 0,
+    invites: 0,
+    putOn: 0,
     buffed: 0,
     duplicates: 0,
     expired: 0,
@@ -105,6 +119,12 @@ export interface IndexOptions {
    * reason to stop indexing.
    */
   onBanChange?: (() => Promise<void>) | undefined;
+  /**
+   * Called after a new invite-tree edge was recorded, so the strfry invited list
+   * can be re-exported. Same contract as `onBanChange`: it MUST NOT throw, and
+   * the indexer passes a wrapper that swallows filesystem failures.
+   */
+  onInvitedChange?: (() => Promise<void>) | undefined;
 }
 
 /**
@@ -150,6 +170,28 @@ export async function indexEvent(
     case 'profile': {
       await run(db, q.upsertProfile(toProfileRow(event)));
       counters.profiles += 1;
+
+      // "Getting put on": a kind 0 may carry one `invite` tag redeeming an
+      // invite somebody minted for this writer. Nothing about the claim is
+      // trusted here — `redeemInvite` is a single UPDATE whose WHERE clause is
+      // every rule at once (the invite exists, names this inviter, is unredeemed
+      // or already redeemed by this same writer, the inviter is neither the child
+      // nor banned, and the child has no parent yet). rowCount 0 means the claim
+      // was refused, and an invalid redemption is SILENTLY ignored: the profile
+      // itself is perfectly good, and saying more would mean logging pubkeys.
+      const redemption = inviteRedemptionFromEvent(event);
+      if (redemption) {
+        const redeemed = await run(db, q.redeemInvite(redemption));
+        if (redeemed > 0) {
+          // `child` is the primary key with `do nothing` on conflict, so the
+          // one-parent-forever rule holds even if this somehow runs twice.
+          const edges = await run(db, q.insertInviteEdge(redemption));
+          if (edges > 0) {
+            counters.putOn += 1;
+            if (options.onInvitedChange) await options.onInvitedChange();
+          }
+        }
+      }
       return;
     }
 
@@ -264,7 +306,35 @@ export async function indexEvent(
 
         if (ban.action === 'ban') counters.bans += 1;
         else counters.unbans += 1;
+
+        // "Ban the whole branch." A subtree ban reaches every writer the target
+        // ever put on, transitively, all attributed to this same moderator and
+        // this same instant so the moderation log reads as one action. Only a
+        // ban cascades — an unban never does, because each descendant may have
+        // earned their own ban since (`isSubtreeBan` refuses an unban outright).
+        if (ban.action === 'ban' && ban.subtree) {
+          counters.subtreeBans += await run(db, q.banSubtree(ban.row));
+        }
+
+        // ONE export, after the whole expansion. Exporting per descendant would
+        // hand the relay a list that is briefly missing half the branch, and the
+        // policy reloads on every mtime change.
         if (options.onBanChange) await options.onBanChange();
+        return;
+      }
+
+      // An invite mint — kind 30078 with d = "invite:<id>". Checked before the
+      // `d` switch below, alongside the ban check, so it can never be confused
+      // with a crew definition or a board registry.
+      //
+      // Unlike a ban this needs NO privileged signer: any writer who is not
+      // banned may put somebody on, which is the entire point. The
+      // not-banned rule and first-mint-wins are both SQL guards in
+      // `upsertInvite`, so a concurrent ban cannot be raced and a replayed
+      // firehose cannot move an existing invite's inviter.
+      const invite = inviteRowFromEvent(event);
+      if (invite) {
+        counters.invites += await run(db, q.upsertInvite(invite));
         return;
       }
 

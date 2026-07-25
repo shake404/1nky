@@ -289,12 +289,20 @@ order by c.created_at asc, c.event_id asc`,
   };
 }
 
+/**
+ * `put_on` is the ONLY thing about the invite forest that is public: a boolean,
+ * "was this writer vouched for by somebody already here". Who put them on, when,
+ * and what the rest of the branch looks like are mod-only (`GET /mod/tree`) —
+ * publishing the graph would turn "getting put on" into a map of who knows whom,
+ * which is exactly the thing a writer cannot afford to have public.
+ */
 export function profileQuery(pubkey: string): Sql {
   return {
     text: `select p.pubkey, p.tag_name, p.city, p.avatar_sha256, p.crews, p.first_seen, p.updated_at,
        coalesce(s.event_count, 0) as event_count,
        s.first_event_at,
-       exists (select 1 from banned_pubkeys b where b.pubkey = p.pubkey) as banned
+       exists (select 1 from banned_pubkeys b where b.pubkey = p.pubkey) as banned,
+       exists (select 1 from invite_edges ie where ie.child = p.pubkey) as put_on
 from profiles p
 left join pubkey_stats s on s.pubkey = p.pubkey
 where p.pubkey = $1`,
@@ -705,5 +713,103 @@ from banned_pubkeys b
 left join pubkey_stats s on s.pubkey = b.pubkey
 order by b.banned_at desc, b.pubkey asc`,
     params: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The invite forest — mod-only. Two queries per view (the nodes, then the
+// edges), assembled into a tree in `shape.ts` rather than in SQL, because the
+// depth and node caps have to be applied somewhere a test can see them.
+// ---------------------------------------------------------------------------
+
+/** Everything a tree node shows. `$1`-free so both views can share it. */
+const INVITE_NODE_COLUMNS = `p.tag_name,
+       coalesce(s.event_count, 0)  as event_count,
+       coalesce(s.report_count, 0) as report_count`;
+
+const inviteNodeJoins = (pubkeyColumn: string): string => `left join profiles p     on p.pubkey = ${pubkeyColumn}
+left join pubkey_stats s on s.pubkey = ${pubkeyColumn}`;
+
+/**
+ * The roots of the forest: writers who have put somebody on but were never put
+ * on themselves. Anyone with no edge at all — never invited, never invited
+ * anybody — is not in the forest and is deliberately absent.
+ */
+export function inviteRootsQuery(): Sql {
+  return {
+    text: `select distinct e.parent as pubkey,
+       ${INVITE_NODE_COLUMNS},
+       exists (select 1 from banned_pubkeys b where b.pubkey = e.parent) as banned
+from invite_edges e
+${inviteNodeJoins('e.parent')}
+where not exists (select 1 from invite_edges pe where pe.child = e.parent)
+order by e.parent asc`,
+    params: [],
+  };
+}
+
+/**
+ * Every edge in the forest, oldest redemption first. The shaper walks these into
+ * a tree, so the ORDER BY is what makes its truncation deterministic: the same
+ * rows always produce the same 2000 nodes.
+ */
+export function inviteEdgesQuery(): Sql {
+  return {
+    text: `select e.child as pubkey, e.parent, e.redeemed_at as invited_at,
+       ${INVITE_NODE_COLUMNS},
+       exists (select 1 from banned_pubkeys b where b.pubkey = e.child) as banned
+from invite_edges e
+${inviteNodeJoins('e.child')}
+order by e.redeemed_at asc, e.child asc`,
+    params: [],
+  };
+}
+
+/**
+ * One writer as a tree root, whether or not they are in the forest at all.
+ *
+ * `select $1 as pubkey` rather than `from profiles`: a mod asking about a writer
+ * with no profile event and no invites gets a lone node with zeroes, which is the
+ * true answer, instead of a 404 that reads like the endpoint is broken.
+ * `invited_at` is their own edge's, or null when nobody put them on.
+ */
+export function inviteNodeQuery(pubkey: string): Sql {
+  return {
+    text: `select $1::text as pubkey,
+       ie.redeemed_at as invited_at,
+       p.tag_name,
+       coalesce(s.event_count, 0)  as event_count,
+       coalesce(s.report_count, 0) as report_count,
+       exists (select 1 from banned_pubkeys b where b.pubkey = $1) as banned
+from (select 1) one
+left join invite_edges ie on ie.child = $1
+left join profiles p      on p.pubkey = $1
+left join pubkey_stats s  on s.pubkey = $1`,
+    params: [pubkey],
+  };
+}
+
+/**
+ * Every edge below one writer, transitively — the "ban the whole branch" preview.
+ *
+ * `union` (not `union all`) deduplicates, which is what makes this terminate on a
+ * cycle: A puts B on, then later B puts A on, which is legal because A had no
+ * parent at the time. Same reason as `banSubtree` in the indexer, and the two
+ * must agree — this endpoint is what a moderator reads before signing that ban.
+ */
+export function inviteSubtreeEdgesQuery(pubkey: string): Sql {
+  return {
+    text: `with recursive sub as (
+  select e.child, e.parent, e.redeemed_at from invite_edges e where e.parent = $1
+  union
+  select e.child, e.parent, e.redeemed_at from invite_edges e join sub on e.parent = sub.child
+)
+select sub.child as pubkey, sub.parent, sub.redeemed_at as invited_at,
+       ${INVITE_NODE_COLUMNS},
+       exists (select 1 from banned_pubkeys b where b.pubkey = sub.child) as banned
+from sub
+${inviteNodeJoins('sub.child')}
+order by sub.redeemed_at asc, sub.child asc`,
+    params: [pubkey],
   };
 }

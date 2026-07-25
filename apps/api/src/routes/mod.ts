@@ -1,8 +1,15 @@
 import { Router } from 'express';
 
-import { parseLimit, requireModKey } from '../http.js';
-import { banlistQuery, modQueueQuery } from '../queries.js';
-import { markOf, num } from '../shape.js';
+import { parseHexId, parseLimit, requireModKey } from '../http.js';
+import {
+  banlistQuery,
+  inviteEdgesQuery,
+  inviteNodeQuery,
+  inviteRootsQuery,
+  inviteSubtreeEdgesQuery,
+  modQueueQuery,
+} from '../queries.js';
+import { buildInviteForest, type InviteNodeSource, markOf, num } from '../shape.js';
 import type { Deps } from './deps.js';
 
 interface QueueRow {
@@ -37,11 +44,12 @@ interface BanRow {
 }
 
 /**
- * `GET /mod/queue` and `GET /mod/banlist`, gated by `X-Mod-Key`.
+ * `GET /mod/queue`, `/mod/banlist` and `/mod/tree`, gated by `X-Mod-Key`.
  *
  * Read-only, like everything else here. A takedown is a signed event from a
  * mod key published to the relay, not a POST to this service — that is what
- * makes the moderation log auditable.
+ * makes the moderation log auditable. `/mod/tree` is a *preview*: the ban it
+ * informs is still a signed kind-30078 with `subtree: true`.
  */
 export function modRoutes({ db, config }: Deps): Router {
   const router = Router();
@@ -104,6 +112,48 @@ export function modRoutes({ db, config }: Deps): Router {
         eventCount: num(row.event_count),
       })),
     });
+  });
+
+  /**
+   * `GET /mod/tree` — the whole invite forest.
+   *
+   * Only writers with an edge appear: a root is somebody who put others on and
+   * was never put on themselves, so a writer with no invites either way is
+   * simply not in the forest. Capped at depth 12 / 2000 nodes, with
+   * `truncated: true` when either bites — a moderator about to ban a branch has
+   * to know whether they are seeing all of it.
+   */
+  router.get('/mod/tree', async (_req, res) => {
+    const rootsSql = inviteRootsQuery();
+    const roots = await db.query<InviteNodeSource>(rootsSql.text, rootsSql.params);
+
+    const edgesSql = inviteEdgesQuery();
+    const edges = await db.query<InviteNodeSource>(edgesSql.text, edgesSql.params);
+
+    const forest = buildInviteForest(roots.rows, edges.rows);
+    res.json(forest);
+  });
+
+  /**
+   * `GET /mod/tree/:pubkey` — the branch below one writer.
+   *
+   * This is what the console's "ban the whole branch" preview reads, so it walks
+   * `invite_edges` with the same recursive CTE the indexer's cascade uses. The
+   * root is always returned, even for a writer with no profile and no invites: a
+   * lone node with zeroes is the true answer and a 404 would read like a fault.
+   */
+  router.get('/mod/tree/:pubkey', async (req, res) => {
+    const pubkey = parseHexId(req.params['pubkey'], 'writer id');
+
+    const nodeSql = inviteNodeQuery(pubkey);
+    const node = await db.query<InviteNodeSource>(nodeSql.text, nodeSql.params);
+
+    const edgesSql = inviteSubtreeEdgesQuery(pubkey);
+    const edges = await db.query<InviteNodeSource>(edgesSql.text, edgesSql.params);
+
+    const rootRows = node.rows.length > 0 ? node.rows : [{ pubkey }];
+    const forest = buildInviteForest(rootRows, edges.rows);
+    res.json(forest);
   });
 
   return router;

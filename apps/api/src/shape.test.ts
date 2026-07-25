@@ -2,7 +2,11 @@ import { fingerprint } from '@1nky/protocol';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildInviteForest,
   countComments,
+  INVITE_TREE_MAX_DEPTH,
+  INVITE_TREE_MAX_NODES,
+  type InviteNodeSource,
   markOf,
   num,
   shapeFeedItem,
@@ -226,5 +230,157 @@ describe('threadComments', () => {
   it('returns nothing for an empty thread', () => {
     expect(threadComments([], ROOT)).toEqual([]);
     expect(countComments([])).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The invite forest — "getting put on"
+// ---------------------------------------------------------------------------
+
+describe('buildInviteForest', () => {
+  const A = hex('1a');
+  const B = hex('2b');
+  const C = hex('3c');
+  const D = hex('4d');
+
+  const root = (pubkey: string, over: Partial<InviteNodeSource> = {}): InviteNodeSource => ({
+    pubkey,
+    tag_name: 'SMOG',
+    event_count: '4',
+    report_count: '1',
+    banned: false,
+    ...over,
+  });
+
+  const edge = (
+    pubkey: string,
+    parent: string,
+    invitedAt: number,
+    over: Partial<InviteNodeSource> = {},
+  ): InviteNodeSource => ({ ...root(pubkey), parent, invited_at: String(invitedAt), ...over });
+
+  it('nests a three-level tree and reports no truncation', () => {
+    const forest = buildInviteForest(
+      [root(A)],
+      [edge(B, A, 100), edge(C, B, 200), edge(D, C, 300)],
+    );
+
+    expect(forest.truncated).toBe(false);
+    expect(forest.roots).toHaveLength(1);
+    const [a] = forest.roots;
+    expect(a?.pubkey).toBe(A);
+    // A root nobody invited has no invitedAt.
+    expect(a?.invitedAt).toBeNull();
+    expect(a?.mark).toHaveLength(6);
+    expect(a?.tag).toBe('SMOG');
+    expect(a?.eventCount).toBe(4);
+    expect(a?.reportCount).toBe(1);
+
+    const b = a?.children[0];
+    expect(b?.pubkey).toBe(B);
+    expect(b?.invitedAt).toBe(100);
+    expect(b?.children[0]?.pubkey).toBe(C);
+    expect(b?.children[0]?.children[0]?.pubkey).toBe(D);
+  });
+
+  it('keeps siblings in the order the query handed them over', () => {
+    const forest = buildInviteForest([root(A)], [edge(B, A, 100), edge(C, A, 200)]);
+    expect(forest.roots[0]?.children.map((c) => c.pubkey)).toEqual([B, C]);
+  });
+
+  it('carries the banned flag per node', () => {
+    const forest = buildInviteForest([root(A)], [edge(B, A, 100, { banned: true })]);
+    expect(forest.roots[0]?.banned).toBe(false);
+    expect(forest.roots[0]?.children[0]?.banned).toBe(true);
+  });
+
+  it('handles several roots and an empty forest', () => {
+    expect(buildInviteForest([], [])).toEqual({ roots: [], truncated: false });
+    const forest = buildInviteForest([root(A), root(B)], [edge(C, B, 100)]);
+    expect(forest.roots.map((r) => r.pubkey)).toEqual([A, B]);
+    expect(forest.roots[1]?.children[0]?.pubkey).toBe(C);
+  });
+
+  it('ignores an edge whose parent is not in the forest', () => {
+    const forest = buildInviteForest([root(A)], [edge(B, C, 100)]);
+    expect(forest.roots[0]?.children).toEqual([]);
+    expect(forest.truncated).toBe(false);
+  });
+
+  it('stops at the depth cap and says so', () => {
+    // A chain one generation longer than the cap allows.
+    const chain: InviteNodeSource[] = [];
+    let parent = A;
+    for (let i = 0; i < INVITE_TREE_MAX_DEPTH + 3; i += 1) {
+      // Seeds e0..ee: distinct from each other and from A/B/C/D above.
+      const child = hex(`e${i.toString(16)}`);
+      chain.push(edge(child, parent, 100 + i));
+      parent = child;
+    }
+
+    const forest = buildInviteForest([root(A)], chain);
+    expect(forest.truncated).toBe(true);
+
+    let depth = 0;
+    let node = forest.roots[0];
+    while (node?.children[0]) {
+      depth += 1;
+      node = node.children[0];
+    }
+    expect(depth).toBe(INVITE_TREE_MAX_DEPTH);
+  });
+
+  it('does not claim truncation for a tree that exactly reaches the cap', () => {
+    const forest = buildInviteForest([root(A)], [edge(B, A, 100)], { maxDepth: 1 });
+    expect(forest.truncated).toBe(false);
+    expect(forest.roots[0]?.children).toHaveLength(1);
+  });
+
+  it('stops at the node cap and says so', () => {
+    const forest = buildInviteForest([root(A)], [edge(B, A, 100), edge(C, A, 200)], {
+      maxNodes: 2,
+    });
+    expect(forest.truncated).toBe(true);
+    expect(forest.roots[0]?.children.map((c) => c.pubkey)).toEqual([B]);
+  });
+
+  it('caps roots too, when there are more of them than the budget', () => {
+    const forest = buildInviteForest([root(A), root(B), root(C)], [], { maxNodes: 2 });
+    expect(forest.truncated).toBe(true);
+    expect(forest.roots.map((r) => r.pubkey)).toEqual([A, B]);
+  });
+
+  it('spends the budget breadth-first, on the writers nearest the root', () => {
+    // A -> B, C; B -> D. With room for three nodes both of A's children come
+    // back, not one child and one grandchild.
+    const forest = buildInviteForest([root(A)], [edge(B, A, 100), edge(C, A, 200), edge(D, B, 300)], {
+      maxNodes: 3,
+    });
+    expect(forest.roots[0]?.children.map((c) => c.pubkey)).toEqual([B, C]);
+    expect(forest.roots[0]?.children[0]?.children).toEqual([]);
+    expect(forest.truncated).toBe(true);
+  });
+
+  it('cannot be made to recurse forever by a cycle', () => {
+    // Legal in the schema: A put B on, then later B put A on, because A had no
+    // parent at the time.
+    const forest = buildInviteForest([root(A)], [edge(B, A, 100), edge(A, B, 200)]);
+    expect(forest.roots[0]?.children.map((c) => c.pubkey)).toEqual([B]);
+    expect(forest.roots[0]?.children[0]?.children).toEqual([]);
+  });
+
+  it('is deterministic: the same rows always produce the same response', () => {
+    const roots = [root(A)];
+    const edges = [edge(B, A, 100), edge(C, A, 200), edge(D, B, 300)];
+    const first = buildInviteForest(roots, edges, { maxNodes: 3 });
+    const second = buildInviteForest(roots.map((r) => ({ ...r })), edges.map((e) => ({ ...e })), {
+      maxNodes: 3,
+    });
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+  });
+
+  it('caps at depth 12 / 2000 nodes by default', () => {
+    expect(INVITE_TREE_MAX_DEPTH).toBe(12);
+    expect(INVITE_TREE_MAX_NODES).toBe(2000);
   });
 });

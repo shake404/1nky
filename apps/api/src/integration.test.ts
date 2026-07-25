@@ -65,7 +65,12 @@ describe.skipIf(!enabled)('endpoints against a live Postgres', () => {
     expect([200, 404]).toContain(res.status);
   });
 
-  it.each([['/mod/queue'], ['/mod/banlist']])('runs the SQL behind %s', async (path) => {
+  it.each([
+    ['/mod/queue'],
+    ['/mod/banlist'],
+    ['/mod/tree'],
+    [`/mod/tree/${'a'.repeat(64)}`],
+  ])('runs the SQL behind %s', async (path) => {
     const res = await request(app, path, {
       headers: { 'X-Mod-Key': config.modApiKey ?? '' },
     });
@@ -194,5 +199,151 @@ describe.skipIf(!enabled)('expired rows are hidden before the sweep reaches them
     const res = await request(app, '/search?q=gone');
     const ids = (res.body as { threads: { id: string }[] }).threads.map((t) => t.id);
     expect(ids).not.toContain(DOOMED);
+  });
+});
+
+/**
+ * The invite forest, end to end.
+ *
+ * A three-level branch is seeded straight into `invite_edges` and the real
+ * endpoints are asked about it over HTTP. This is what proves the recursive CTE
+ * and the two-query assembly agree — and that `putOn` leaks nothing else.
+ */
+describe.skipIf(!enabled)('the invite tree over real HTTP', () => {
+  let config: ApiConfig;
+  let db: Database;
+  let app: Express;
+  let seed: pg.Pool;
+
+  const ROOT = hex('c1');
+  const MIDDLE = hex('c2');
+  const LEAF = hex('c3');
+  const ALL = [ROOT, MIDDLE, LEAF];
+  const now = Math.floor(Date.now() / 1000);
+
+  interface Node {
+    pubkey: string;
+    tag: string | null;
+    invitedAt: number | null;
+    banned: boolean;
+    eventCount: number;
+    reportCount: number;
+    children: Node[];
+  }
+
+  beforeAll(async () => {
+    config = loadConfig({
+      ...process.env,
+      MOD_API_KEY: process.env['MOD_API_KEY'] ?? 'pgtest-mod-key',
+    });
+    db = connect(config.databaseUrl);
+    app = createApp(db, config);
+    seed = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
+
+    await seed.query('delete from invite_edges where child = any($1::text[])', [ALL]);
+    await seed.query('delete from profiles where pubkey = any($1::text[])', [ALL]);
+    await seed.query('delete from pubkey_stats where pubkey = any($1::text[])', [ALL]);
+
+    for (const [child, parent, at] of [
+      [MIDDLE, ROOT, now - 200],
+      [LEAF, MIDDLE, now - 100],
+    ] as const) {
+      await seed.query(
+        `insert into invite_edges (child, parent, invite_id, redeemed_at)
+         values ($1, $2, $3, $4) on conflict (child) do nothing`,
+        [child, parent, 'ab12cd34ef567890', at],
+      );
+    }
+    await seed.query(
+      `insert into profiles (pubkey, tag_name, first_seen, updated_at)
+       values ($1, 'MIDDLE', $2, $2) on conflict (pubkey) do nothing`,
+      [MIDDLE, now - 200],
+    );
+    await seed.query(
+      `insert into pubkey_stats (pubkey, first_event_at, event_count, report_count)
+       values ($1, $2, 7, 2) on conflict (pubkey) do nothing`,
+      [MIDDLE, now - 200],
+    );
+  });
+
+  afterAll(async () => {
+    if (seed) {
+      await seed.query('delete from invite_edges where child = any($1::text[])', [ALL]);
+      await seed.query('delete from profiles where pubkey = any($1::text[])', [ALL]);
+      await seed.query('delete from pubkey_stats where pubkey = any($1::text[])', [ALL]);
+      await seed.end();
+    }
+    if (db) await db.end();
+  });
+
+  const findNode = (nodes: readonly Node[], pubkey: string): Node | undefined => {
+    for (const node of nodes) {
+      if (node.pubkey === pubkey) return node;
+      const found = findNode(node.children, pubkey);
+      if (found) return found;
+    }
+    return undefined;
+  };
+
+  it('nests the seeded branch under its root in GET /mod/tree', async () => {
+    const res = await request(app, '/mod/tree', {
+      headers: { 'X-Mod-Key': config.modApiKey ?? '' },
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { roots: Node[]; truncated: boolean };
+
+    const root = body.roots.find((r) => r.pubkey === ROOT);
+    expect(root).toBeDefined();
+    expect(root?.invitedAt).toBeNull();
+
+    const middle = findNode(body.roots, MIDDLE);
+    expect(middle?.tag).toBe('MIDDLE');
+    expect(middle?.invitedAt).toBe(now - 200);
+    expect(middle?.eventCount).toBe(7);
+    expect(middle?.reportCount).toBe(2);
+    expect(middle?.children.map((c) => c.pubkey)).toEqual([LEAF]);
+  });
+
+  it('walks only downward for GET /mod/tree/:pubkey', async () => {
+    const res = await request(app, `/mod/tree/${MIDDLE}`, {
+      headers: { 'X-Mod-Key': config.modApiKey ?? '' },
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { roots: Node[]; truncated: boolean };
+
+    expect(body.roots.map((r) => r.pubkey)).toEqual([MIDDLE]);
+    expect(body.roots[0]?.invitedAt).toBe(now - 200);
+    expect(body.roots[0]?.children.map((c) => c.pubkey)).toEqual([LEAF]);
+    // The root that put MIDDLE on is not in a downward walk.
+    expect(findNode(body.roots, ROOT)).toBeUndefined();
+    expect(body.truncated).toBe(false);
+  });
+
+  it('reports a lone root for a writer nobody put on', async () => {
+    const stranger = hex('c9');
+    const res = await request(app, `/mod/tree/${stranger}`, {
+      headers: { 'X-Mod-Key': config.modApiKey ?? '' },
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { roots: Node[] };
+    expect(body.roots).toHaveLength(1);
+    expect(body.roots[0]?.pubkey).toBe(stranger);
+    expect(body.roots[0]?.invitedAt).toBeNull();
+    expect(body.roots[0]?.children).toEqual([]);
+  });
+
+  it('exposes putOn publicly and the rest of the tree not at all', async () => {
+    const res = await request(app, `/writer/${MIDDLE}`);
+    expect(res.status).toBe(200);
+    const writer = (res.body as { writer: Record<string, unknown> }).writer;
+    expect(writer.putOn).toBe(true);
+    const json = JSON.stringify(writer);
+    expect(json).not.toContain(ROOT);
+    expect(json).not.toContain('invitedAt');
+  });
+
+  it('needs the mod key for the tree, even though putOn is public', async () => {
+    expect((await request(app, '/mod/tree')).status).toBe(401);
+    expect((await request(app, `/mod/tree/${MIDDLE}`)).status).toBe(401);
   });
 });

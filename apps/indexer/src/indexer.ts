@@ -2,6 +2,7 @@ import { ALL_KINDS, KINDS, type SignedEvent } from '@1nky/protocol';
 
 import { exportBanListSafe } from './banlist-export.js';
 import { backoffDelay, type IndexerConfig } from './config.js';
+import { exportInvitedListSafe } from './invited-export.js';
 import * as log from './log.js';
 import { type RelayClientOptions, runConnection } from './relay.js';
 import {
@@ -92,6 +93,14 @@ export async function run(options: RunOptions): Promise<Counters> {
     await exportBanListSafe(db, config.banListExportPath);
   };
 
+  // Same contract for the invited list: a redemption lands, the relay learns
+  // within ~1s that this writer no longer owes the newcomer PoW tier. A failed
+  // export costs them a slower next post, never an indexing stall. No-ops when
+  // INVITED_LIST_EXPORT_PATH is unset.
+  const onInvitedChange = async (): Promise<void> => {
+    await exportInvitedListSafe(db, config.invitedListExportPath);
+  };
+
   const onEvent = async (event: SignedEvent): Promise<void> => {
     try {
       await indexEvent(db, event, counters, {
@@ -99,6 +108,7 @@ export async function run(options: RunOptions): Promise<Counters> {
         sitePubkey: options.sitePubkey,
         modPubkeys: config.modPubkeys,
         onBanChange,
+        onInvitedChange,
       });
     } catch (err) {
       counters.errors += 1;

@@ -14,6 +14,10 @@ import {
   exploreQuery,
   feedQuery,
   flickQuery,
+  inviteEdgesQuery,
+  inviteNodeQuery,
+  inviteRootsQuery,
+  inviteSubtreeEdgesQuery,
   modQueueQuery,
   profileQuery,
   searchBoardTerms,
@@ -49,11 +53,15 @@ const ALL = [
   threadQuery(hex('55')),
   searchVideosQuery('burner', 24),
   searchThreadsQuery('burner', 24),
+  inviteRootsQuery(),
+  inviteEdgesQuery(),
+  inviteNodeQuery(hex('ab')),
+  inviteSubtreeEdgesQuery(hex('ab')),
 ];
 
 /**
- * Every public read that serves an event-backed row. The mod queue and the ban
- * list are deliberately absent — see `NOT_EXPIRED` in queries.ts.
+ * Every public read that serves an event-backed row. The mod queue, the ban list
+ * and the invite tree are deliberately absent — see `NOT_EXPIRED` in queries.ts.
  */
 const PUBLIC_EVENT_READS = [
   ['feed', feedQuery({ limit: 24 })],
@@ -74,7 +82,9 @@ const PUBLIC_EVENT_READS = [
 describe('the API is read-only (hard rule #4)', () => {
   it.each(ALL.map((sql, i) => [i, sql] as const))('query %i only selects', (_i, sql) => {
     const text = sql.text.toLowerCase();
-    expect(text.trimStart().startsWith('select')).toBe(true);
+    // A leading `with recursive` is still a SELECT — the invite-tree walk needs
+    // one. Nothing else may lead, and no write verb may appear anywhere.
+    expect(text.trimStart()).toMatch(/^(select|with recursive)\b/);
     for (const verb of ['insert ', 'update ', 'delete ', 'truncate ', 'drop ', 'alter ', 'create ']) {
       expect(text).not.toContain(verb);
     }
@@ -160,6 +170,64 @@ describe('modQueueQuery', () => {
     expect(text).toContain('tf.url      as thumbnail_url');
     expect(text).toContain('left join pubkey_stats rs on rs.pubkey = r.reporter');
     expect(text).toContain('order by r.created_at desc');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The invite forest — "getting put on"
+// ---------------------------------------------------------------------------
+
+describe('the invite tree queries', () => {
+  const PK = hex('ab');
+
+  it('exposes putOn — and nothing else about the tree — on the public profile', () => {
+    const text = profileQuery(PK).text;
+    expect(text).toContain('from invite_edges ie where ie.child = p.pubkey) as put_on');
+    // No inviter, no timestamp, no branch. A public invite graph is a public map
+    // of who knows whom.
+    expect(text).not.toContain('parent');
+    expect(text).not.toContain('redeemed_at');
+  });
+
+  it('roots are writers who put somebody on and were never put on themselves', () => {
+    const text = inviteRootsQuery().text;
+    expect(text).toContain('select distinct e.parent as pubkey');
+    expect(text).toContain('where not exists (select 1 from invite_edges pe where pe.child = e.parent)');
+    expect(text).toContain('order by e.parent asc');
+  });
+
+  it('every node carries its stats and whether it is banned', () => {
+    for (const sql of [inviteRootsQuery(), inviteEdgesQuery(), inviteSubtreeEdgesQuery(PK)]) {
+      expect(sql.text).toContain('coalesce(s.event_count, 0)');
+      expect(sql.text).toContain('coalesce(s.report_count, 0)');
+      expect(sql.text).toContain('from banned_pubkeys b');
+      expect(sql.text).toContain('p.tag_name');
+    }
+  });
+
+  it('orders edges so the shaper truncation is deterministic', () => {
+    expect(inviteEdgesQuery().text).toContain('order by e.redeemed_at asc, e.child asc');
+    expect(inviteSubtreeEdgesQuery(PK).text).toContain('order by sub.redeemed_at asc, sub.child asc');
+  });
+
+  it('walks the subtree with the same recursive CTE the indexer cascade uses', () => {
+    const text = inviteSubtreeEdgesQuery(PK).text;
+    expect(text).toContain('with recursive sub as');
+    expect(text).toContain('where e.parent = $1');
+    expect(text).toContain('join sub on e.parent = sub.child');
+    // `union`, not `union all`: dedup is what terminates a cycle.
+    expect(text).not.toContain('union all');
+    expect(text).toMatch(/\bunion\b/);
+    expect(inviteSubtreeEdgesQuery(PK).params).toEqual([PK]);
+  });
+
+  it('returns a root node for a writer with no profile and no invites', () => {
+    const text = inviteNodeQuery(PK).text;
+    // Selected from a constant, not from `profiles`, so there is always a row.
+    expect(text).toContain('select $1::text as pubkey');
+    expect(text).toContain('left join invite_edges ie on ie.child = $1');
+    expect(text).toContain('ie.redeemed_at as invited_at');
+    expect(inviteNodeQuery(PK).params).toEqual([PK]);
   });
 });
 

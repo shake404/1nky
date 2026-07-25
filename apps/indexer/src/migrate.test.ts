@@ -18,6 +18,7 @@ describe('loadMigrations', () => {
       '004_videos.sql',
       '005_explore_crews.sql',
       '006_threads.sql',
+      '007_invites.sql',
     ]);
     expect(migrations[0]?.sql).toContain('create table if not exists events');
   });
@@ -37,6 +38,11 @@ describe('loadMigrations', () => {
     // Same for `threads`, added in 006.
     expect(byVersion.get('001_init.sql')).not.toContain('create table if not exists threads');
     expect(byVersion.get('006_threads.sql')).toContain('create table if not exists threads');
+
+    // And the invite forest, added in 007.
+    expect(byVersion.get('001_init.sql')).not.toContain('create table if not exists invites');
+    expect(byVersion.get('007_invites.sql')).toContain('create table if not exists invites');
+    expect(byVersion.get('007_invites.sql')).toContain('create table if not exists invite_edges');
   });
 });
 

@@ -2,6 +2,7 @@ import { exportBanListSafe } from './banlist-export.js';
 import { loadConfig } from './config.js';
 import { connect } from './db.js';
 import { run, startExpirationSweep } from './indexer.js';
+import { exportInvitedListSafe } from './invited-export.js';
 import * as log from './log.js';
 import { migrate } from './migrate.js';
 
@@ -22,6 +23,12 @@ async function main(): Promise<void> {
   // considered. `banned_pubkeys` survives a rebuild but the file lives on a bind
   // mount that may not, so the state of record is republished at every start.
   await exportBanListSafe(db, config.banListExportPath);
+
+  // And the invited list, for the same reason: `invite_edges` is rebuilt from the
+  // relay but the file lives on a bind mount that may not survive, and a writer
+  // who was already put on must not be charged the newcomer tier again after a
+  // restart just because nobody has redeemed an invite since.
+  await exportInvitedListSafe(db, config.invitedListExportPath);
 
   const stopSweep = startExpirationSweep(db, config.sweepIntervalMs);
   log.state('started');

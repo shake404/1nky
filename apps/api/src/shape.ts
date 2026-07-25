@@ -248,6 +248,8 @@ export interface ProfileSource extends WriterSource {
   banned?: boolean;
   /** Self-declared crew pubkeys/handles from kind-0 `content.crews`. */
   crews?: string[] | null;
+  /** True when this writer has an invite edge — see `profileQuery`. */
+  put_on?: boolean;
 }
 
 export interface ProfileJson extends WriterJson {
@@ -258,6 +260,12 @@ export interface ProfileJson extends WriterJson {
   banned: boolean;
   /** Self-declared crew affiliations — a claim, not a verified roster. */
   crews: string[];
+  /**
+   * Whether somebody already here put this writer on. A boolean and nothing
+   * more: who did it, when, and the rest of the branch are mod-only, because a
+   * public invite graph is a public map of who knows whom.
+   */
+  putOn: boolean;
 }
 
 export function shapeProfile(row: ProfileSource): ProfileJson {
@@ -268,7 +276,149 @@ export function shapeProfile(row: ProfileSource): ProfileJson {
     eventCount: num(row.event_count),
     banned: row.banned === true,
     crews: row.crews ?? [],
+    putOn: row.put_on === true,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The invite forest — "getting put on", mod-only
+// ---------------------------------------------------------------------------
+
+/**
+ * How deep a tree response goes. Twelve generations is far past anything real —
+ * the cap exists so one pathological chain cannot turn a mod page into a
+ * megabyte of nesting, and so the recursion below is provably finite.
+ */
+export const INVITE_TREE_MAX_DEPTH = 12;
+
+/** How many nodes a tree response carries, across every level. */
+export const INVITE_TREE_MAX_NODES = 2000;
+
+export interface InviteNodeSource {
+  pubkey: string;
+  parent?: string | null;
+  invited_at?: number | string | null;
+  tag_name?: string | null;
+  event_count?: number | string;
+  report_count?: number | string;
+  banned?: boolean;
+}
+
+export interface InviteNodeJson {
+  pubkey: string;
+  mark: string | null;
+  tag: string | null;
+  /** When they were put on, or null for a root nobody invited. */
+  invitedAt: number | null;
+  banned: boolean;
+  eventCount: number;
+  reportCount: number;
+  children: InviteNodeJson[];
+}
+
+export interface InviteForestJson {
+  roots: InviteNodeJson[];
+  /**
+   * True when the response is not the whole forest — the depth or node cap cut
+   * it short. Never a silent truncation: a moderator about to ban a branch has
+   * to know they are not looking at all of it.
+   */
+  truncated: boolean;
+}
+
+function shapeInviteNode(row: InviteNodeSource): InviteNodeJson {
+  return {
+    pubkey: row.pubkey,
+    mark: markOf(row.pubkey),
+    tag: row.tag_name ?? null,
+    invitedAt: nullableNum(row.invited_at ?? null),
+    banned: row.banned === true,
+    eventCount: num(row.event_count),
+    reportCount: num(row.report_count),
+    children: [],
+  };
+}
+
+/**
+ * Roots + edges -> a forest, capped.
+ *
+ * Breadth-first by generation, which is what makes truncation useful as well as
+ * deterministic: the budget is spent on the writers closest to the root, and a
+ * moderator sees the shape of the branch rather than one arbitrary deep spine.
+ * Given the same ordered rows the output is byte-identical every time.
+ *
+ * Three things it refuses to do:
+ *   - recurse past `maxDepth`
+ *   - emit more than `maxNodes` nodes
+ *   - visit a pubkey twice, which is what stops a cycle (A put B on, then B put
+ *     A on — legal, because A had no parent at the time) from looping forever
+ *
+ * Any of the three sets `truncated`.
+ */
+export function buildInviteForest(
+  rootRows: readonly InviteNodeSource[],
+  edgeRows: readonly InviteNodeSource[],
+  options: { maxDepth?: number; maxNodes?: number } = {},
+): InviteForestJson {
+  const maxDepth = options.maxDepth ?? INVITE_TREE_MAX_DEPTH;
+  const maxNodes = options.maxNodes ?? INVITE_TREE_MAX_NODES;
+
+  const childrenOf = new Map<string, InviteNodeSource[]>();
+  for (const row of edgeRows) {
+    const parent = row.parent;
+    if (typeof parent !== 'string' || parent === '') continue;
+    const list = childrenOf.get(parent);
+    if (list) list.push(row);
+    else childrenOf.set(parent, [row]);
+  }
+
+  let truncated = false;
+  let count = 0;
+  const visited = new Set<string>();
+
+  const roots: InviteNodeJson[] = [];
+  let level: { node: InviteNodeJson; depth: number }[] = [];
+
+  for (const row of rootRows) {
+    if (visited.has(row.pubkey)) continue;
+    if (count >= maxNodes) {
+      truncated = true;
+      break;
+    }
+    visited.add(row.pubkey);
+    count += 1;
+    const node = shapeInviteNode(row);
+    roots.push(node);
+    level.push({ node, depth: 0 });
+  }
+
+  while (level.length > 0) {
+    const next: { node: InviteNodeJson; depth: number }[] = [];
+    for (const { node, depth } of level) {
+      const children = childrenOf.get(node.pubkey);
+      if (!children || children.length === 0) continue;
+      if (depth >= maxDepth) {
+        // There is more tree down there; we are choosing not to walk it.
+        truncated = true;
+        continue;
+      }
+      for (const row of children) {
+        if (visited.has(row.pubkey)) continue;
+        if (count >= maxNodes) {
+          truncated = true;
+          break;
+        }
+        visited.add(row.pubkey);
+        count += 1;
+        const child = shapeInviteNode(row);
+        node.children.push(child);
+        next.push({ node: child, depth: depth + 1 });
+      }
+    }
+    level = next;
+  }
+
+  return { roots, truncated };
 }
 
 // ---------------------------------------------------------------------------

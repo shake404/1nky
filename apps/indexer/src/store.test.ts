@@ -3,6 +3,7 @@ import {
   buildCrewBadgeRegistry,
   buildCrewDefinition,
   buildFlick,
+  buildInvite,
   buildModBan,
   buildProfile,
   buildReport,
@@ -535,6 +536,295 @@ describe('moderator bans (kind 30078, d:ban:<pubkey>)', () => {
     expect(db.matching('insert into crews')).toHaveLength(0);
     expect(db.matching('insert into boards')).toHaveLength(0);
     expect(counters.crews).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invites — "getting put on"
+// ---------------------------------------------------------------------------
+
+const INVITER = hex('1a');
+const CHILD = hex('2b');
+const INVITE_ID = 'ab12cd34ef567890';
+
+function inviteMint(overrides: Parameters<typeof makeEvent>[0] = {}) {
+  const template = buildInvite(INVITE_ID, { createdAt: NOW });
+  return makeEvent({ ...template, pubkey: INVITER, id: hex('55'), ...overrides });
+}
+
+function redemption(overrides: Parameters<typeof makeEvent>[0] = {}) {
+  const template = buildProfile({
+    tag: 'NEWJACK',
+    invite: { inviteId: INVITE_ID, inviterPubkey: INVITER },
+    createdAt: NOW + 10,
+  });
+  return makeEvent({ ...template, pubkey: CHILD, id: hex('66'), ...overrides });
+}
+
+describe('invite mints (kind 30078, d:invite:<id>)', () => {
+  it('records the invite, keyed by id and attributed to the signer', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, inviteMint(), counters, { now: NOW });
+
+    expect(counters.invites).toBe(1);
+    const insert = db.matching('insert into invites')[0];
+    expect(insert?.params).toEqual([INVITE_ID, INVITER, NOW]);
+    // First mint wins, and a banned pubkey mints nothing — both in SQL.
+    expect(insert?.text).toContain('on conflict (invite_id) do nothing');
+    expect(insert?.text).toContain('from banned_pubkeys');
+  });
+
+  it('needs no moderator or site key — anybody here may put somebody on', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, inviteMint({ pubkey: hex('99') }), counters, {
+      now: NOW,
+      sitePubkey: hex('7f'),
+      modPubkeys: MODS,
+    });
+
+    expect(counters.invites).toBe(1);
+    expect(db.matching('insert into invites')[0]?.params?.[1]).toBe(hex('99'));
+  });
+
+  it('does not count a mint the database refused (banned inviter, or id taken)', async () => {
+    const db = fakeDb((text) =>
+      text.includes('insert into invites') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    await indexEvent(db, inviteMint(), counters, { now: NOW });
+
+    expect(counters.invites).toBe(0);
+    // The raw event is still kept: the relay accepted it, and inert app data is
+    // not an error.
+    expect(db.matching('insert into events')).toHaveLength(1);
+  });
+
+  it('is not confused with a crew definition, a badge registry or a board list', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, inviteMint(), counters, { now: NOW, sitePubkey: INVITER });
+
+    expect(db.matching('insert into crews')).toHaveLength(0);
+    expect(db.matching('insert into crew_badges')).toHaveLength(0);
+    expect(db.matching('insert into boards')).toHaveLength(0);
+  });
+
+  it('leaves invites alone when a mod ban rides on the same kind', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('ban'), counters, { now: NOW, modPubkeys: MODS });
+
+    expect(db.matching('insert into invites')).toHaveLength(0);
+    expect(counters.invites).toBe(0);
+  });
+});
+
+describe('invite redemptions (an `invite` tag on a kind 0)', () => {
+  it('marks the invite redeemed and records the edge', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, redemption(), counters, { now: NOW + 10 });
+
+    expect(counters.profiles).toBe(1);
+    expect(counters.putOn).toBe(1);
+
+    const update = db.matching('update invites')[0];
+    expect(update?.params).toEqual([INVITE_ID, INVITER, CHILD, NOW + 10]);
+    // Every rule is a predicate on the one statement, not a read-then-write.
+    expect(update?.text).toContain('inviter = $2');
+    expect(update?.text).toContain('inviter <> $3');
+    expect(update?.text).toContain('redeemed_by is null or redeemed_by = $3');
+    expect(update?.text).toContain('from banned_pubkeys');
+    expect(update?.text).toContain('from invite_edges e where e.child = $3');
+
+    const edge = db.matching('insert into invite_edges')[0];
+    expect(edge?.params).toEqual([CHILD, INVITER, INVITE_ID, NOW + 10]);
+    expect(edge?.text).toContain('on conflict (child) do nothing');
+  });
+
+  it('still indexes an ordinary profile that redeems nothing', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    const template = buildProfile({ tag: 'SMOG', createdAt: NOW });
+    await indexEvent(db, makeEvent({ ...template, pubkey: AUTHOR }), counters, { now: NOW });
+
+    expect(counters.profiles).toBe(1);
+    expect(counters.putOn).toBe(0);
+    expect(db.matching('update invites')).toHaveLength(0);
+    expect(db.matching('invite_edges')).toHaveLength(0);
+  });
+
+  it('ignores a redemption the database refused, silently, and keeps the profile', async () => {
+    // rowCount 0 is what the UPDATE returns for a self-invite, a banned inviter,
+    // a forged inviter, an unknown invite, one already redeemed by somebody else,
+    // or a child who already has a parent. The indexer cannot tell them apart and
+    // deliberately does not try: naming which rule failed would mean logging
+    // pubkeys.
+    const db = fakeDb((text) =>
+      text.includes('update invites') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    let exported = 0;
+
+    await indexEvent(db, redemption(), counters, {
+      now: NOW + 10,
+      onInvitedChange: async () => {
+        exported += 1;
+      },
+    });
+
+    expect(counters.profiles).toBe(1);
+    expect(counters.putOn).toBe(0);
+    expect(db.matching('insert into invite_edges')).toHaveLength(0);
+    expect(exported).toBe(0);
+  });
+
+  it('is idempotent on a replay: the edge conflicts, so nothing is counted twice', async () => {
+    // A replayed kind 0 passes `redeemed_by = $3` (this same writer) but the edge
+    // already exists, so `do nothing` returns 0 rows.
+    const db = fakeDb((text) =>
+      text.includes('insert into invite_edges') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    let exported = 0;
+
+    await indexEvent(db, redemption(), counters, {
+      now: NOW + 10,
+      onInvitedChange: async () => {
+        exported += 1;
+      },
+    });
+
+    expect(counters.putOn).toBe(0);
+    expect(exported).toBe(0);
+  });
+
+  it('never lets a self-invite through — the rule is in the statement', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, redemption({ pubkey: INVITER }), counters, { now: NOW + 10 });
+
+    const update = db.matching('update invites')[0];
+    // Same pubkey in both positions, and the predicate refuses it in Postgres.
+    expect(update?.params?.[1]).toBe(INVITER);
+    expect(update?.params?.[2]).toBe(INVITER);
+    expect(update?.text).toContain('inviter <> $3');
+  });
+
+  it('re-exports the relay invited list after a new edge', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    let exported = 0;
+
+    await indexEvent(db, redemption(), counters, {
+      now: NOW + 10,
+      onInvitedChange: async () => {
+        exported += 1;
+      },
+    });
+
+    expect(exported).toBe(1);
+  });
+});
+
+describe('subtree bans', () => {
+  it('expands a subtree ban to every descendant, as one action', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    const template = buildModBan(TARGET, 'ban', {
+      reason: 'tag farm',
+      subtree: true,
+      createdAt: NOW,
+    });
+    let exported = 0;
+
+    await indexEvent(db, makeEvent({ ...template, pubkey: MOD, id: hex('44') }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+      onBanChange: async () => {
+        exported += 1;
+      },
+    });
+
+    expect(counters.bans).toBe(1);
+    const cascade = db.matching('with recursive descendants')[0];
+    expect(cascade?.text).toContain('from invite_edges');
+    // Same moderator, same instant, same reason as the ban that asked for it.
+    expect(cascade?.params).toEqual([TARGET, 'tag farm', NOW, MOD]);
+    // `union`, not `union all`: dedup is what terminates a cycle.
+    expect(cascade?.text).toContain('union\n');
+    expect(cascade?.text).not.toContain('union all');
+    // A descendant carrying a NEWER ban of their own keeps it.
+    expect(cascade?.text).toContain('excluded.banned_at >= banned_pubkeys.banned_at');
+    // ONE export, after the whole expansion — never one per descendant.
+    expect(exported).toBe(1);
+  });
+
+  it('reads the reason prefix too, for tooling with only a reason field', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    const template = buildModBan(TARGET, 'ban', { reason: 'subtree: tag farm', createdAt: NOW });
+    await indexEvent(db, makeEvent({ ...template, pubkey: MOD, id: hex('44') }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    expect(db.matching('with recursive descendants')).toHaveLength(1);
+  });
+
+  it('does not expand an ordinary ban', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, modBan('ban', {}, 'illegal'), counters, { now: NOW, modPubkeys: MODS });
+
+    expect(db.matching('with recursive descendants')).toHaveLength(0);
+    expect(counters.subtreeBans).toBe(0);
+  });
+
+  it('never cascades an unban, however it is spelled', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    const template = buildModBan(TARGET, 'unban', {
+      reason: 'subtree: sorry',
+      subtree: true,
+      createdAt: NOW,
+    });
+    await indexEvent(db, makeEvent({ ...template, pubkey: MOD, id: hex('44') }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    expect(counters.unbans).toBe(1);
+    expect(db.matching('with recursive descendants')).toHaveLength(0);
+  });
+
+  it('expands nothing when the signer is not a moderator', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    const template = buildModBan(TARGET, 'ban', { subtree: true, createdAt: NOW });
+    await indexEvent(db, makeEvent({ ...template, pubkey: hex('99'), id: hex('44') }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    expect(db.matching('banned_pubkeys')).toHaveLength(0);
+    expect(db.matching('with recursive descendants')).toHaveLength(0);
+  });
+
+  it('counts the descendants it actually banned', async () => {
+    const db = fakeDb((text) =>
+      text.includes('with recursive descendants') ? { rows: [], rowCount: 3 } : undefined,
+    );
+    const counters = newCounters();
+    const template = buildModBan(TARGET, 'ban', { subtree: true, createdAt: NOW });
+    await indexEvent(db, makeEvent({ ...template, pubkey: MOD, id: hex('44') }), counters, {
+      now: NOW,
+      modPubkeys: MODS,
+    });
+
+    expect(counters.subtreeBans).toBe(3);
   });
 });
 

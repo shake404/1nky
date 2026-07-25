@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { decodeCursor, encodeCursor } from './cursor.js';
+import { markOf } from './shape.js';
 import {
   brokenDb,
   commentRow,
@@ -98,7 +99,48 @@ const responder: Responder = (text) => {
           event_count: '9',
           first_event_at: '1699000000',
           banned: false,
+          put_on: true,
         },
+      ],
+    };
+  }
+  return undefined;
+};
+
+/** The invite forest: A put B and C on; B put D on. */
+const TREE_A = hex('1a');
+const TREE_B = hex('2b');
+const TREE_C = hex('3c');
+const TREE_D = hex('4d');
+
+const treeNode = (pubkey: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  pubkey,
+  tag_name: 'SMOG',
+  event_count: '4',
+  report_count: '1',
+  banned: false,
+  ...over,
+});
+
+const treeResponder: Responder = (text) => {
+  if (text.includes('select distinct e.parent')) return { rows: [treeNode(TREE_A)] };
+  if (text.includes('with recursive sub')) {
+    return {
+      rows: [
+        treeNode(TREE_C, { parent: TREE_A, invited_at: '200' }),
+        treeNode(TREE_D, { parent: TREE_B, invited_at: '300', banned: true }),
+      ],
+    };
+  }
+  if (text.includes('select $1::text as pubkey')) {
+    return { rows: [treeNode(TREE_B, { invited_at: '100' })] };
+  }
+  if (text.includes('from invite_edges e')) {
+    return {
+      rows: [
+        treeNode(TREE_B, { parent: TREE_A, invited_at: '100' }),
+        treeNode(TREE_C, { parent: TREE_A, invited_at: '200' }),
+        treeNode(TREE_D, { parent: TREE_B, invited_at: '300', banned: true }),
       ],
     };
   }
@@ -487,6 +529,26 @@ describe('GET /writer/:pubkey', () => {
     expect(res.status).toBe(200);
     expect((res.body as { writer: { tag: null } }).writer.tag).toBeNull();
   });
+
+  it('says whether the writer was put on, and nothing else about the tree', async () => {
+    const res = await request(app(responder), `/writer/${AUTHOR}`);
+    const body = res.body as { writer: Record<string, unknown> };
+    expect(body.writer.putOn).toBe(true);
+    // Who put them on, when, and the rest of the branch are mod-only.
+    const json = JSON.stringify(body.writer);
+    expect(json).not.toContain('invitedAt');
+    expect(json).not.toContain('parent');
+    expect(json).not.toContain(TREE_A);
+  });
+
+  it('reports putOn false for a writer with no profile event', async () => {
+    // A redemption rides on a kind 0, so no profile means no invite edge.
+    const res = await request(
+      app((text) => (text.includes('from flicks f') ? { rows: [flickRow()] } : { rows: [] })),
+      `/writer/${AUTHOR}`,
+    );
+    expect((res.body as { writer: { putOn: boolean } }).writer.putOn).toBe(false);
+  });
 });
 
 describe('GET /explore/facets', () => {
@@ -777,6 +839,129 @@ describe('/mod/*', () => {
     const res = await request(app(responder), '/mod/banlist', key);
     expect(res.status).toBe(200);
     expect((res.body as { banned: { pubkey: string }[] }).banned[0]?.pubkey).toBe(AUTHOR);
+  });
+
+  interface TreeBody {
+    roots: {
+      pubkey: string;
+      tag: string | null;
+      mark: string | null;
+      invitedAt: number | null;
+      banned: boolean;
+      eventCount: number;
+      reportCount: number;
+      children: TreeBody['roots'];
+    }[];
+    truncated: boolean;
+  }
+
+  it('401s on the tree without the shared secret', async () => {
+    expect((await request(app(treeResponder), '/mod/tree')).status).toBe(401);
+    expect((await request(app(treeResponder), `/mod/tree/${TREE_B}`)).status).toBe(401);
+  });
+
+  it('returns the whole invite forest, nested', async () => {
+    const res = await request(app(treeResponder), '/mod/tree', key);
+    expect(res.status).toBe(200);
+    const body = res.body as TreeBody;
+
+    expect(body.truncated).toBe(false);
+    expect(body.roots.map((r) => r.pubkey)).toEqual([TREE_A]);
+
+    const a = body.roots[0];
+    // A root nobody put on has no invitedAt.
+    expect(a?.invitedAt).toBeNull();
+    expect(a?.tag).toBe('SMOG');
+    expect(a?.mark).toHaveLength(6);
+    expect(a?.eventCount).toBe(4);
+    expect(a?.reportCount).toBe(1);
+
+    expect(a?.children.map((c) => c.pubkey)).toEqual([TREE_B, TREE_C]);
+    expect(a?.children[0]?.invitedAt).toBe(100);
+    expect(a?.children[0]?.children.map((c) => c.pubkey)).toEqual([TREE_D]);
+    expect(a?.children[0]?.children[0]?.banned).toBe(true);
+  });
+
+  it('returns an empty forest rather than an error when nobody has been put on', async () => {
+    const res = await request(app(), '/mod/tree', key);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ roots: [], truncated: false });
+  });
+
+  it('returns the branch below one writer — the ban-the-branch preview', async () => {
+    const res = await request(app(treeResponder), `/mod/tree/${TREE_B}`, key);
+    expect(res.status).toBe(200);
+    const body = res.body as TreeBody;
+
+    expect(body.roots.map((r) => r.pubkey)).toEqual([TREE_B]);
+    // The root of a subtree keeps its own invitedAt: somebody put them on too.
+    expect(body.roots[0]?.invitedAt).toBe(100);
+    expect(body.roots[0]?.children.map((c) => c.pubkey)).toEqual([TREE_D]);
+    expect(body.truncated).toBe(false);
+  });
+
+  it('returns a lone root for a writer nobody put on and who put nobody on', async () => {
+    const res = await request(app(), `/mod/tree/${TREE_B}`, key);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      roots: [
+        {
+          pubkey: TREE_B,
+          mark: markOf(TREE_B),
+          tag: null,
+          invitedAt: null,
+          banned: false,
+          eventCount: 0,
+          reportCount: 0,
+          children: [],
+        },
+      ],
+      truncated: false,
+    });
+  });
+
+  it('400s on a malformed writer id', async () => {
+    expect((await request(app(treeResponder), '/mod/tree/nope', key)).status).toBe(400);
+  });
+
+  it('truncates deterministically past the depth cap and says so', async () => {
+    // A chain 15 deep from one root: longer than the 12-generation cap.
+    const chain = hex('aa');
+    const link = (i: number): string => hex((i + 32).toString(16).padStart(2, '0'));
+    const rows = Array.from({ length: 15 }, (_v, i) => ({
+      ...treeNode(link(i)),
+      parent: i === 0 ? chain : link(i - 1),
+      invited_at: String(100 + i),
+    }));
+
+    const deep: Responder = (text) => {
+      if (text.includes('select distinct e.parent')) return { rows: [treeNode(chain)] };
+      if (text.includes('from invite_edges e')) return { rows };
+      return undefined;
+    };
+
+    const first = await request(app(deep), '/mod/tree', key);
+    expect((first.body as TreeBody).truncated).toBe(true);
+
+    let depth = 0;
+    let node = (first.body as TreeBody).roots[0];
+    while (node?.children[0]) {
+      depth += 1;
+      node = node.children[0];
+    }
+    expect(depth).toBe(12);
+
+    // Same rows in, same bytes out.
+    const second = await request(app(deep), '/mod/tree', key);
+    expect(JSON.stringify(second.body)).toBe(JSON.stringify(first.body));
+  });
+
+  it('never emits protocol jargon in a tree response', async () => {
+    const res = await request(app(treeResponder), '/mod/tree', key);
+    const json = JSON.stringify(res.body).toLowerCase();
+    for (const word of ['nsec', 'npub', 'nostr', 'relay', 'kind', 'event_id']) {
+      expect(json).not.toContain(word);
+    }
   });
 });
 

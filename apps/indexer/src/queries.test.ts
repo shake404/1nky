@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  banSubtree,
   buffDelete,
   buffPlan,
   deleteBan,
   DERIVED_TABLES,
   expirationSweep,
   incrementReportCount,
+  insertInviteEdge,
+  redeemInvite,
   selectBanList,
+  selectInvitedList,
   touchPubkeyStats,
   truncateDerived,
   upsertBan,
   upsertBoard,
   upsertEvent,
+  upsertInvite,
   upsertThread,
   writeWatermark,
 } from './queries.js';
@@ -174,6 +179,83 @@ describe('upserts', () => {
   });
 });
 
+describe('invites', () => {
+  const INVITER = hex('1a');
+  const CHILD = hex('2b');
+  const INVITE_ID = 'ab12cd34ef567890';
+  const REDEMPTION = {
+    invite_id: INVITE_ID,
+    inviter: INVITER,
+    child: CHILD,
+    redeemed_at: 1_700_000_000,
+  };
+
+  it('mints on first-come-first-served, and never for a banned inviter', () => {
+    const sql = upsertInvite({ invite_id: INVITE_ID, inviter: INVITER, created_at: 1 });
+    expect(sql.text).toContain('on conflict (invite_id) do nothing');
+    expect(sql.text).toContain('from banned_pubkeys b where b.pubkey = $2');
+    expect(sql.params).toEqual([INVITE_ID, INVITER, 1]);
+  });
+
+  it('puts every redemption rule in the one statement', () => {
+    const sql = redeemInvite(REDEMPTION);
+    // The invite exists AND names the inviter the code claims.
+    expect(sql.text).toContain('where invite_id = $1');
+    expect(sql.text).toContain('and inviter = $2');
+    // Nobody puts themselves on.
+    expect(sql.text).toContain('and inviter <> $3');
+    // Unredeemed, or already redeemed by this same writer (idempotent replay).
+    expect(sql.text).toContain('(redeemed_by is null or redeemed_by = $3)');
+    // A banned inviter puts nobody on.
+    expect(sql.text).toContain('from banned_pubkeys b where b.pubkey = invites.inviter');
+    // One parent, forever.
+    expect(sql.text).toContain('from invite_edges e where e.child = $3');
+    expect(sql.params).toEqual([INVITE_ID, INVITER, CHILD, 1_700_000_000]);
+  });
+
+  it('lets the schema enforce one-parent-forever on the edge too', () => {
+    const sql = insertInviteEdge(REDEMPTION);
+    expect(sql.text).toContain('on conflict (child) do nothing');
+    expect(sql.params).toEqual([CHILD, INVITER, INVITE_ID, 1_700_000_000]);
+  });
+
+  it('exports one column, in a stable order, and nothing about the tree', () => {
+    const sql = selectInvitedList();
+    expect(sql.text).toBe('select child as pubkey from invite_edges order by child');
+    expect(sql.params).toEqual([]);
+  });
+});
+
+describe('banSubtree', () => {
+  const row = { pubkey: TARGET, reason: 'tag farm', banned_at: 777, banned_by: MOD };
+
+  it('walks invite_edges downward and attributes it all to the same action', () => {
+    const sql = banSubtree(row);
+    expect(sql.text).toContain('with recursive descendants');
+    expect(sql.text).toContain('from invite_edges where parent = $1');
+    expect(sql.text).toContain('join descendants d on e.parent = d.child');
+    expect(sql.text).toContain('insert into banned_pubkeys');
+    expect(sql.params).toEqual([TARGET, 'tag farm', 777, MOD]);
+  });
+
+  it('dedupes, so a cycle in the edges terminates instead of spinning', () => {
+    // A puts B on; later B puts A on (legal — A had no parent then). `union all`
+    // would recurse forever on that.
+    expect(banSubtree(row).text).not.toContain('union all');
+    expect(banSubtree(row).text).toMatch(/\bunion\b/);
+  });
+
+  it('lets a descendant keep a newer ban of their own', () => {
+    expect(banSubtree(row).text).toContain('excluded.banned_at >= banned_pubkeys.banned_at');
+  });
+
+  it('bans the descendants only — the root is upsertBan job', () => {
+    // Otherwise a target with no invites would be banned twice, and the two
+    // statements' no-regression guards would race each other.
+    expect(banSubtree(row).text).toContain('select d.child');
+  });
+});
+
 describe('rebuild', () => {
   it('truncates everything derived from the relay', () => {
     expect([...DERIVED_TABLES]).toEqual([
@@ -188,6 +270,8 @@ describe('rebuild', () => {
       'boards',
       'crews',
       'crew_badges',
+      'invites',
+      'invite_edges',
       'pubkey_stats',
       'sync_state',
     ]);

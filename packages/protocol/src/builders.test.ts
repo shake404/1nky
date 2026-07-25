@@ -10,6 +10,7 @@ import {
   buildCrewProfile,
   buildExpiration,
   buildFlick,
+  buildInvite,
   buildModBan,
   buildMuteList,
   buildProfile,
@@ -18,8 +19,15 @@ import {
   buildVideo,
   CREW_BADGES_DTAG,
   CREW_DEFINITION_DTAG,
+  decodeInviteCode,
+  encodeInviteCode,
   imetaTag,
+  INVITE_DTAG_PREFIX,
+  inviteRedemptionTag,
+  isSubtreeBan,
   normalizeBoard,
+  parseInvite,
+  parseInviteRedemption,
   parseModBan,
   PROFILE_BIO_MAX,
   videoImetaTag,
@@ -571,6 +579,175 @@ describe('buildModBan / parseModBan', () => {
     expect(parseModBan({ kind: 30078, tags: [['d', 'ban:nope']], content: '{"action":"ban"}' })).toBeNull();
     expect(parseModBan({ kind: 30078, tags: [['d', `ban:${HEX_B}`]], content: '{"action":"nuke"}' })).toBeNull();
     expect(parseModBan({ kind: 1, tags: [['d', `ban:${HEX_B}`]], content: '{"action":"ban"}' })).toBeNull();
+  });
+});
+
+describe('isSubtreeBan', () => {
+  it('is false for an ordinary ban', () => {
+    expect(isSubtreeBan(buildModBan(HEX_B, 'ban', { reason: 'spam' }))).toBe(false);
+  });
+
+  it('is true when the builder was asked for the whole branch', () => {
+    const ev = buildModBan(HEX_B, 'ban', { reason: 'tag farm', subtree: true });
+    expect(JSON.parse(ev.content)).toEqual({ action: 'ban', reason: 'tag farm', subtree: true });
+    expect(isSubtreeBan(ev)).toBe(true);
+  });
+
+  it('is true from a reason prefix alone, for tooling with only a reason field', () => {
+    expect(isSubtreeBan(buildModBan(HEX_B, 'ban', { reason: 'subtree: tag farm' }))).toBe(true);
+    expect(isSubtreeBan(buildModBan(HEX_B, 'ban', { reason: 'SUBTREE: shouting' }))).toBe(true);
+  });
+
+  it('never cascades an unban, however it is spelled', () => {
+    expect(isSubtreeBan(buildModBan(HEX_B, 'unban', { subtree: true }))).toBe(false);
+    expect(isSubtreeBan(buildModBan(HEX_B, 'unban', { reason: 'subtree: sorry' }))).toBe(false);
+    // The flag is not even emitted on an unban, so nothing downstream can read
+    // it as a promise the indexer does not keep.
+    expect(JSON.parse(buildModBan(HEX_B, 'unban', { subtree: true }).content)).toEqual({
+      action: 'unban',
+    });
+  });
+
+  it('is false for anything that is not a mod ban at all', () => {
+    expect(isSubtreeBan({ kind: 30078, tags: [['d', 'crew']], content: '{"subtree":true}' })).toBe(
+      false,
+    );
+    expect(isSubtreeBan({ kind: 1, tags: [], content: '{"subtree":true}' })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invites — "getting put on"
+// ---------------------------------------------------------------------------
+
+const INVITE_ID = 'ab12cd34ef567890';
+
+describe('buildInvite / parseInvite', () => {
+  it('is kind 30078 keyed d=invite:<id> with a versioned JSON body', () => {
+    const ev = buildInvite(INVITE_ID, { createdAt: FIXED });
+    expect(ev.kind).toBe(KINDS.APP_DATA);
+    expect(ev.tags).toEqual([['d', `${INVITE_DTAG_PREFIX}${INVITE_ID}`]]);
+    expect(JSON.parse(ev.content)).toEqual({ v: 1 });
+    expect(ev.created_at).toBe(FIXED);
+  });
+
+  it('carries an optional note', () => {
+    const ev = buildInvite(INVITE_ID, { note: 'kid from 3rd' });
+    expect(JSON.parse(ev.content)).toEqual({ v: 1, note: 'kid from 3rd' });
+  });
+
+  it('round-trips through parseInvite', () => {
+    expect(parseInvite(buildInvite(INVITE_ID))).toEqual({ inviteId: INVITE_ID });
+    expect(parseInvite(buildInvite('a'.repeat(64)))).toEqual({ inviteId: 'a'.repeat(64) });
+  });
+
+  it('rejects an id that is not 16-64 lowercase hex', () => {
+    for (const bad of ['', 'short', 'ab12cd34ef56789', 'a'.repeat(65), 'AB12CD34EF567890', 'zz12cd34ef567890']) {
+      expect(() => buildInvite(bad)).toThrow(TypeError);
+    }
+  });
+
+  it('parseInvite returns null for other app data and junk', () => {
+    expect(parseInvite({ kind: 30078, tags: [['d', 'crew']], content: '{"v":1}' })).toBeNull();
+    expect(parseInvite({ kind: 30078, tags: [], content: '{"v":1}' })).toBeNull();
+    expect(parseInvite({ kind: 30078, tags: [['d', 'invite:nope']], content: '{"v":1}' })).toBeNull();
+    expect(parseInvite({ kind: 1, tags: [['d', `invite:${INVITE_ID}`]], content: '{"v":1}' })).toBeNull();
+  });
+
+  it('reads an uppercase id case-insensitively but refuses a future version', () => {
+    expect(
+      parseInvite({ kind: 30078, tags: [['d', `invite:${INVITE_ID.toUpperCase()}`]], content: '' }),
+    ).toEqual({ inviteId: INVITE_ID });
+    expect(
+      parseInvite({ kind: 30078, tags: [['d', `invite:${INVITE_ID}`]], content: '{"v":2}' }),
+    ).toBeNull();
+    // Unparseable content is still a v1 invite: the `d` tag is the identity.
+    expect(
+      parseInvite({ kind: 30078, tags: [['d', `invite:${INVITE_ID}`]], content: 'not json' }),
+    ).toEqual({ inviteId: INVITE_ID });
+  });
+});
+
+describe('inviteRedemptionTag / parseInviteRedemption', () => {
+  it('is ["invite", id, inviterPubkey]', () => {
+    expect(inviteRedemptionTag(INVITE_ID, HEX_A)).toEqual(['invite', INVITE_ID, HEX_A]);
+  });
+
+  it('rejects a malformed half', () => {
+    expect(() => inviteRedemptionTag('nope', HEX_A)).toThrow(TypeError);
+    expect(() => inviteRedemptionTag(INVITE_ID, 'nope')).toThrow(TypeError);
+  });
+
+  it('rides on a kind-0 profile and round-trips', () => {
+    const ev = buildProfile({ tag: 'SMOG', invite: { inviteId: INVITE_ID, inviterPubkey: HEX_A } });
+    expect(ev.kind).toBe(KINDS.PROFILE);
+    expect(first(ev.tags, 'invite')).toEqual(['invite', INVITE_ID, HEX_A]);
+    expect(parseInviteRedemption(ev)).toEqual({ inviteId: INVITE_ID, inviterPubkey: HEX_A });
+    // Still an ordinary profile otherwise.
+    expect(JSON.parse(ev.content)).toEqual({ name: 'SMOG' });
+  });
+
+  it('is backward compatible: a profile without an invite has no invite tag', () => {
+    const ev = buildProfile({ tag: 'SMOG', city: 'SF Bay' });
+    expect(ev.tags).toEqual([]);
+    expect(parseInviteRedemption(ev)).toBeNull();
+  });
+
+  it('takes the first invite tag, so a second cannot launder a different inviter', () => {
+    expect(
+      parseInviteRedemption({
+        kind: 0,
+        tags: [
+          ['invite', INVITE_ID, HEX_A],
+          ['invite', INVITE_ID, HEX_B],
+        ],
+      }),
+    ).toEqual({ inviteId: INVITE_ID, inviterPubkey: HEX_A });
+  });
+
+  it('returns null for junk and for the wrong kind', () => {
+    expect(parseInviteRedemption({ kind: 0, tags: [] })).toBeNull();
+    expect(parseInviteRedemption({ kind: 0, tags: [['invite', 'nope', HEX_A]] })).toBeNull();
+    expect(parseInviteRedemption({ kind: 0, tags: [['invite', INVITE_ID, 'nope']] })).toBeNull();
+    expect(parseInviteRedemption({ kind: 0, tags: [['invite', INVITE_ID]] })).toBeNull();
+    expect(parseInviteRedemption({ kind: 1, tags: [['invite', INVITE_ID, HEX_A]] })).toBeNull();
+  });
+});
+
+describe('encodeInviteCode / decodeInviteCode', () => {
+  it('round-trips <inviteId>.<inviterPubkey>', () => {
+    const code = encodeInviteCode(INVITE_ID, HEX_A);
+    expect(code).toBe(`${INVITE_ID}.${HEX_A}`);
+    expect(decodeInviteCode(code)).toEqual({ inviteId: INVITE_ID, inviterPubkey: HEX_A });
+  });
+
+  it('tolerates surrounding whitespace and mixed case', () => {
+    expect(decodeInviteCode(`  ${INVITE_ID.toUpperCase()}.${HEX_A.toUpperCase()}  `)).toEqual({
+      inviteId: INVITE_ID,
+      inviterPubkey: HEX_A,
+    });
+  });
+
+  it('refuses to encode a malformed half', () => {
+    expect(() => encodeInviteCode('nope', HEX_A)).toThrow(TypeError);
+    expect(() => encodeInviteCode(INVITE_ID, 'nope')).toThrow(TypeError);
+  });
+
+  it('decodes junk to null rather than throwing', () => {
+    for (const bad of [
+      '',
+      'nope',
+      INVITE_ID,
+      HEX_A,
+      `${INVITE_ID}.`,
+      `.${HEX_A}`,
+      `${INVITE_ID}.${HEX_A}.${HEX_B}`,
+      `${INVITE_ID}.${'z'.repeat(64)}`,
+      `short.${HEX_A}`,
+      `${INVITE_ID}:${HEX_A}`,
+    ]) {
+      expect(decodeInviteCode(bad)).toBeNull();
+    }
   });
 });
 

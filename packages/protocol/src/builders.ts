@@ -167,6 +167,15 @@ export function videoImetaTag(media: VideoImeta): Tag {
 export interface BuildProfileInput extends BuilderOptions {
   /** The writer's tag (never called a "name" in the UI). */
   tag: string;
+  /**
+   * "Getting put on": the invite this tag is redeeming, if any.
+   *
+   * Emits one `['invite', <inviteId>, <inviterPubkey>]` tag on the kind 0.
+   * Additive and optional — a profile without it is exactly the profile
+   * `buildProfile` has always produced, which is what keeps every existing
+   * caller (and every already-published profile) valid.
+   */
+  invite?: { inviteId: string; inviterPubkey: string };
   /** Home city / board slug. */
   city?: string;
   /**
@@ -219,7 +228,12 @@ export function buildProfile(input: BuildProfileInput): EventTemplate {
     if (crews.length > 0) content['crews'] = crews;
   }
 
-  return template(KINDS.PROFILE, [], JSON.stringify(content), input);
+  const tags: Tag[] = [];
+  if (input.invite) {
+    tags.push(inviteRedemptionTag(input.invite.inviteId, input.invite.inviterPubkey));
+  }
+
+  return template(KINDS.PROFILE, tags, JSON.stringify(content), input);
 }
 
 /**
@@ -428,9 +442,22 @@ export function buildReport(
 /** Prefix of the `d` tag on a kind-30078 mod ban/unban action (Phase 2, Part 6). */
 export const MOD_BAN_DTAG_PREFIX = 'ban:';
 
+/**
+ * Reason prefix that also asks for a subtree ban, for mod tooling that only has
+ * a free-text reason field to work with. `reason: "subtree: tag farm"` and
+ * `subtree: true` mean the same thing to the indexer.
+ */
+export const SUBTREE_BAN_REASON_PREFIX = 'subtree:';
+
 export interface BuildModBanOptions extends BuilderOptions {
   /** Why the writer is being banned. Carried into `banned_pubkeys.reason`. */
   reason?: string;
+  /**
+   * Ban the whole branch: this writer AND everyone they put on, recursively
+   * (see `isSubtreeBan`). Ignored for `unban` — lifting a ban never cascades,
+   * because the descendants may each have earned their own ban since.
+   */
+  subtree?: boolean;
 }
 
 /**
@@ -451,8 +478,11 @@ export function buildModBan(
     ['d', `${MOD_BAN_DTAG_PREFIX}${targetPubkey}`],
     ['p', targetPubkey],
   ];
-  const body: { action: 'ban' | 'unban'; reason?: string } = { action };
+  const body: { action: 'ban' | 'unban'; reason?: string; subtree?: true } = { action };
   if (options.reason) body.reason = options.reason;
+  // Only a ban cascades, so only a ban carries the flag. Emitting it on an
+  // unban would promise something the indexer deliberately does not do.
+  if (options.subtree === true && action === 'ban') body.subtree = true;
   return template(KINDS.APP_DATA, tags, JSON.stringify(body), options);
 }
 
@@ -482,6 +512,193 @@ export function parseModBan(event: {
     action: body['action'],
     reason: typeof body['reason'] === 'string' && body['reason'] ? body['reason'] : null,
   };
+}
+
+/**
+ * True when a mod ban asks for the whole invite branch to go with it.
+ *
+ * Two spellings, both accepted, because the console and a hand-rolled event
+ * reach for different ones:
+ *   - content `{"action":"ban","subtree":true}` — what `buildModBan` emits
+ *   - a reason starting `subtree:` — for tooling with only a reason field
+ *
+ * Deliberately a separate function rather than a field on `parseModBan`:
+ * `parseModBan` answers "who, and banned or unbanned", which is what every
+ * existing caller wants; this answers "how far does it reach", which only the
+ * indexer's expansion path cares about. An unban is never a subtree action.
+ */
+export function isSubtreeBan(event: {
+  kind: number;
+  tags: readonly (readonly string[])[];
+  content: string;
+}): boolean {
+  const parsed = parseModBan(event);
+  if (parsed === null || parsed.action !== 'ban') return false;
+  if (parsed.reason !== null && parsed.reason.toLowerCase().startsWith(SUBTREE_BAN_REASON_PREFIX)) {
+    return true;
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(event.content);
+  } catch {
+    return false;
+  }
+  if (typeof body !== 'object' || body === null) return false;
+  return (body as Record<string, unknown>)['subtree'] === true;
+}
+
+// ---------------------------------------------------------------------------
+// Invites — "getting put on" (Phase 3). Kind 30078 with d = "invite:<id>".
+//
+// An existing writer mints an invite (a signed event only they could have
+// produced); whoever they hand the code to redeems it by putting one `invite`
+// tag on their own kind-0 profile. That is the whole protocol: two events, no
+// server, no account, and a chain of custody anyone can verify from the relay.
+// ---------------------------------------------------------------------------
+
+/** Prefix of the `d` tag on a kind-30078 invite. */
+export const INVITE_DTAG_PREFIX = 'invite:';
+
+/**
+ * An invite id: 16–64 lowercase hex characters.
+ *
+ * 16 is 64 bits of secret, which is far past guessable and still short enough
+ * to write on a wall; 64 is the ceiling so an id can never be confused for
+ * something longer, and matches the pubkey width the code format pairs it with.
+ */
+const INVITE_ID = /^[0-9a-f]{16,64}$/;
+
+function assertInviteId(value: string, what: string): string {
+  if (typeof value !== 'string' || !INVITE_ID.test(value)) {
+    throw new TypeError(
+      `${what}: expected 16-64 lowercase hex characters, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+export interface BuildInviteOptions extends BuilderOptions {
+  /**
+   * A note the inviter writes for themselves ("gave this to the kid from
+   * 3rd"). Published, so the UI must say so — never a place for a real name.
+   */
+  note?: string;
+}
+
+/**
+ * Kind 30078 — minting an invite, signed by the INVITER's tag.
+ *
+ * Parameterized replaceable, keyed `d = "invite:<inviteId>"`, so re-publishing
+ * the same id replaces rather than accumulates and the indexer's "first mint
+ * wins" rule has something stable to key on. The content carries a version and
+ * nothing that identifies anybody: who minted it is the event's own pubkey.
+ */
+export function buildInvite(inviteId: string, options: BuildInviteOptions = {}): EventTemplate {
+  assertInviteId(inviteId, 'buildInvite(inviteId)');
+  const tags: Tag[] = [['d', `${INVITE_DTAG_PREFIX}${inviteId}`]];
+  const body: { v: 1; note?: string } = { v: 1 };
+  if (options.note) body.note = options.note;
+  return template(KINDS.APP_DATA, tags, JSON.stringify(body), options);
+}
+
+/**
+ * The invite id of a kind-30078 invite, or null when the event is not one.
+ *
+ * Same defensive style as `parseModBan`: every other kind, every other `d`
+ * value and every malformed id falls through as null rather than throwing, so
+ * the indexer can hand it any event off the firehose.
+ *
+ * The `d` tag is the whole identity, so the content is only consulted to refuse
+ * a *future* version — an unparseable or empty content is still a v1 invite,
+ * but `{"v":2}` is something this code has not been taught to read.
+ */
+export function parseInvite(event: {
+  kind: number;
+  tags: readonly (readonly string[])[];
+  content: string;
+}): { inviteId: string } | null {
+  if (event.kind !== KINDS.APP_DATA) return null;
+  const d = event.tags.find((t) => t[0] === 'd')?.[1];
+  if (!d || !d.startsWith(INVITE_DTAG_PREFIX)) return null;
+  const inviteId = d.slice(INVITE_DTAG_PREFIX.length).toLowerCase();
+  if (!INVITE_ID.test(inviteId)) return null;
+
+  let body: unknown;
+  try {
+    body = JSON.parse(event.content || '{}');
+  } catch {
+    return { inviteId };
+  }
+  if (typeof body === 'object' && body !== null) {
+    const v = (body as Record<string, unknown>)['v'];
+    if (v !== undefined && v !== 1) return null;
+  }
+  return { inviteId };
+}
+
+/** `["invite", "<inviteId>", "<inviterPubkey>"]` — the redemption tag. */
+export type InviteTag = ['invite', string, string];
+
+/**
+ * The tag a newcomer puts on their own kind-0 to redeem an invite.
+ *
+ * The inviter's pubkey rides along even though the indexer could look it up,
+ * for the same reason a NIP-22 comment repeats its root: it makes the claim
+ * self-contained and checkable from the event alone.
+ */
+export function inviteRedemptionTag(inviteId: string, inviterPubkey: string): InviteTag {
+  return [
+    'invite',
+    assertInviteId(inviteId, 'inviteRedemptionTag(inviteId)'),
+    assertHex32(inviterPubkey, 'inviteRedemptionTag(inviterPubkey)'),
+  ];
+}
+
+/**
+ * The invite a kind-0 profile is redeeming, or null when it redeems none.
+ *
+ * The FIRST `invite` tag wins, matching how the relay policy and `parseModBan`
+ * treat repeated tags — a second one cannot launder a different inviter in.
+ */
+export function parseInviteRedemption(event: {
+  kind: number;
+  tags: readonly (readonly string[])[];
+}): { inviteId: string; inviterPubkey: string } | null {
+  if (event.kind !== KINDS.PROFILE) return null;
+  const tag = event.tags.find((t) => t[0] === 'invite');
+  if (!tag) return null;
+  const inviteId = (tag[1] ?? '').toLowerCase();
+  const inviterPubkey = (tag[2] ?? '').toLowerCase();
+  if (!INVITE_ID.test(inviteId) || !HEX64.test(inviterPubkey)) return null;
+  return { inviteId, inviterPubkey };
+}
+
+/**
+ * The shareable code: `<inviteId>.<inviterPubkey>`.
+ *
+ * Both halves travel together so redeeming needs no lookup and no relay round
+ * trip before the newcomer's first event — they type one string and their
+ * profile can name both sides. A dot separates them: safe in a URL path, in a
+ * QR code, and read out loud.
+ */
+export function encodeInviteCode(inviteId: string, inviterPubkey: string): string {
+  const id = assertInviteId(inviteId, 'encodeInviteCode(inviteId)');
+  const pubkey = assertHex32(inviterPubkey, 'encodeInviteCode(inviterPubkey)');
+  return `${id}.${pubkey}`;
+}
+
+/** `encodeInviteCode` in reverse. Returns null on anything malformed. */
+export function decodeInviteCode(code: string): {
+  inviteId: string;
+  inviterPubkey: string;
+} | null {
+  if (typeof code !== 'string') return null;
+  const parts = code.trim().toLowerCase().split('.');
+  if (parts.length !== 2) return null;
+  const inviteId = parts[0] ?? '';
+  const inviterPubkey = parts[1] ?? '';
+  if (!INVITE_ID.test(inviteId) || !HEX64.test(inviterPubkey)) return null;
+  return { inviteId, inviterPubkey };
 }
 
 export interface BuildMuteListOptions extends BuilderOptions {

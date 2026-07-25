@@ -28,9 +28,16 @@ const PLUGIN = fileURLToPath(new URL('../../../infra/strfry/write-policy.mjs', i
 const BANNED = 'ba'.repeat(32);
 const WRITER = 'aa'.repeat(32);
 
+/** A writer someone already here put on. See INVITED_LIST_PATH. */
+const INVITED = 'ad'.repeat(32);
+
 const banDir = mkdtempSync(join(tmpdir(), '1nky-policy-'));
 const banPath = join(banDir, 'banlist.json');
 writeFileSync(banPath, JSON.stringify([BANNED]), 'utf8');
+// The invited list ships as bare hex strings — the second entry shape the
+// loader accepts, and what apps/indexer/src/invited-export.ts writes.
+const invitedPath = join(banDir, 'invited.json');
+writeFileSync(invitedPath, JSON.stringify([INVITED]), 'utf8');
 afterAll(() => rmSync(banDir, { recursive: true, force: true }));
 
 interface Verdict {
@@ -89,7 +96,13 @@ function request(overrides: EventOverrides = {}): Record<string, unknown> {
 function drive(lines: unknown[], env: Record<string, string> = {}): Promise<Run> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [PLUGIN], {
-      env: { ...process.env, BAN_LIST_PATH: banPath, POW_ENABLED: '0', ...env },
+      env: {
+        ...process.env,
+        BAN_LIST_PATH: banPath,
+        INVITED_LIST_PATH: invitedPath,
+        POW_ENABLED: '0',
+        ...env,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -453,5 +466,82 @@ describe('write-policy: NIP-13 proof of work', () => {
 
   it('skips the gate entirely when POW_ENABLED=0', async () => {
     expect((await decide({ kind: KINDS.NOTE, id: 'f'.repeat(64) })).action).toBe('accept');
+  });
+});
+
+describe('write-policy: invited writers ("getting put on")', () => {
+  const POW = { POW_ENABLED: '1' };
+
+  it('never charges an invited pubkey the newcomer tier', async () => {
+    // Never seen before by this process, so without the invited list this would
+    // owe 18 bits.
+    const verdict = await decide(
+      { kind: KINDS.NOTE, pubkey: INVITED, id: idWithBits(13), tags: [['nonce', '1', '13']] },
+      POW,
+    );
+    expect(verdict.action).toBe('accept');
+  });
+
+  it('still holds an invited pubkey to the post tier — invited is not free', async () => {
+    const verdict = await decide(
+      { kind: KINDS.NOTE, pubkey: INVITED, id: idWithBits(12), tags: [['nonce', '1', '12']] },
+      POW,
+    );
+    expect(verdict.action).toBe('reject');
+    expect(verdict.msg).toMatch(/below the required 13/);
+  });
+
+  it('drops POW_NEW_KINDS to the post tier for an invited pubkey, so profile edits stay cheap', async () => {
+    const verdict = await decide(
+      { kind: KINDS.PROFILE, pubkey: INVITED, id: idWithBits(13), tags: [['nonce', '1', '13']] },
+      POW,
+    );
+    expect(verdict.action).toBe('accept');
+  });
+
+  it('leaves the reaction tier alone — already the cheapest', async () => {
+    const verdict = await decide(
+      { kind: KINDS.REPORT, pubkey: INVITED, id: idWithBits(8), tags: [['nonce', '1', '8']] },
+      POW,
+    );
+    expect(verdict.action).toBe('accept');
+  });
+
+  it('does not exempt a banned pubkey that somehow appears on both lists', async () => {
+    const bothPath = join(banDir, 'invited-banned.json');
+    writeFileSync(bothPath, JSON.stringify([BANNED]), 'utf8');
+    const verdict = await decide({ kind: KINDS.NOTE, pubkey: BANNED }, {
+      ...POW,
+      INVITED_LIST_PATH: bothPath,
+    });
+    expect(verdict.msg).toBe('blocked: this tag is banned');
+  });
+
+  it('nobody is invited when the list file is missing', async () => {
+    const verdict = await decide(
+      { kind: KINDS.NOTE, pubkey: INVITED, id: idWithBits(13), tags: [['nonce', '1', '13']] },
+      { ...POW, INVITED_LIST_PATH: join(banDir, 'no-invited.json') },
+    );
+    expect(verdict.action).toBe('reject');
+    expect(verdict.msg).toMatch(/below the required 18/);
+  });
+
+  it('accepts the object entry shape too, like the ban list', async () => {
+    const objPath = join(banDir, 'invited-objects.json');
+    writeFileSync(objPath, JSON.stringify([{ pubkey: INVITED.toUpperCase() }]), 'utf8');
+    const verdict = await decide(
+      { kind: KINDS.NOTE, pubkey: INVITED, id: idWithBits(13), tags: [['nonce', '1', '13']] },
+      { ...POW, INVITED_LIST_PATH: objPath },
+    );
+    expect(verdict.action).toBe('accept');
+  });
+
+  it('says nothing about the invited list on stderr', async () => {
+    const { stderr } = await drive(
+      [request({ kind: KINDS.NOTE, pubkey: INVITED, id: idWithBits(13), tags: [['nonce', '1', '13']] })],
+      POW,
+    );
+    expect(stderr.split('\n').filter((l) => l.trim() !== '')).toEqual(['kind=1 accept']);
+    expect(stderr).not.toContain(INVITED);
   });
 });

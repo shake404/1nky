@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   buildFlick,
   buildModBan,
+  buildProfile,
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
@@ -77,9 +78,26 @@ describe('config', () => {
     ).toThrow(/SWEEP_INTERVAL_MS/);
   });
 
-  it('has no moderators and no ban export unless told', () => {
+  it('has no moderators and no list exports unless told', () => {
     expect(CONFIG.modPubkeys.size).toBe(0);
     expect(CONFIG.banListExportPath).toBeUndefined();
+    expect(CONFIG.invitedListExportPath).toBeUndefined();
+  });
+
+  it('reads the invited export path, treating blank as disabled', () => {
+    const withPath = loadConfig({
+      DATABASE_URL: 'x',
+      RELAY_WS_URL: 'y',
+      INVITED_LIST_EXPORT_PATH: ' /strfry-plugin/invited.json ',
+    } as NodeJS.ProcessEnv);
+    expect(withPath.invitedListExportPath).toBe('/strfry-plugin/invited.json');
+
+    const blank = loadConfig({
+      DATABASE_URL: 'x',
+      RELAY_WS_URL: 'y',
+      INVITED_LIST_EXPORT_PATH: '   ',
+    } as NodeJS.ProcessEnv);
+    expect(blank.invitedListExportPath).toBeUndefined();
   });
 
   it('reads the ban export path, treating blank as disabled', () => {
@@ -251,6 +269,65 @@ describe('run', () => {
         { pubkey: target, reason: 'illegal' },
       ]);
       expect(await readdir(dir)).toEqual(['banlist.json']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('records a redemption and publishes the relay invited list', async () => {
+    // The other half of the pipeline, end to end: a kind-0 carrying an `invite`
+    // tag -> invite_edges -> the JSON file strfry's write policy hot-reloads, so
+    // the writer stops paying the newcomer PoW tier within ~1s.
+    const dir = await mkdtemp(join(tmpdir(), '1nky-indexer-invited-'));
+    const path = join(dir, 'invited.json');
+    try {
+      const childSk = generateSecretKey();
+      const child = getPublicKey(childSk);
+      const inviter = hex('1a');
+      const inviteId = 'ab12cd34ef567890';
+
+      const config = loadConfig({
+        DATABASE_URL: 'postgres://x/y',
+        RELAY_WS_URL: 'ws://relay.invalid',
+        INVITED_LIST_EXPORT_PATH: path,
+      } as NodeJS.ProcessEnv);
+
+      const db = fakeDb((text) =>
+        text.includes('from invite_edges order by child')
+          ? { rows: [{ pubkey: child }], rowCount: 1 }
+          : undefined,
+      );
+      const socket = new FakeSocket();
+      const profile = finalizeEvent(
+        buildProfile({
+          tag: 'NEWJACK',
+          invite: { inviteId, inviterPubkey: inviter },
+          createdAt: 1_700_000_500,
+        }),
+        childSk,
+      );
+
+      const counters = await run({
+        db,
+        config,
+        once: true,
+        now: () => 1_700_000_600,
+        createSocket: () => {
+          queueMicrotask(() => {
+            socket.emit('open');
+            socket.emit('message', JSON.stringify(['EVENT', 'sub', profile]));
+            socket.emit('message', JSON.stringify(['EOSE', 'sub']));
+          });
+          return socket;
+        },
+      });
+
+      expect(counters.putOn).toBe(1);
+      expect(db.matching('update invites')).toHaveLength(1);
+      expect(db.matching('insert into invite_edges')).toHaveLength(1);
+      // Bare hex strings — the entry shape the write policy's loader accepts.
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual([child]);
+      expect(await readdir(dir)).toEqual(['invited.json']);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

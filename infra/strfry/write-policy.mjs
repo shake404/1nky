@@ -46,6 +46,8 @@
  *   POW_NEW_KINDS       default 0
  *   POW_REACTION_KINDS  default 1059,1984,10000
  *   BAN_LIST_PATH       default /app/plugin/banlist.json — JSON array of hex pubkeys
+ *   INVITED_LIST_PATH   default /app/plugin/invited.json — JSON array of hex pubkeys
+ *                       ("getting put on": these never pay POW_BITS_NEW)
  */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -94,43 +96,51 @@ const POW_BITS_NEW = num('POW_BITS_NEW', 18);
 const POW_BITS_POST = num('POW_BITS_POST', 13);
 const POW_BITS_REACTION = num('POW_BITS_REACTION', 8);
 const BAN_LIST_PATH = process.env.BAN_LIST_PATH || '/app/plugin/banlist.json';
+const INVITED_LIST_PATH = process.env.INVITED_LIST_PATH || '/app/plugin/invited.json';
 
-/* --------------------------------------------------------------- ban list */
+/* ------------------------------------------------------- hot-reloaded lists */
 
 /**
- * Hot-reloaded from BAN_LIST_PATH. Phase 2 wires the mod queue's takedown+ban
- * button to rewrite that file (Postgres table -> JSON, per handoff Part 6);
- * this side just has to notice. We stat() at most once per second so a busy
- * relay does not syscall itself to death, and we reload on any mtime/size
- * change. A malformed or missing file keeps the last good list rather than
- * failing open to "nobody is banned" or closed to "everybody is banned".
+ * A pubkey list the indexer owns and this process only reads.
+ *
+ * There are two of them — the ban list and the invited ("put on") list — and
+ * they have identical mechanics, so they share one loader:
+ *
+ *   * stat() at most once per second, so a busy relay does not syscall itself
+ *     to death, and reload on any mtime/size change
+ *   * a malformed or missing file keeps the LAST GOOD list rather than failing
+ *     open to "nobody is on it" or closed to "everybody is"
+ *   * both entry shapes accepted: ["<hex>"] and [{ pubkey: "<hex>", ... }], so
+ *     the exporter can carry metadata (reason, expiry) without breaking us.
+ *     The ban list exports objects; the invited list exports bare strings
+ *   * pubkeys are lowercased and validated here, never logged anywhere
  */
-const banned = {
-  set: new Set(),
-  checkedAt: 0,
-  mtimeMs: -1,
-  size: -1,
-};
+function pubkeyList(path) {
+  return { path, set: new Set(), checkedAt: 0, mtimeMs: -1, size: -1 };
+}
+
+const banned = pubkeyList(BAN_LIST_PATH);
+const invited = pubkeyList(INVITED_LIST_PATH);
 
 const RELOAD_THROTTLE_MS = 1000;
 
-function refreshBanList() {
+function refreshList(list) {
   const now = Date.now();
-  if (now - banned.checkedAt < RELOAD_THROTTLE_MS) return;
-  banned.checkedAt = now;
+  if (now - list.checkedAt < RELOAD_THROTTLE_MS) return;
+  list.checkedAt = now;
 
   let st;
   try {
-    st = statSync(BAN_LIST_PATH);
+    st = statSync(list.path);
   } catch {
     // File not present yet. Keep whatever we already have.
     return;
   }
-  if (st.mtimeMs === banned.mtimeMs && st.size === banned.size) return;
+  if (st.mtimeMs === list.mtimeMs && st.size === list.size) return;
 
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(BAN_LIST_PATH, 'utf8'));
+    parsed = JSON.parse(readFileSync(list.path, 'utf8'));
   } catch {
     // Half-written or invalid JSON. Do NOT update the stat fingerprint, so we
     // retry on the next tick once the writer finishes.
@@ -140,15 +150,13 @@ function refreshBanList() {
 
   const next = new Set();
   for (const entry of parsed) {
-    // Accept both ["<hex>"] and [{ pubkey: "<hex>", ... }] shapes so the Phase 2
-    // exporter can carry metadata (reason, expiry) without breaking us.
     const pk = typeof entry === 'string' ? entry : entry && entry.pubkey;
     if (typeof pk === 'string' && /^[0-9a-f]{64}$/i.test(pk)) next.add(pk.toLowerCase());
   }
 
-  banned.set = next;
-  banned.mtimeMs = st.mtimeMs;
-  banned.size = st.size;
+  list.set = next;
+  list.mtimeMs = st.mtimeMs;
+  list.size = st.size;
 }
 
 /* -------------------------------------------------------------- NIP-13 PoW */
@@ -233,8 +241,23 @@ function requiredBits(kind, pubkey) {
   // the "first event from this pubkey" rule below would otherwise charge
   // POW_BITS_NEW (18 bits) for every single private message — minutes of
   // grinding per line of conversation. 1059 is in POW_REACTION_KINDS by
-  // default for exactly this reason.
+  // default for exactly this reason. Being invited does not make a reaction
+  // cheaper — it is already the cheapest tier.
   if (REACTION_KINDS.has(kind)) return POW_BITS_REACTION;
+
+  // "Getting put on": someone already here vouched for this tag by minting them
+  // an invite, and the indexer confirmed the redemption. That vouch is a
+  // stronger signal than any amount of grinding, so an invited pubkey NEVER
+  // pays POW_BITS_NEW — not even for POW_NEW_KINDS (kind 0), so editing a
+  // profile stays cheap forever.
+  //
+  // Note the ordering this cannot fix, and does not need to: the redemption
+  // itself is a kind 0, so the newcomer pays the 18-bit newcomer tier ONCE, for
+  // that one event, before the indexer has anything to export. Everything after
+  // it is the post tier, and it stays that way across a relay restart — which
+  // `seen` (an in-process set) cannot promise.
+  if (invited.set.has(pubkey)) return POW_BITS_POST;
+
   if (NEW_KINDS.has(kind)) return POW_BITS_NEW;
   if (!seen.has(pubkey)) return POW_BITS_NEW;
   return POW_BITS_POST;
@@ -272,7 +295,7 @@ function decide(req) {
   // 3. Ban list, hot-reloaded. Checked before PoW so a banned pubkey's mined
   //    work is wasted and the rejection is instant (Phase 2 acceptance: banned
   //    pubkey rejected at relay in <1s).
-  refreshBanList();
+  refreshList(banned);
   if (banned.set.has(pubkey)) {
     return { action: 'reject', msg: 'blocked: this tag is banned' };
   }
@@ -288,6 +311,8 @@ function decide(req) {
   // 5. NIP-13 proof of work. This is the CAPTCHA — there are no accounts, so
   //    there is no signup friction for bots either.
   if (POW_ENABLED) {
+    // Only the PoW tier reads the invited list, so it is only refreshed here.
+    refreshList(invited);
     const need = requiredBits(kind, pubkey);
     const failure = checkPow(event, need);
     if (failure) return { action: 'reject', msg: failure };
@@ -364,7 +389,10 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => process.exit(0));
 process.stdin.on('error', () => process.exit(0));
 
-// Prime the ban list at startup so the very first event is checked against a
-// real list rather than an empty one.
-refreshBanList();
+// Prime both lists at startup so the very first event is checked against real
+// ones rather than empty sets. `checkedAt = 0` re-arms the throttle so the
+// first real event can still pick up a file written a moment ago.
+refreshList(banned);
 banned.checkedAt = 0;
+refreshList(invited);
+invited.checkedAt = 0;

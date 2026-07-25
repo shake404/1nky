@@ -34,6 +34,13 @@ export interface IndexerConfig {
    * what you want on a dev box with no relay bind mount.
    */
   readonly banListExportPath: string | undefined;
+  /**
+   * Where `invite_edges` is exported as the JSON file strfry's write policy
+   * hot-reloads — the list of writers who were "put on" and therefore never pay
+   * the newcomer PoW tier. Undefined (the default) disables the export entirely,
+   * which is what you want on a dev box with no relay bind mount.
+   */
+  readonly invitedListExportPath: string | undefined;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -83,6 +90,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
     watermarkOverlapSeconds: intFromEnv(env, 'WATERMARK_OVERLAP_SECONDS', 300),
     modPubkeys: parseModPubkeys(env['SITE_MOD_PUBKEYS']),
     banListExportPath: env['BAN_LIST_EXPORT_PATH']?.trim() || undefined,
+    invitedListExportPath: env['INVITED_LIST_EXPORT_PATH']?.trim() || undefined,
   };
 }
 

@@ -7,6 +7,8 @@ import type {
   DeletionRow,
   EventRow,
   FlickRow,
+  InviteRedemption,
+  InviteRow,
   ProfileRow,
   ReportRow,
   ThreadRow,
@@ -330,6 +332,142 @@ export function selectBanList(): Sql {
   };
 }
 
+/**
+ * Ban every writer reachable *through invite edges* from `rootPubkey`, and
+ * attribute all of it to the same moderator and the same instant as the ban that
+ * asked for it. The root itself is banned by `upsertBan`; this is the cascade.
+ *
+ * `union` (not `union all`) is doing real work: it deduplicates, which is what
+ * makes the recursion terminate even if the edges contain a cycle. A cycle is
+ * possible in principle — A puts B on, then later B puts A on, which is legal
+ * because A had no parent at the time — and `union all` would spin forever on it.
+ *
+ * The `where excluded.banned_at >= banned_pubkeys.banned_at` guard is the same
+ * no-regression rule `upsertBan` uses: a descendant who already carries a NEWER
+ * ban (their own, for their own reasons) keeps it rather than having its reason
+ * and timestamp overwritten by this cascade.
+ *
+ * There is deliberately no unban counterpart. Lifting a ban never cascades:
+ * each descendant may have earned theirs since, and a moderator who wants a
+ * branch back signs an unban per writer.
+ */
+export function banSubtree(row: BanRow): Sql {
+  return {
+    text: `with recursive descendants as (
+             select child from invite_edges where parent = $1
+             union
+             select e.child from invite_edges e join descendants d on e.parent = d.child
+           )
+           insert into banned_pubkeys (pubkey, reason, banned_at, banned_by)
+           select d.child, $2, $3, $4 from descendants d
+           on conflict (pubkey) do update set
+             reason    = excluded.reason,
+             banned_at = excluded.banned_at,
+             banned_by = excluded.banned_by
+           where excluded.banned_at >= banned_pubkeys.banned_at`,
+    params: [row.pubkey, row.reason, row.banned_at, row.banned_by],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// invites / invite_edges — "getting put on". Both DERIVED (see DERIVED_TABLES).
+// ---------------------------------------------------------------------------
+
+/**
+ * Mint an invite. FIRST MINT WINS: `do nothing` on conflict, so a second event
+ * claiming an id that is already in the table changes nothing — an inviter
+ * cannot retroactively take over an id somebody else published, and a replayed
+ * firehose cannot move an invite's inviter or timestamp.
+ *
+ * A BANNED pubkey mints nothing. That is the `where not exists` on the insert's
+ * SELECT rather than a read-then-write, so a ban landing concurrently cannot be
+ * raced. `rowCount` is 0 when either rule refused it.
+ */
+export function upsertInvite(row: InviteRow): Sql {
+  return {
+    text: `insert into invites (invite_id, inviter, created_at)
+           select $1, $2, $3
+           where not exists (select 1 from banned_pubkeys b where b.pubkey = $2)
+           on conflict (invite_id) do nothing`,
+    params: [row.invite_id, row.inviter, row.created_at],
+  };
+}
+
+/**
+ * Mark an invite redeemed — and refuse to, in SQL, unless every rule holds.
+ *
+ * All five checks are predicates on this one UPDATE rather than a read followed
+ * by a write, so two redemptions arriving together cannot both win:
+ *
+ *   1. `invite_id = $1` — the invite exists at all
+ *   2. `inviter = $2`   — the claim names the pubkey that actually minted it.
+ *                         The code carries both halves, so a forged pairing is
+ *                         refused instead of silently re-parented
+ *   3. `inviter <> $3`  — nobody puts themselves on
+ *   4. `redeemed_by is null or redeemed_by = $3` — unredeemed, or already
+ *                         redeemed by THIS writer, which is what makes a
+ *                         replayed kind-0 idempotent instead of a conflict
+ *   5. the inviter is not banned, and the child has no edge yet (one parent,
+ *      forever — the first redemption that lands is the one that sticks)
+ *
+ * `rowCount` 0 means the claim was refused. The caller counts nothing, inserts
+ * no edge and logs nothing: an invalid redemption is silently ignored, because
+ * the alternative is a log line naming pubkeys.
+ */
+export function redeemInvite(redemption: InviteRedemption): Sql {
+  return {
+    text: `update invites
+              set redeemed_by = $3,
+                  redeemed_at = $4
+            where invite_id = $1
+              and inviter = $2
+              and inviter <> $3
+              and (redeemed_by is null or redeemed_by = $3)
+              and not exists (select 1 from banned_pubkeys b where b.pubkey = invites.inviter)
+              and not exists (select 1 from invite_edges e where e.child = $3)`,
+    params: [
+      redemption.invite_id,
+      redemption.inviter,
+      redemption.child,
+      redemption.redeemed_at,
+    ],
+  };
+}
+
+/**
+ * Record the edge. `child` is the primary key and the conflict is `do nothing`,
+ * so the one-parent-forever rule is enforced by the schema and not by trust in
+ * the caller. Only ever run after `redeemInvite` returned a row.
+ */
+export function insertInviteEdge(redemption: InviteRedemption): Sql {
+  return {
+    text: `insert into invite_edges (child, parent, invite_id, redeemed_at)
+           values ($1, $2, $3, $4)
+           on conflict (child) do nothing`,
+    params: [
+      redemption.child,
+      redemption.inviter,
+      redemption.invite_id,
+      redemption.redeemed_at,
+    ],
+  };
+}
+
+/**
+ * Every writer who was put on, for the invited-list export the relay's write
+ * policy hot-reloads. Ordered so the exported file is byte-stable — the policy
+ * reloads on any mtime/size change, and a no-op export should not trigger one.
+ *
+ * One column. The relay has no use for who invited whom, so it never leaves
+ * Postgres.
+ */
+export function selectInvitedList(): Sql {
+  return {
+    text: `select child as pubkey from invite_edges order by child`,
+    params: [],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // buff (kind 5)
 // ---------------------------------------------------------------------------
@@ -452,6 +590,8 @@ export const DERIVED_TABLES = [
   'boards',
   'crews',
   'crew_badges',
+  'invites',
+  'invite_edges',
   'pubkey_stats',
   'sync_state',
 ] as const;

@@ -154,6 +154,8 @@ services:
       POW_REACTION_KINDS: "${POW_REACTION_KINDS:-1059,1984,10000}"
       # Hot-reloaded ban list (JSON array of 32-byte hex pubkeys).
       BAN_LIST_PATH: "${BAN_LIST_PATH:-/app/plugin/banlist.json}"
+      # Hot-reloaded invited list — invited pubkeys skip the newcomer PoW tier.
+      INVITED_LIST_PATH: "${INVITED_LIST_PATH:-/app/plugin/invited.json}"
       # Set to "0" to disable the PoW gate entirely (local dev only).
       POW_ENABLED: "${POW_ENABLED:-1}"
     volumes:
@@ -294,6 +296,8 @@ services:
       # disables the export; the path below is the read-write mount of
       # infra/strfry/ declared under `volumes`.
       BAN_LIST_EXPORT_PATH: "/strfry-plugin/banlist.json"
+      # Invited pubkeys ("getting put on") — same mount, same hot-reload contract.
+      INVITED_LIST_EXPORT_PATH: "/strfry-plugin/invited.json"
     volumes:
       # infra/strfry/, read-WRITE — this is the one service that writes
       # banlist.json. Mount the DIRECTORY so the atomic write (write .tmp,

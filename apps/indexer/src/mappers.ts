@@ -1,6 +1,9 @@
 import {
+  isSubtreeBan,
   KINDS,
   normalizeBoard,
+  parseInvite,
+  parseInviteRedemption,
   parseModBan,
   REPORT_REASONS,
   type SignedEvent,
@@ -639,6 +642,12 @@ export interface BanRow {
 export interface ModBanAction {
   action: 'ban' | 'unban';
   row: BanRow;
+  /**
+   * True when the ban reaches every writer this target ever put on, recursively
+   * (see `isSubtreeBan` in @1nky/protocol). Always false for an unban: lifting
+   * a ban never cascades, because each descendant may have earned their own.
+   */
+  subtree: boolean;
 }
 
 /**
@@ -659,12 +668,73 @@ export function modBanActionFromEvent(event: SignedEvent): ModBanAction | null {
   if (parsed === null) return null;
   return {
     action: parsed.action,
+    subtree: isSubtreeBan(event),
     row: {
       pubkey: parsed.targetPubkey,
       reason: parsed.reason,
       banned_at: event.created_at,
       banned_by: event.pubkey.toLowerCase(),
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Invites — "getting put on". A mint is kind 30078 with d = "invite:<id>";
+// a redemption is an `invite` tag on a kind-0 profile.
+// ---------------------------------------------------------------------------
+
+/** A row of `invites`. `redeemed_*` are filled in later, by a redemption. */
+export interface InviteRow {
+  invite_id: string;
+  inviter: string;
+  created_at: number;
+}
+
+/**
+ * Kind 30078 with `d = "invite:<id>"` — an invite being minted.
+ *
+ * Returns null for every other kind-30078 event, so mod bans, crew definitions,
+ * crew badges and the board registry all fall through untouched.
+ *
+ * Like the mod-ban mapper, authorisation is NOT checked here: this file is pure
+ * mapping. Whether the *inviter* is allowed to mint (i.e. is not banned) is a
+ * SQL guard in `queries.ts`, because that is where it has consequences.
+ */
+export function inviteRowFromEvent(event: SignedEvent): InviteRow | null {
+  const parsed = parseInvite(event);
+  if (parsed === null) return null;
+  return {
+    invite_id: parsed.inviteId,
+    inviter: event.pubkey.toLowerCase(),
+    created_at: event.created_at,
+  };
+}
+
+/** A redemption claim read off a kind-0, before any of it has been believed. */
+export interface InviteRedemption {
+  invite_id: string;
+  /** Who the claim says put them on. Checked against `invites.inviter` in SQL. */
+  inviter: string;
+  /** The writer being put on — the signer of the kind 0. */
+  child: string;
+  redeemed_at: number;
+}
+
+/**
+ * The `invite` tag on a kind-0 profile, or null when there is none.
+ *
+ * Nothing here is trusted. A kind 0 can claim any invite id and any inviter;
+ * `redeemInvite` in `queries.ts` is what decides whether the claim is true, in
+ * one statement, against the real `invites` row.
+ */
+export function inviteRedemptionFromEvent(event: SignedEvent): InviteRedemption | null {
+  const parsed = parseInviteRedemption(event);
+  if (parsed === null) return null;
+  return {
+    invite_id: parsed.inviteId,
+    inviter: parsed.inviterPubkey,
+    child: event.pubkey.toLowerCase(),
+    redeemed_at: event.created_at,
   };
 }
 
