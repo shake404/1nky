@@ -20,6 +20,15 @@ import { isIgnored } from './mute.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
+/**
+ * The board where writers say what is wrong with this place.
+ *
+ * An ordinary board slug, on purpose: feedback rides the same rails as
+ * everything else — no separate inbox, no address to hand over. `/holler` is
+ * just this slug with an introduction on top.
+ */
+export const HOLLER_BOARD = 'holler';
+
 /** How deep a reply tree is allowed to visually indent before it flattens. */
 export const MAX_REPLY_DEPTH = 4;
 

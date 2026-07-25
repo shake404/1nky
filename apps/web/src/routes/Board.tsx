@@ -1,17 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { BeefChip } from '../components/BeefChip.js';
 import { FlickCard } from '../components/FlickCard.js';
-import { WriterChip } from '../components/WriterChip.js';
-import {
-  beefClock,
-  fetchBoard,
-  threadHeadline,
-  type BoardMeta,
-  type ThreadRow,
-} from '../lib/boards.js';
+import { ThreadList, useBoardThreads } from '../components/ThreadList.js';
 import { fetchFeed, type Flick } from '../lib/feed.js';
-import { ago } from '../lib/platform.js';
 import { useTag } from '../state/TagProvider.js';
 
 type View = 'threads' | 'flicks';
@@ -29,42 +20,10 @@ export function Board(): JSX.Element {
   const { tag } = useTag();
 
   const [view, setView] = useState<View>('threads');
-  const [board, setBoard] = useState<BoardMeta | null>(null);
-  const [threads, setThreads] = useState<ThreadRow[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  const { board, threads, loading, failed, cursor, more } = useBoardThreads(slug);
 
   const [flicks, setFlicks] = useState<Flick[]>([]);
   const [flicksLoaded, setFlicksLoaded] = useState(false);
-
-  const load = useCallback(
-    async (from: string | null) => {
-      setLoading(true);
-      try {
-        const page = await fetchBoard(slug, from);
-        setBoard(page.board);
-        setThreads((current) => {
-          const merged = from ? [...current, ...page.threads] : page.threads;
-          const seen = new Set<string>();
-          return merged.filter((t) => !seen.has(t.id) && seen.add(t.id));
-        });
-        setCursor(page.cursor);
-        setFailed(false);
-      } catch {
-        setFailed(true);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [slug],
-  );
-
-  useEffect(() => {
-    setThreads([]);
-    setCursor(null);
-    void load(null);
-  }, [load]);
 
   // The board's wall is only fetched once somebody asks to see it.
   useEffect(() => {
@@ -85,7 +44,6 @@ export function Board(): JSX.Element {
   }, [view, flicksLoaded, slug]);
 
   const name = board?.title ?? slug;
-  const alive = threads.filter((t) => !beefClock(t.expiresAt)?.gone);
 
   return (
     <div className="shell shell--wide pad stack stack--wide">
@@ -96,7 +54,7 @@ export function Board(): JSX.Element {
         <h2 style={{ marginTop: 12 }}>{name}</h2>
         <p className="mono faint" style={{ marginTop: 8 }}>
           {board?.regionSlug ? `${board.regionSlug} · ` : ''}
-          {alive.length} {alive.length === 1 ? 'thread' : 'threads'}
+          {threads.length} {threads.length === 1 ? 'thread' : 'threads'}
         </p>
       </div>
 
@@ -125,7 +83,7 @@ export function Board(): JSX.Element {
             </Link>
           ) : null}
 
-          {alive.length === 0 && !loading ? (
+          {threads.length === 0 && !loading ? (
             <div className="empty">
               <h2>Nobody&apos;s talking here.</h2>
               <p className="muted">First word&apos;s yours.</p>
@@ -136,13 +94,7 @@ export function Board(): JSX.Element {
               ) : null}
             </div>
           ) : (
-            <ul className="list-reset stack">
-              {alive.map((thread) => (
-                <li key={thread.id}>
-                  <ThreadRowCard thread={thread} />
-                </li>
-              ))}
-            </ul>
+            <ThreadList threads={threads} />
           )}
 
           {loading ? (
@@ -152,7 +104,7 @@ export function Board(): JSX.Element {
           ) : null}
 
           {cursor && !loading ? (
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => void load(cursor)}>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={more}>
               More
             </button>
           ) : null}
@@ -181,31 +133,8 @@ export function Board(): JSX.Element {
   );
 }
 
-/** One row in the thread list. */
-export function ThreadRowCard({ thread }: { thread: ThreadRow }): JSX.Element {
-  const clock = beefClock(thread.expiresAt);
-  const headline = threadHeadline(thread);
-  const showExcerpt = Boolean(thread.subject && thread.excerpt.trim());
-
-  return (
-    <Link to={`/t/${thread.id}`} className="thread">
-      <div className="thread__top">
-        <span className="thread__subject">{headline}</span>
-        {clock ? <BeefChip clock={clock} /> : null}
-      </div>
-
-      {showExcerpt ? <p className="thread__excerpt muted">{thread.excerpt}</p> : null}
-
-      <div className="thread__meta">
-        <WriterChip pubkey={thread.writer.pubkey} name={thread.writer.tag ?? undefined} size={18} linked={false} />
-        <span className="mono faint">
-          {thread.replyCount === 0
-            ? 'no replies'
-            : `${thread.replyCount} ${thread.replyCount === 1 ? 'reply' : 'replies'}`}
-          {' · '}
-          {ago(thread.lastReplyAt ?? thread.createdAt)}
-        </span>
-      </div>
-    </Link>
-  );
-}
+/**
+ * Kept as an export here because the search results page renders board threads
+ * through it. The implementation moved to the shared thread list.
+ */
+export { ThreadRowCard } from '../components/ThreadList.js';

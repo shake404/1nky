@@ -190,6 +190,28 @@ export function Settings(): JSX.Element {
       <hr className="rule" />
 
       <section className="stack">
+        <h3>This place</h3>
+        <div className="settings-row">
+          <span className="muted">Broken, missing, or just wrong — say it out loud.</span>
+          <Link to="/holler" className="btn btn--go btn--sm sticker">
+            Holler at us
+          </Link>
+        </div>
+        <div className="settings-row">
+          <span className="muted">What&apos;s up already and what&apos;s getting built next.</span>
+          <Link to="/roadmap" className="btn btn--ghost btn--sm sticker">
+            What&apos;s coming
+          </Link>
+        </div>
+        <p className="help">
+          A holler is an ordinary post on an ordinary board. Same rules as the wall — no
+          name, no number, just your tag.
+        </p>
+      </section>
+
+      <hr className="rule" />
+
+      <section className="stack">
         <h3 className="hazard">{COPY.hangItUp.label}</h3>
         <p className="muted">{COPY.hangItUp.blurb}</p>
         <Link to="/hang-it-up" className="btn btn--danger btn--block">

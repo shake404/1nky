@@ -12,6 +12,7 @@ import { Explore } from './routes/Explore.js';
 import { Feed } from './routes/Feed.js';
 import { FlickDetail } from './routes/FlickDetail.js';
 import { HangItUp } from './routes/HangItUp.js';
+import { Holler } from './routes/Holler.js';
 import { Landing } from './routes/Landing.js';
 import { Messages } from './routes/Messages.js';
 import { Mod } from './routes/Mod.js';
@@ -20,6 +21,7 @@ import { PickTag } from './routes/PickTag.js';
 import { PostFlick } from './routes/PostFlick.js';
 import { ProfileEdit } from './routes/ProfileEdit.js';
 import { Restore } from './routes/Restore.js';
+import { Roadmap } from './routes/Roadmap.js';
 import { Search } from './routes/Search.js';
 import { Settings } from './routes/Settings.js';
 import { Thread } from './routes/Thread.js';
@@ -87,6 +89,8 @@ export function App(): JSX.Element {
         <Route path="/backup" element={<Backup />} />
         <Route path="/restore" element={<Restore />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/holler" element={<Holler />} />
+        <Route path="/roadmap" element={<Roadmap />} />
         <Route path="/hang-it-up" element={<HangItUp />} />
         {/* Staff door. Not in the nav — you get here by typing it, and the
             screen is a locked gate without the key stored on the device. */}

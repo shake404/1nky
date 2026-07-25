@@ -1903,3 +1903,71 @@ main {
   background: var(--chrome-face);
   box-shadow: 1px 1px 0 var(--keyline);
 }
+
+/* --- Roadmap ---------------------------------------------------------------
+ * A list of what is coming reads better as a stack of slips than as bullets:
+ * each item hangs off a left keyline with a stencilled tick, so a long lane
+ * still scans on a phone.
+ */
+.road > li {
+  position: relative;
+  padding: 10px 0 10px 20px;
+  border-left: 2px solid var(--line);
+  color: var(--buff);
+  line-height: 1.55;
+}
+
+.road > li::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 17px;
+  width: 8px;
+  height: 8px;
+  background: var(--ink);
+}
+
+/* --- Hanging it up ---------------------------------------------------------
+ * The tally while the work comes down. Deliberately plain: a count and a bar,
+ * because the one question during a long wait is "how much is left".
+ */
+.ritual-steps {
+  counter-reset: ritual;
+}
+
+.ritual-steps > li {
+  counter-increment: ritual;
+  position: relative;
+  padding-left: 34px;
+  line-height: 1.55;
+}
+
+.ritual-steps > li::before {
+  content: counter(ritual);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  background: var(--ink);
+  color: var(--keyline);
+  box-shadow: 1px 1px 0 var(--keyline);
+}
+
+.tally {
+  height: 8px;
+  background: var(--soot-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.tally > span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 200ms linear;
+}

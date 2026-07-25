@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchBoards, type BoardSummary } from '../lib/boards.js';
+import { fetchBoards, HOLLER_BOARD, type BoardSummary } from '../lib/boards.js';
 import { ago } from '../lib/platform.js';
 
 /**
@@ -32,7 +32,10 @@ export function Boards(): JSX.Element {
       const claimed = new Set(cityBoards.map((b) => b.slug));
 
       setCities(cityBoards);
-      setOthers(all.filter((b) => b.kind !== 'city' && !claimed.has(b.slug)));
+      // `holler` has its own permanent entry below, so it never shows up twice.
+      setOthers(
+        all.filter((b) => b.kind !== 'city' && !claimed.has(b.slug) && b.slug !== HOLLER_BOARD),
+      );
       setFailed(cityResult.status === 'rejected' && allResult.status === 'rejected');
       setLoading(false);
     })();
@@ -78,6 +81,18 @@ export function Boards(): JSX.Element {
           ))}
         </div>
       )}
+
+      {/* Fixed, not fetched: the board where you complain about this place has
+          to be findable on the day nothing has been posted to it. */}
+      <section className="stack">
+        <hr className="rule" />
+        <div className="settings-row">
+          <span className="muted">Something wrong with this place?</span>
+          <Link to="/holler" className="btn btn--ghost btn--sm sticker">
+            Holler at us
+          </Link>
+        </div>
+      </section>
 
       {others.length > 0 ? (
         <section className="stack">

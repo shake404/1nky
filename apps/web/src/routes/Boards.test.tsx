@@ -156,6 +156,30 @@ describe('the boards hub', () => {
     expect(other!.classList.contains('board-card')).toBe(false);
   });
 
+  it('keeps a permanent way to holler, even with nothing claimed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(boardsFetch([], []));
+
+    await mount();
+
+    const holler = container.querySelector('a[href="/holler"]');
+    expect(holler).not.toBeNull();
+    expect(holler!.textContent).toContain('Holler at us');
+  });
+
+  it('does not list the holler board twice', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      boardsFetch(CITY_BOARDS, [
+        { slug: 'holler', title: 'holler', kind: 'feedback', createdAt: NOW, flickCount: 0, threadCount: 4, latestAt: NOW },
+      ]),
+    );
+
+    await mount();
+
+    // The quiet row is for boards without a front door of their own.
+    expect(container.querySelector('a[href="/b/holler"]')).toBeNull();
+    expect(container.querySelector('a[href="/holler"]')).not.toBeNull();
+  });
+
   it('invites the first post when nobody has claimed a wall', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(boardsFetch([], []));
 
