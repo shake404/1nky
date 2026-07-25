@@ -23,14 +23,35 @@ export interface StoredTag {
   hasPosted: boolean;
 }
 
+/**
+ * A crew secret key this device owns because it FOUNDED the crew.
+ *
+ * Kept in a SEPARATE store from the single-slot `tag` on purpose: the founder
+ * signs crew-management events with the crew key WITHOUT swapping their main
+ * posting identity. The main identity store (`tag`) and every login / post /
+ * DM flow stay exactly as they are — this keyring is only ever read by the
+ * founder-only crew management panel. One row per founded crew, keyed by the
+ * crew's pubkey.
+ */
+export interface StoredCrewKey {
+  /** The crew's own hex pubkey. Primary key. */
+  pubkey: string;
+  /** 32 raw bytes — the crew's secret. Never logged, never leaves the device. */
+  secret: Uint8Array;
+  /** The crew's tag name, for the directory listing only. */
+  name: string;
+}
+
 export interface OneInkyDB extends DBSchema {
   tag: { key: string; value: StoredTag };
   /** Small odds and ends: buffed ids, seen prompts, own post ids. */
   prefs: { key: string; value: unknown };
+  /** Crew secret keys for crews this device founded (crew keyring). */
+  crewkeys: { key: string; value: StoredCrewKey };
 }
 
 const DB_NAME = '1nky';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let handle: Promise<IDBPDatabase<OneInkyDB>> | null = null;
 
@@ -42,6 +63,9 @@ export function db(): Promise<IDBPDatabase<OneInkyDB>> {
       }
       if (!database.objectStoreNames.contains('prefs')) {
         database.createObjectStore('prefs');
+      }
+      if (!database.objectStoreNames.contains('crewkeys')) {
+        database.createObjectStore('crewkeys', { keyPath: 'pubkey' });
       }
     },
   });

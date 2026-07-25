@@ -1,10 +1,11 @@
-import { COPY, fingerprint } from '@1nky/protocol';
+import { COPY, fingerprint, PROFILE_BIO_MAX } from '@1nky/protocol';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Identicon } from '../components/Identicon.js';
 import { QrBlock } from '../components/QrBlock.js';
 import { Spraying } from '../components/Spraying.js';
 import { POW_BITS } from '../lib/config.js';
+import { saveCrewKey } from '../lib/crew-keys.js';
 import {
   createCrew,
   crewTemplates,
@@ -41,6 +42,7 @@ export function CreateCrew(): JSX.Element {
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
+  const [bio, setBio] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [stage, setStage] = useState<Stage | null>(null);
   const [result, setResult] = useState<CreateCrewResult | null>(null);
@@ -62,13 +64,21 @@ export function CreateCrew(): JSX.Element {
     setBusy(true);
     try {
       const created = await createCrew(trimmed, tag.pubkey, async (secret, pubkey, kind) => {
-        const templates = crewTemplates(trimmed, tag.pubkey, fingerprint(pubkey));
+        const templates = crewTemplates(trimmed, tag.pubkey, fingerprint(pubkey), {
+          ...(bio.trim() ? { bio: bio.trim() } : {}),
+        });
         const template = kind === 'profile' ? templates.profile : templates.definition;
         // A brand-new crew pubkey has no history of its own; its first event
         // pays the newcomer's freight.
         await publishTemplate(secret, pubkey, template, POW_BITS.new, { onStage: setStage });
       });
       setResult(created);
+
+      // Save the crew's own secret into the founder keyring so this device can
+      // sign roster / profile edits as the crew WITHOUT swapping its main tag.
+      // Best effort — a failure here does not block the blackbook export that
+      // already happened above or the link below.
+      await saveCrewKey({ pubkey: created.pubkey, secret: created.secret, name: created.name }).catch(() => undefined);
 
       // Export the crew blackbook immediately — this is the one time the raw
       // crew secret is on screen; the founder hands it off.
@@ -166,6 +176,19 @@ export function CreateCrew(): JSX.Element {
           placeholder="FASE"
         />
         <p className="help">Names are not unique — the crew&apos;s mark is what tells it apart.</p>
+      </div>
+
+      <div className="field">
+        <label htmlFor="crew-bio">What the crew is about (optional)</label>
+        <textarea
+          id="crew-bio"
+          className="textarea"
+          value={bio}
+          onChange={(e) => setBio(e.target.value.slice(0, PROFILE_BIO_MAX))}
+          placeholder="A line or two about the crew."
+          disabled={busy || stage !== null}
+        />
+        <p className="help">Shown on the crew page. You can change it later.</p>
       </div>
 
       <div className="field">

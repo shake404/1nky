@@ -1,20 +1,22 @@
 import {
   buildCrewDefinition,
   buildProfile,
+  CREW_DEFINITION_DTAG,
   fingerprint,
   generateSecretKey,
   getPublicKey,
   KINDS,
+  PROFILE_BIO_MAX,
   type GrafType,
   type SignedEvent,
   type Surface,
 } from '@1nky/protocol';
-import { API_BASE } from './config.js';
+import { API_BASE, POW_BITS } from './config.js';
 import { fetchWriterFlicks, parseFeedResponse, type Flick } from './feed.js';
 import { getPref, setPref } from './db.js';
 import type { Tag } from './identity.js';
 import { fetchProfile } from './profiles.js';
-import { publishProfile } from './publish.js';
+import { publishProfile, publishTemplate, type PublishOptions } from './publish.js';
 import { relay } from './relay.js';
 
 /**
@@ -39,6 +41,8 @@ export interface CrewHeader {
   tag: string | null;
   mark: string;
   avatarSha256: string | null;
+  /** The crew's bio / description, from the crew's own kind-0 `about`. Null when unset. */
+  bio: string | null;
   founderPubkey: string | null;
   foundedAt: number | null;
   memberCount: number;
@@ -75,6 +79,7 @@ function emptyHeader(pubkey: string): CrewHeader {
     tag: null,
     mark: fingerprint(pubkey),
     avatarSha256: null,
+    bio: null,
     founderPubkey: null,
     foundedAt: null,
     memberCount: 0,
@@ -119,6 +124,19 @@ function crewNameFromProfile(event: SignedEvent): string | null {
   return typeof name === 'string' && name.trim() ? name.trim() : null;
 }
 
+/** Read the crew's bio (`about`) straight off its own kind-0 event. */
+function crewBioFromProfile(event: SignedEvent): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(event.content);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const about = (parsed as Record<string, unknown>)['about'];
+  return typeof about === 'string' && about.trim() ? about.trim() : null;
+}
+
 /**
  * `GET /crew/:pubkey`, with a relay-direct degrade.
  *
@@ -152,6 +170,15 @@ function shapeCrewResponse(body: Record<string, unknown>, pubkey: string): CrewP
     tag: typeof crewRecord['tag'] === 'string' && crewRecord['tag'] ? crewRecord['tag'] : null,
     mark: typeof crewRecord['mark'] === 'string' && crewRecord['mark'] ? crewRecord['mark'] : fingerprint(pubkey),
     avatarSha256: typeof crewRecord['avatarSha256'] === 'string' ? crewRecord['avatarSha256'] : null,
+    // The API surfaces the crew's bio under either `bio` (our field name) or
+    // the ecosystem `about` — accept either so the page renders as soon as
+    // the indexer exposes one.
+    bio:
+      typeof crewRecord['bio'] === 'string' && crewRecord['bio'].trim()
+        ? crewRecord['bio'].trim()
+        : typeof crewRecord['about'] === 'string' && crewRecord['about'].trim()
+          ? (crewRecord['about'] as string).trim()
+          : null,
     founderPubkey: typeof crewRecord['founderPubkey'] === 'string' ? crewRecord['founderPubkey'] : null,
     foundedAt: typeof crewRecord['foundedAt'] === 'number' ? crewRecord['foundedAt'] : null,
     memberCount: typeof crewRecord['memberCount'] === 'number' ? crewRecord['memberCount'] : 0,
@@ -207,9 +234,26 @@ async function relayCrew(pubkey: string): Promise<CrewPage> {
   const def = definition ? parseCrewDefinition(definition) : { name: null, founderPubkey: null, foundedAt: null, members: [] };
 
   const profileName = profiles[0] ? crewNameFromProfile(profiles[0]) : null;
+  const profileBio = profiles[0] ? crewBioFromProfile(profiles[0]) : null;
   const tagName = def.name ?? profileName;
 
   const flicks = await fetchWriterFlicks(pubkey);
+
+  // Resolved roster: enrich each member's bare pubkey with their tag name when
+  // their kind-0 is reachable on the wall. A miss reads as "unnamed" upstream,
+  // never as the raw hex — the mark already disambiguates them.
+  const members: CrewMember[] = def.members.map((pk) => ({
+    pubkey: pk,
+    tag: null,
+    mark: fingerprint(pk),
+    avatarSha256: null,
+  }));
+  await Promise.allSettled(
+    members.map(async (m) => {
+      const meta = await fetchProfile(m.pubkey);
+      if (meta?.name?.trim()) m.tag = meta.name.trim();
+    }),
+  );
 
   return {
     crew: {
@@ -217,13 +261,14 @@ async function relayCrew(pubkey: string): Promise<CrewPage> {
       tag: tagName,
       mark: fingerprint(pubkey),
       avatarSha256: null,
+      bio: profileBio,
       founderPubkey: def.founderPubkey,
       foundedAt: def.foundedAt,
       memberCount: def.members.length,
       verified: false,
       verifiedAt: null,
     },
-    members: def.members.map((pk) => ({ pubkey: pk, tag: null, mark: fingerprint(pk), avatarSha256: null })),
+    members,
     repping: [],
     flicks,
     nextCursor: null,
@@ -311,12 +356,20 @@ export async function createCrew(
 }
 
 /** Build the two templates a freshly-minted crew publishes. Exposed for tests. */
-export function crewTemplates(name: string, founderPubkey: string, mark: string): {
+export function crewTemplates(
+  name: string,
+  founderPubkey: string,
+  mark: string,
+  options: { bio?: string } = {},
+): {
   profile: ReturnType<typeof buildProfile>;
   definition: ReturnType<typeof buildCrewDefinition>;
 } {
   return {
-    profile: buildProfile({ tag: name }),
+    profile: buildProfile({
+      tag: name,
+      ...(options.bio !== undefined ? { bio: options.bio } : {}),
+    }),
     definition: buildCrewDefinition({ name, mark, members: [founderPubkey], founderPubkey }),
   };
 }
@@ -388,3 +441,92 @@ export async function linkCrewToFounder(
 // Re-export the facet vocabularies for the post-flow picker so callers import
 // everything crew/explore-related from one place if they want to.
 export type { GrafType, Surface };
+
+// ---------------------------------------------------------------------------
+// Founder roster management — signed by the CREW key, never the founder's tag.
+// ---------------------------------------------------------------------------
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * Pull a writer's id out of a "put someone on" input.
+ *
+ * Accepts:
+ *   - a profile link (`https://1nky.com/w/<hex>` or `/w/<hex>` or `.../w/<hex>`)
+ *   - the raw 64-hex tag id directly.
+ *
+ * A mark is a one-way fingerprint and CANNOT be reversed to an id, so asking
+ * for one would be a footgun — this deliberately only accepts forms that
+ * already carry the id. Anything else (a name, a mark, junk) returns `null`
+ * and the caller shows a "could not make out that writer" message.
+ *
+ * Returns the 64-char lowercase hex id, or `null`.
+ */
+export function resolveWriterInput(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // Pull `/w/<hex>` out of a full URL OR a bare path. A leading search/hash is
+  // tolerated so a pasted browser address bar works either way.
+  const pathMatch = /(?:^|\/)w\/([0-9a-fA-F]{64})(?:[/#?]|$)/.exec(trimmed);
+  if (pathMatch) return pathMatch[1]!.toLowerCase();
+
+  const cleaned = trimmed.replace(/^#+/, '').trim();
+  if (HEX64.test(cleaned)) return cleaned.toLowerCase();
+  return null;
+}
+
+/**
+ * Re-publish the crew's kind-30078 definition with an updated roster, signed by
+ * the crew's *own* key from the founder's keyring (never the founder's tag).
+ *
+ * Builds the template, grinds the post-tier PoW, and publishes. Pass the full
+ * roster you want to end up with — `{ members }` is treated as the source of
+ * truth, deduped by {@link buildCrewDefinition}. `founderPubkey` /
+ * `foundedAt` preserve the crew's provenance across edits (foundedAt is pinned
+ * to the original so editing the roster does not re-stamp the crew as founded
+ * today).
+ */
+export async function updateCrewRoster(
+  crewSecret: Uint8Array,
+  crewPubkey: string,
+  input: {
+    name: string;
+    members: readonly string[];
+    founderPubkey?: string;
+    foundedAt?: number;
+  },
+  options: PublishOptions = {},
+): Promise<SignedEvent> {
+  const template = buildCrewDefinition({
+    name: input.name,
+    mark: fingerprint(crewPubkey),
+    members: input.members,
+    ...(input.founderPubkey ? { founderPubkey: input.founderPubkey } : {}),
+    ...(input.foundedAt !== undefined ? { createdAt: input.foundedAt } : {}),
+  });
+  return publishTemplate(crewSecret, crewPubkey, template, POW_BITS.post, options);
+}
+
+/**
+ * Re-publish the crew's kind-0 profile (name + bio), signed by the crew's own
+ * key. Same sign-and-publish shape as {@link updateCrewRoster}; the bio rides
+ * as the ecosystem `about` field via {@link buildProfile}.
+ */
+export async function publishCrewProfile(
+  crewSecret: Uint8Array,
+  crewPubkey: string,
+  input: { name: string; bio?: string },
+  options: PublishOptions = {},
+): Promise<SignedEvent> {
+  const name = input.name.trim();
+  if (!name) throw new Error('Pick a crew name first.');
+  const template = buildProfile({
+    tag: name,
+    ...(input.bio !== undefined ? { bio: input.bio.slice(0, PROFILE_BIO_MAX) } : {}),
+  });
+  return publishTemplate(crewSecret, crewPubkey, template, POW_BITS.post, options);
+}
+
+/** Exposed for tests / routes that want the constant the crew definition uses. */
+export { CREW_DEFINITION_DTAG };
