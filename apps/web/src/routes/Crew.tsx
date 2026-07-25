@@ -2,9 +2,11 @@ import { COPY, fingerprint } from '@1nky/protocol';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Avatar } from '../components/Avatar.js';
+import { AvatarCropper } from '../components/AvatarCropper.js';
 import { FlickCard } from '../components/FlickCard.js';
 import { Spraying } from '../components/Spraying.js';
 import { getCrewKey, hasCrewKey } from '../lib/crew-keys.js';
+import { uploadBlob } from '../lib/flicks.js';
 import {
   fetchCrew,
   fetchWriterCrews,
@@ -217,7 +219,7 @@ export function Crew(): JSX.Element {
             setPage({ ...page, crew: { ...crew, memberCount: next.length }, members: next });
           }}
           onCrewInfoChange={async (info) => {
-            setPage({ ...page, crew: { ...crew, tag: info.name, bio: info.bio } });
+            setPage({ ...page, crew: { ...crew, tag: info.name, bio: info.bio, avatarSha256: info.avatarSha256 } });
           }}
           onStage={setStage}
           stage={stage}
@@ -331,7 +333,7 @@ interface FounderPanelProps {
   crew: CrewPage['crew'];
   members: CrewMember[];
   onRosterChange: (next: CrewMember[]) => Promise<void>;
-  onCrewInfoChange: (info: { name: string; bio: string | null }) => Promise<void>;
+  onCrewInfoChange: (info: { name: string; bio: string | null; avatarSha256: string | null }) => Promise<void>;
   onStage: (stage: Stage | null) => void;
   stage: Stage | null;
 }
@@ -348,6 +350,23 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
   const [editName, setEditName] = useState(crew.tag ?? '');
   const [editBio, setEditBio] = useState(crew.bio ?? '');
   const [editing, setEditing] = useState(false);
+  // Crew picture: `pickedAvatar` is a freshly-framed square not up yet;
+  // `avatarPreview` is its object URL; `cropFile` opens the cropper; `dropAvatar`
+  // means the founder chose to take the current one off.
+  const [pickedAvatar, setPickedAvatar] = useState<Blob | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [dropAvatar, setDropAvatar] = useState(false);
+
+  const resetEdit = (): void => {
+    setEditName(crew.tag ?? '');
+    setEditBio(crew.bio ?? '');
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    setPickedAvatar(null);
+    setAvatarPreview(null);
+    setCropFile(null);
+    setDropAvatar(false);
+  };
 
   const rosterPubkeys = members.map((m) => m.pubkey);
 
@@ -411,9 +430,29 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
     onStage('spraying');
     try {
       const bio = editBio.trim();
-      await publishCrewProfile(key.secret, crew.pubkey, { name, bio }, { onStage });
-      await onCrewInfoChange({ name, bio: bio || null });
+      // A fresh picture goes up first (signed with the CREW's own key), so the
+      // crew kind-0 can point at its address. Dropping it publishes an empty
+      // avatar; otherwise the current one is kept.
+      let avatarSha256: string | undefined;
+      if (pickedAvatar) {
+        onStage('uploading');
+        const upload = await uploadBlob(pickedAvatar, key.secret);
+        avatarSha256 = upload.sha256;
+        onStage('spraying');
+      } else if (dropAvatar) {
+        avatarSha256 = '';
+      }
+      await publishCrewProfile(
+        key.secret,
+        crew.pubkey,
+        { name, bio, ...(avatarSha256 !== undefined ? { avatarSha256 } : {}) },
+        { onStage },
+      );
+      const nextAvatar =
+        avatarSha256 !== undefined ? (avatarSha256 || null) : (crew.avatarSha256 ?? null);
+      await onCrewInfoChange({ name, bio: bio || null, avatarSha256: nextAvatar });
       setEditing(false);
+      resetEdit();
       say('Up.');
     } catch (error) {
       say(error instanceof Error ? error.message : 'That did not go up.', 'hazard');
@@ -473,6 +512,61 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
       {editing ? (
         <div className="stack" style={{ gap: 8 }}>
           <div className="field">
+            <label>The crew&apos;s picture</label>
+            {cropFile ? (
+              <AvatarCropper
+                file={cropFile}
+                onDone={(blob) => {
+                  if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+                  setPickedAvatar(blob);
+                  setAvatarPreview(URL.createObjectURL(blob));
+                  setDropAvatar(false);
+                  setCropFile(null);
+                }}
+                onCancel={() => setCropFile(null)}
+              />
+            ) : (
+              <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+                {pickedAvatar && avatarPreview ? (
+                  <img className="avatar" src={avatarPreview} alt="" width={56} height={56} style={{ width: 56, height: 56 }} />
+                ) : (
+                  <Avatar pubkey={crew.pubkey} avatarSha256={dropAvatar ? null : crew.avatarSha256} size={56} alt={crew.tag || ''} />
+                )}
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <label className="btn btn--ghost btn--sm sticker" style={{ cursor: 'pointer' }}>
+                    Put a face on it
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      disabled={stage !== null}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) setCropFile(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                  {(pickedAvatar || (crew.avatarSha256 && !dropAvatar)) ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      disabled={stage !== null}
+                      onClick={() => {
+                        if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+                        setPickedAvatar(null);
+                        setAvatarPreview(null);
+                        setDropAvatar(true);
+                      }}
+                    >
+                      Take it off
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="field">
             <label htmlFor="crew-edit-name">Crew name</label>
             <input
               id="crew-edit-name"
@@ -497,13 +591,13 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
             <button type="button" className="btn btn--go btn--sm sticker" onClick={() => void saveInfo()} disabled={stage !== null}>
               Put it up
             </button>
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => { setEditing(false); setEditName(crew.tag ?? ''); setEditBio(crew.bio ?? ''); }} disabled={stage !== null}>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => { setEditing(false); resetEdit(); }} disabled={stage !== null}>
               Never mind
             </button>
           </div>
         </div>
       ) : (
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => { setEditing(true); setEditName(crew.tag ?? ''); setEditBio(crew.bio ?? ''); }}>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => { resetEdit(); setEditing(true); }}>
           Edit crew info
         </button>
       )}

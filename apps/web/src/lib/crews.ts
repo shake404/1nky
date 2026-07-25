@@ -516,7 +516,7 @@ export async function updateCrewRoster(
 export async function publishCrewProfile(
   crewSecret: Uint8Array,
   crewPubkey: string,
-  input: { name: string; bio?: string },
+  input: { name: string; bio?: string; avatarSha256?: string },
   options: PublishOptions = {},
 ): Promise<SignedEvent> {
   const name = input.name.trim();
@@ -524,6 +524,9 @@ export async function publishCrewProfile(
   const template = buildProfile({
     tag: name,
     ...(input.bio !== undefined ? { bio: input.bio.slice(0, PROFILE_BIO_MAX) } : {}),
+    // A crew has a face too — same field as a writer's kind-0. An empty string
+    // clears it (buildProfile drops an empty avatar), so "take it off" works.
+    ...(input.avatarSha256 !== undefined ? { avatarSha256: input.avatarSha256 } : {}),
   });
   // A crew profile is a kind 0 like any other, and the relay always charges the
   // newcomer tier for kind 0 (POW_NEW_KINDS) — mine at POST and every crew-info
