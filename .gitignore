@@ -17,3 +17,5 @@ test-results/
 .playwright-mcp/
 1nky-*.png
 Bodega-extracted/
+
+infra/loadtest/results/
