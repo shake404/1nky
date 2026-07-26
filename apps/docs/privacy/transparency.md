@@ -40,13 +40,18 @@ that the update was "just delayed."
 > 1NKY site key once that key is published. Until then this canary is
 > unauthenticated and should be weighted accordingly.*
 
-### Pre-launch status
+### Where this sits right now
 
-1NKY is not publicly launched yet. The zeros above are true and also easy to
-achieve, since there are no users to receive requests about. The canary is
-published now so that the format, the cadence and the reissue commitment are on the
-record *before* the first request ever arrives — a canary introduced after the fact
-is worth very little.
+The app is live at 1nky.com and **has not been publicly announced.** So the zeros
+above are true and also easy to achieve — there's very little to receive requests
+about yet. The canary is published at this stage precisely so that the format, the
+cadence and the reissue commitment are on the record *before* the first request ever
+arrives. A canary introduced after the fact is worth very little.
+
+Two things that gate a public announcement are on the [roadmap](/roadmap#not-yet),
+and one of them — child-safety scanning at the edge — will put another company in the
+request path when it lands. When that changes, it gets said here and on the
+[no-logs page](/privacy/no-logs#what-the-edge-sees) before it ships, not after.
 
 ### How the canary works
 
@@ -138,17 +143,20 @@ with verification steps on the [no-logs page](/privacy/no-logs).
 | Private keys / the ability to post as a user | Physically impossible — keys never leave the user's device. |
 | Ability to decrypt a user's blackbook | Physically impossible — passphrase is never transmitted. |
 | Analytics or behavioral profiles | Do not exist. No analytics of any kind is deployed. |
+| Contents of a private message | Encrypted between the two devices. We hold a sealed envelope signed by a throwaway name, and we don't know who sent it. |
+| A locked recovery copy, if the writer opted in | This one **can** be produced, and it's the only user-linked thing we store. It is a blob nobody can decrypt without the writer's passphrase, which never reaches us. Off by default. |
 
 **What does exist and could be produced:** the public content itself — the same
 signed posts anyone can read on the site — and the public key that signed them. A
 public key is a number with no identity attached to it on our side.
 
-**Third parties are not covered by this table.** Cloudflare sits at the edge of the
-clearnet site and processes visitor IPs transiently under their own policies; they
-can receive legal process independently of us, and we have no visibility into or
-control over that. Same for any hosting provider, which knows we rent a server. The
-onion mirror exists precisely so there's a path with no third party in it. We'd
-rather tell you where the seams are than claim there aren't any.
+**Third parties are not covered by this table.** The commercial host that serves the
+clearnet app shell sees requests for it; our hosting provider knows we rent a server;
+our object-storage provider holds the media bucket. Each of them can receive legal
+process independently of us, under their own policies, with no visibility or control
+on our side. The [onion mirror](/privacy/onion) exists precisely so there's a path
+with no third party in it at all. We'd rather tell you where the seams are than claim
+there aren't any.
 
 **We cannot produce what we never collected.** That sentence is the entire product
 strategy, and the [verification section](/privacy/no-logs#verify-it-yourself)
@@ -156,6 +164,26 @@ exists so it isn't just a sentence.
 
 ## Contact
 
-Legal process, transparency questions and press: contact details go live with
-launch (TODO — placeholder pending entity formation and counsel review).
-Security vulnerabilities go through [responsible disclosure](/security) instead.
+1NKY is operated by **Bodegga LLC**, a Wyoming limited liability company.
+
+**Legal process** — served on the entity through its registered agent:
+
+```text
+Bodegga LLC, c/o Registered Agents Inc
+30 N Gould St, Ste R
+Sheridan, WY 82801
+```
+
+**Copyright notices** go to the registered DMCA agent, not here — the address and the
+statutory requirements are on the [DMCA page](/legal/dmca).
+
+**Security vulnerabilities** go through [responsible disclosure](/security).
+
+**Everything else** — bugs, questions, "this page is wrong" — is
+[Holler or an issue](/feedback). There is no support email, because there is no email
+anywhere in this product.
+
+::: info Still owed
+Counsel review of the terms and privacy policy (both are labelled drafts), and a
+signed canary. [Roadmap.](/roadmap#not-yet)
+:::

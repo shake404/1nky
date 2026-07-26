@@ -89,7 +89,7 @@ later — we don't have an advertising business or a licensing business to feed.
 
 By posting, you grant 1NKY a non-exclusive, worldwide, royalty-free license to
 host, store, cache, reproduce and display your content **for the sole purpose of
-operating the platform** — serving it to other users, caching it at the CDN,
+operating the platform** — serving it to other users, caching it,
 generating thumbnails, and keeping backups. This license ends when the content is
 removed, subject to the caveat below.
 

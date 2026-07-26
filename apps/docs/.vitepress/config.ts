@@ -22,6 +22,7 @@ export default defineConfig({
     outline: [2, 3],
     nav: [
       { text: 'Start Here', link: '/how-it-works' },
+      { text: 'Using It', link: '/guide/your-tag' },
       { text: 'Privacy & Trust', link: '/privacy/no-logs' },
       { text: 'Roadmap', link: '/roadmap' },
       { text: 'For the Nerds', link: '/for-the-nerds' },
@@ -41,10 +42,24 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Using It',
+        collapsed: false,
+        items: [
+          { text: 'Your tag', link: '/guide/your-tag' },
+          { text: 'Putting work up', link: '/guide/posting' },
+          { text: 'Boards, beef & happenings', link: '/guide/boards' },
+          { text: 'Crews', link: '/guide/crews' },
+          { text: 'Shout-outs & messages', link: '/guide/talking' },
+          { text: 'Keeping it clean', link: '/guide/moderation' },
+          { text: 'Install it', link: '/guide/install' },
+        ],
+      },
+      {
         text: 'Privacy & Trust',
         collapsed: false,
         items: [
           { text: 'No logs, by architecture', link: '/privacy/no-logs' },
+          { text: 'The onion mirror', link: '/privacy/onion' },
           { text: 'Opsec for writers', link: '/privacy/opsec' },
           { text: 'Transparency & warrant canary', link: '/privacy/transparency' },
           { text: 'Security disclosure', link: '/security' },

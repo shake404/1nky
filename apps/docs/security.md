@@ -14,9 +14,19 @@ about most, what we'll do, and what you get.
 **Machine-readable:** [`/.well-known/security.txt`](/.well-known/security.txt)
 (RFC 9116).
 
-**Human:** the disclosure address goes live with launch — 📋 TODO, pending entity
-formation. Until then, the working channel is a private security advisory on the
-GitHub repository (`github.com/bodegga/1nky`, also coming online with launch).
+**Human:** 📋 there is still no published disclosure address, and no private issue
+tracker you can reach — the repository is not public yet
+([roadmap](/roadmap#not-yet)). We're not going to paper over that.
+
+**So, the interim channel, stated plainly:** post to **Holler** inside the app saying
+you've found something and how to reach you securely — *no details, no
+proof-of-concept, nothing that describes the bug.* We'll come back to you and
+establish a channel, and then you send the specifics. It's clumsy, and it's better
+than pretending an address exists.
+
+If your finding is in the highest-severity classes below and you judge that even
+saying "I found something" is too much, the entity's postal address is on the
+[transparency page](/privacy/transparency#contact).
 
 **PGP key:** 📋 TODO. We don't have a published key yet, and we're not going to
 pretend otherwise or point you at a key nobody controls. When one exists it'll be
@@ -25,9 +35,10 @@ report is sensitive enough that transport matters to you, send a minimal
 "I have something, here's a way to reach me securely" message first and we'll
 establish a channel before you send details.
 
-**Do not** open a public GitHub issue, post to Holler, or tweet a proof-of-concept
-for anything in the high-severity classes below. A published deanonymization vector
-is an active danger to real people who can't patch themselves.
+**Do not** post the details anywhere public — not Holler, not an issue, not a tweeted
+proof-of-concept. A published deanonymization vector is an active danger to real
+people who can't patch themselves. The Holler ping above is deliberately contentless
+for exactly that reason: it says *that* you found something, never *what*.
 
 ## What we care about most
 
@@ -57,11 +68,17 @@ never reaches us. Break that claim and you've broken the most concrete privacy
 promise on the site.
 
 - Any file type, code path, browser or platform where original metadata survives
-  the client re-encode and reaches the network.
+  the client re-encode and reaches the network. **Clips count** — the video path
+  re-encodes with metadata mapping disabled, and anything surviving that is the same
+  class of bug as surviving the image path.
 - Any path where original bytes are persisted server-side rather than the
   re-encoded output.
-- Bypasses of the server-side `sharp` re-encode.
-- Metadata reintroduced downstream — by the CDN, by thumbnailing, by anything.
+- Bypasses of the server-side `sharp` (or `ffmpeg`) re-encode.
+- Metadata reintroduced downstream — by thumbnailing, by anything we put in front of
+  the origin later, by anything.
+- **Face-blur failures that fail open**: a picture that uploads uncovered after the
+  writer switched blurring on, a preview that doesn't match the uploaded bytes, or a
+  covering that turns out to be recoverable rather than destructive.
 - Content-addressing failures: served bytes that don't match the hash in the URL.
 
 ### 3. Deanonymization vectors
@@ -75,10 +92,19 @@ identity.
   ordering leaks, an API that discloses more than the feed does.
 - Third-party requests from the client — any outbound request to a domain we don't
   control is a bug by definition, since there's supposed to be none.
-- Leaks in the onion mirror: clearnet resources loaded over the hidden service,
-  differences between the two that fingerprint which path you came in on.
+- Leaks in the [onion mirror](/privacy/onion): **any** clearnet resource loaded over
+  the hidden service — the mirror is supposed to be complete now, so a single request
+  to `1nky.com` from an onion session is a finding — plus differences between the two
+  paths that fingerprint which one you came in on.
 - Metadata leakage in the relay's responses beyond what's in the public event.
-- Anything that distinguishes "this tag and that tag are the same person."
+- Private-message leakage: a sender's real pubkey recoverable from the outside of an
+  envelope, a message body reaching the index, correlating two envelopes as one
+  conversation.
+- Anything that distinguishes "this tag and that tag are the same person" — including
+  through the crew keyring, the crew-key backup path, or the "posting as" overlay
+  leaking which writer holds which crew.
+- Recovery escrow: anything that makes a locked blackbook copy decryptable by us,
+  enumerable by a stranger, or overwritable by somebody who isn't its owner.
 
 ### Also in scope, lower on the list
 
@@ -112,8 +138,9 @@ ours:
 - Missing rate limits with no demonstrated abuse path.
 - "Users can post objectionable content" — that's moderation, use
   [Flag it](/feedback).
-- Reports about third-party infrastructure (Cloudflare, the hosting provider, R2).
-  Report those to them; we'll help coordinate if it involves our configuration.
+- Reports about third-party infrastructure (the static host, the hosting provider, the
+  object-storage provider). Report those to them; we'll help coordinate if it involves
+  our configuration.
 - Self-dox risks that are behavioral rather than technical — a landmark visible in
   a photo isn't a platform bug. See [opsec](/privacy/opsec).
 
