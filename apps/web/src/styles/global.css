@@ -489,6 +489,83 @@ main {
   background: #e6dfcd;
   color: var(--soot);
   box-shadow: var(--drop-sm);
+  cursor: pointer;
+  border: none;
+}
+
+/* The "post as crew" switcher: the chip, its menu, and the quick way back.
+   When acting as a crew the chip flips to an alarming treatment so a crew post
+   is never a fat-finger — you can SEE you are not speaking as yourself. */
+.switcher {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Acting as a crew: loud, high-contrast, unmistakable. */
+.speaking-as--crew {
+  background: var(--sodium, #f0a93b);
+  color: var(--soot);
+  font-weight: 700;
+  box-shadow: 0 0 0 2px var(--soot) inset, var(--drop-sm);
+}
+
+.switcher__back {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.62rem;
+  padding: 5px 8px;
+  background: transparent;
+  color: var(--chalk, #e6dfcd);
+  border: 1px solid var(--line-strong, currentColor);
+  cursor: pointer;
+}
+
+.switcher__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  background: var(--soot, #1a1a1a);
+  border: 1px solid var(--line-strong, #444);
+  box-shadow: var(--drop-sm);
+}
+
+.switcher__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--chalk, #e6dfcd);
+  border: none;
+  cursor: pointer;
+}
+
+.switcher__item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.switcher__item.is-active {
+  background: rgba(240, 169, 59, 0.18);
+  font-weight: 700;
+}
+
+.switcher__empty {
+  padding: 9px 12px;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--chalk, #e6dfcd);
+  opacity: 0.6;
 }
 
 /* At 1.7rem the display ramp's dark band cuts straight through the x-height.
@@ -1499,6 +1576,15 @@ main {
   min-height: 52px;
   max-height: 160px;
   resize: none;
+}
+
+/* Sits directly above the composer, so the note is read before typing. */
+.dm-composer__note {
+  position: sticky;
+  bottom: 84px;
+  margin: 0;
+  padding: 6px var(--gutter);
+  text-align: center;
 }
 
 /* --- Chips / facets --------------------------------------------------------

@@ -137,7 +137,8 @@ export function CreateCrew(): JSX.Element {
           </p>
           <p className="muted" style={{ marginTop: 6 }}>
             The crew blackbook just downloaded. Anyone who holds it can post as the crew — hand it to members you trust,
-            the same way you would hand a marker.
+            the same way you would hand a marker. You are already holding it: tap your name at the top to post as the
+            crew whenever you want.
           </p>
         </div>
 

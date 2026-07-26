@@ -3,6 +3,7 @@ import { NavLink, Link } from 'react-router-dom';
 import { relay, type ConnectionState } from '../lib/relay.js';
 import { useTag } from '../state/TagProvider.js';
 import { BackupNag } from './BackupNag.js';
+import { CrewSwitcher } from './CrewSwitcher.js';
 import { InstallPrompt } from './InstallPrompt.js';
 
 function ConnectionDot(): JSX.Element {
@@ -96,17 +97,13 @@ export function TopBar(): JSX.Element {
         </div>
         <div className="row" style={{ gap: 12 }}>
           <SearchGlyph />
-          {tag ? (
-            // The device holds ONE tag at a time (single-identity store — see
-            // db.ts). Posting as a crew works by importing the crew's blackbook
-            // through the existing restore flow, which swaps that single slot.
-            // We never built a multi-key switcher: the indicator below names
-            // whichever identity is active right now and offers the quick way
-            // back to the writer's own tag (restore). That is the tradeoff.
-            <Link to="/restore" className="speaking-as" title="Switch / get your tag back">
-              speaking as {tag.name}
-            </Link>
-          ) : null}
+          {/* The device holds ONE persisted tag (single-slot `tag` store — see
+              db.ts). "Posting as a crew" is an in-memory signer overlay: the
+              switcher points the SIGNER at a crew key from the separate ring
+              for the session without ever touching that slot. On reload we are
+              back on the writer's own tag unless the selection is re-hydrated
+              from the ring. */}
+          {tag ? <CrewSwitcher /> : null}
           <ConnectionDot />
           {tag ? <span className="mono faint">{tag.mark}</span> : null}
         </div>

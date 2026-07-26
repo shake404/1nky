@@ -138,8 +138,8 @@ export function Settings(): JSX.Element {
           </Link>
         </div>
         <p className="help">
-          To <em>post as</em> a crew later, import its blackbook through &ldquo;{COPY.tag.restore}&rdquo; — that swaps
-          this device&apos;s single active tag to the crew. Restore your own blackbook when you are done.
+          To <em>post as</em> a crew, tap your name at the top of the screen and pick the crew. Your own tag stays put —
+          switch back the same way whenever you like. Messages always come from your own tag.
         </p>
       </section>
 

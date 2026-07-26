@@ -73,6 +73,17 @@ function summaries(cache: CacheShape, readAt: Record<string, number>): Conversat
 }
 
 export function DmProvider({ children }: { children: ReactNode }): JSX.Element {
+  // Messages are ALWAYS the writer's own tag, both ways — the switcher does not
+  // reach in here.
+  //
+  // A crew's messages belong to the crew's own inbox, and this device only ever
+  // listens on `tag`. Signing an outgoing message with a crew key would send it
+  // somewhere we cannot hear the answer: the reply comes back addressed to the
+  // crew, and so does our own sent copy, so the conversation would vanish on the
+  // next load while still looking delivered. Rather than half-build that, the
+  // crew stays out of messages entirely and the composer says so plainly.
+  // Giving crews real messages means a per-identity inbox — its own piece of
+  // work, not a rider on the switcher.
   const { tag } = useTag();
   const [cache, setCache] = useState<CacheShape>({});
   const [readAt, setReadAt] = useState<Record<string, number>>({});

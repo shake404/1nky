@@ -105,6 +105,24 @@ function send(
   return mineSendRetry(template, tag.secret, tag.pubkey, bits, options);
 }
 
+/**
+ * Record the writer's-own bookkeeping for a post — but ONLY when the signer is
+ * the device's own tag.
+ *
+ * Both {@link rememberOwnPost} (the own-posts prefs list) and
+ * {@link markHasPosted} (the `me` row's `hasPosted` flag) describe the DEVICE
+ * TAG's history. When a post is signed by a crew key off the switcher's
+ * active-signer overlay, none of that applies: the crew is not "me", and —
+ * critically — `markHasPosted` WRITES the single-slot `tag` store, which the
+ * crew path must never touch. Posting-as-crew callers pass `recordOwn: false`;
+ * the ordinary me path defaults to true and behaves exactly as before.
+ */
+async function noteOwnPost(eventId: string, recordOwn: boolean): Promise<void> {
+  if (!recordOwn) return;
+  await rememberOwnPost(eventId);
+  await markHasPosted();
+}
+
 /** Translate whatever the far end said into something a writer should read. */
 function friendly(message: string): string {
   const lower = message.toLowerCase();
@@ -151,6 +169,12 @@ export function publishProfile(
 
 export interface PostFlickInput extends FlickDetails, PublishOptions {
   file: File;
+  /**
+   * Record this as one of the DEVICE TAG's own posts (own-posts list +
+   * `hasPosted`). Default true. The switcher passes false when posting as a
+   * crew, so a crew post never writes the single-slot `tag` store.
+   */
+  recordOwn?: boolean;
 }
 
 /**
@@ -161,7 +185,7 @@ export interface PostFlickInput extends FlickDetails, PublishOptions {
  * address) are the only ones that exist.
  */
 export async function postFlick(tag: Tag, input: PostFlickInput): Promise<SignedEvent> {
-  const { file, onStage, ...details } = input;
+  const { file, onStage, recordOwn = true, ...details } = input;
 
   onStage?.('preparing');
   const prepared = await prepareImage(file);
@@ -180,13 +204,14 @@ export async function postFlick(tag: Tag, input: PostFlickInput): Promise<Signed
   const bits = tag.hasPosted ? POW_BITS.post : POW_BITS.new;
   const event = await send(template, tag, bits, { ...(onStage ? { onStage } : {}) });
 
-  await rememberOwnPost(event.id);
-  await markHasPosted();
+  await noteOwnPost(event.id, recordOwn);
   return event;
 }
 
 export interface PostVideoInput extends MediaDetails, PublishOptions {
   file: File;
+  /** See {@link PostFlickInput.recordOwn}. Default true. */
+  recordOwn?: boolean;
 }
 
 /**
@@ -200,7 +225,7 @@ export interface PostVideoInput extends MediaDetails, PublishOptions {
  * the writer sees covers both the server transcode and the work.
  */
 export async function postVideo(tag: Tag, input: PostVideoInput): Promise<SignedEvent> {
-  const { file, onStage, ...details } = input;
+  const { file, onStage, recordOwn = true, ...details } = input;
 
   onStage?.('preparing');
   const probe = await probeVideo(file);
@@ -217,13 +242,14 @@ export async function postVideo(tag: Tag, input: PostVideoInput): Promise<Signed
   const bits = tag.hasPosted ? POW_BITS.post : POW_BITS.new;
   const event = await send(template, tag, bits, { ...(onStage ? { onStage } : {}) });
 
-  await rememberOwnPost(event.id);
-  await markHasPosted();
+  await noteOwnPost(event.id, recordOwn);
   return event;
 }
 
 export interface PostThreadInput extends PublishOptions {
   content: string;
+  /** See {@link PostFlickInput.recordOwn}. Default true. */
+  recordOwn?: boolean;
   /** Board slugs this thread goes up on. */
   boards?: readonly string[];
   /** Optional title. */
@@ -249,7 +275,7 @@ export interface PostThreadInput extends PublishOptions {
  * thing, everything after that is the ordinary post tier.
  */
 export async function postThread(tag: Tag, input: PostThreadInput): Promise<SignedEvent> {
-  const { content, boards, subject, expiration, happeningAt, ...options } = input;
+  const { content, boards, subject, expiration, happeningAt, recordOwn = true, ...options } = input;
   const trimmed = content.trim();
   if (!trimmed) throw new PublishError('Say something first.');
 
@@ -263,8 +289,7 @@ export async function postThread(tag: Tag, input: PostThreadInput): Promise<Sign
 
   const bits = tag.hasPosted ? POW_BITS.post : POW_BITS.new;
   const event = await send(template, tag, bits, options);
-  await rememberOwnPost(event.id);
-  await markHasPosted();
+  await noteOwnPost(event.id, recordOwn);
   return event;
 }
 
@@ -287,11 +312,13 @@ export async function postComment(
      * anchors.
      */
     mentions?: readonly string[];
+    /** See {@link PostFlickInput.recordOwn}. Default true. */
+    recordOwn?: boolean;
   } = {},
 ): Promise<SignedEvent> {
   const trimmed = content.trim();
   if (!trimmed) throw new PublishError('Say something first.');
-  const { root, mentions, ...publishOptions } = options;
+  const { root, mentions, recordOwn = true, ...publishOptions } = options;
   const event = await send(
     buildComment(parent, {
       content: trimmed,
@@ -302,8 +329,7 @@ export async function postComment(
     POW_BITS.post,
     publishOptions,
   );
-  await rememberOwnPost(event.id);
-  await markHasPosted();
+  await noteOwnPost(event.id, recordOwn);
   return event;
 }
 

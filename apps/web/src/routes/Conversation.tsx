@@ -6,7 +6,7 @@ import { Spraying } from '../components/Spraying.js';
 import { ago } from '../lib/platform.js';
 import { fetchProfile } from '../lib/profiles.js';
 import { useDms } from '../state/DmProvider.js';
-import { useTag } from '../state/TagProvider.js';
+import { useActiveTag, useTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -15,6 +15,7 @@ const HEX64 = /^[0-9a-f]{64}$/;
 export function Conversation(): JSX.Element {
   const { pubkey = '' } = useParams();
   const { tag } = useTag();
+  const { actingAsCrew } = useActiveTag();
   const { thread, send, markRead } = useDms();
   const { say } = useToast();
 
@@ -100,6 +101,12 @@ export function Conversation(): JSX.Element {
         )}
         <div ref={bottom} />
       </div>
+
+      {/* Messages never go out under a crew, so a writer who is currently
+          posting as one is told before they type — not after they send. */}
+      {actingAsCrew ? (
+        <p className="help dm-composer__note">Messages always come from your own tag.</p>
+      ) : null}
 
       <div className="dm-composer">
         <textarea

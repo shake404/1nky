@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HAPPENING_CLEARS_COPY, whenText } from '../lib/happenings.js';
 import { postThread, type Stage } from '../lib/publish.js';
-import { useTag } from '../state/TagProvider.js';
+import { useActiveTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
 import { Spraying } from './Spraying.js';
 
@@ -87,7 +87,9 @@ export function ThreadCompose({
   postedLabel = 'Up.',
   defaultHappening = false,
 }: ThreadComposeProps): JSX.Element | null {
-  const { tag } = useTag();
+  // Threads are signed by the ACTIVE identity (own tag, or a crew when the
+  // switcher is on). Gating on `active` keeps a crew thread off the me store.
+  const { active, actingAsCrew } = useActiveTag();
   const { say } = useToast();
   const navigate = useNavigate();
 
@@ -102,7 +104,7 @@ export function ThreadCompose({
   const board = normalizeBoard(rawBoard);
   const happeningAt = happening ? happeningSeconds(goesDown) : null;
 
-  if (!tag) return null;
+  if (!active) return null;
 
   const submit = async (): Promise<void> => {
     if (!body.trim() || stage) return;
@@ -122,9 +124,10 @@ export function ThreadCompose({
     setStage('spraying');
     try {
       const expiration = beefExpiration(duration);
-      const event = await postThread(tag, {
+      const event = await postThread(active, {
         content: body,
         boards: [board],
+        recordOwn: actingAsCrew === null,
         ...(subject.trim() ? { subject: subject.trim() } : {}),
         // A date of its own comes with its own clock: the wall clears it a week
         // after it goes down, so the lifetime picker steps out of the way.

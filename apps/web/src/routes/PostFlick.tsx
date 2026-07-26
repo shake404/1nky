@@ -6,7 +6,7 @@ import { Spraying } from '../components/Spraying.js';
 import { fetchExploreFacets, type FacetOption } from '../lib/explore.js';
 import { postFlick, postVideo, type Stage } from '../lib/publish.js';
 import { probeVideo } from '../lib/flicks.js';
-import { useTag } from '../state/TagProvider.js';
+import { useActiveTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
 
 type Media = 'image' | 'video' | null;
@@ -22,7 +22,11 @@ type Media = 'image' | 'video' | null;
  * the design doc's OPSEC rule Part 3.2).
  */
 export function PostFlick(): JSX.Element {
-  const { tag } = useTag();
+  // Flicks/clips are signed by the ACTIVE identity — the writer's own tag, or a
+  // crew when "posting as a crew" is switched on. The tier logic (newcomer vs
+  // post) and the Blossom upload auth both follow `active` because it flows
+  // straight into postFlick/postVideo as the signer.
+  const { active, actingAsCrew } = useActiveTag();
   const { say } = useToast();
   const navigate = useNavigate();
   const input = useRef<HTMLInputElement>(null);
@@ -90,9 +94,11 @@ export function PostFlick(): JSX.Element {
   const takeBlocked = useCallback((blocked: boolean) => setBlurBlocked(blocked), []);
 
   const submit = async (): Promise<void> => {
-    if (!tag || !file || blurBlocked) return;
+    if (!active || !file || blurBlocked) return;
     setError('');
     setStage('preparing');
+    // A crew post must never write the me-tag store's own-posts / hasPosted.
+    const recordOwn = actingAsCrew === null;
     try {
       const boards = city.trim() ? [city.trim()] : [];
       const facetDetails = {
@@ -108,7 +114,7 @@ export function PostFlick(): JSX.Element {
         ...facetDetails,
       };
       if (media === 'video') {
-        await postVideo(tag, { file, ...details, onStage: setStage });
+        await postVideo(active, { file, ...details, recordOwn, onStage: setStage });
       } else {
         // The covered canvas replaces the picked file when the writer asked for
         // it, so the blur happens BEFORE the upload pipeline's own strip-and-
@@ -118,7 +124,7 @@ export function PostFlick(): JSX.Element {
               type: 'image/webp',
             })
           : file;
-        await postFlick(tag, { file: going, ...details, onStage: setStage });
+        await postFlick(active, { file: going, ...details, recordOwn, onStage: setStage });
       }
       say('Up.');
       navigate('/', { replace: true });
