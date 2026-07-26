@@ -8,7 +8,11 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt', not 'autoUpdate': a silent auto-swap can land mid-upload
+      // or mid-post and yank the tab out from under a writer. Prompt mode
+      // installs the new build in the background and waits for a tap — see
+      // src/lib/registerAppUpdates.ts, which surfaces that wait as a toast.
+      registerType: 'prompt',
       includeAssets: ['favicon.svg', 'icon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: '1NKY',

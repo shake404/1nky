@@ -97,6 +97,11 @@ export const COPY = {
     label: 'beef',
     blurb: 'Beef does not stick around. Pick how long it runs.',
   },
+
+  /** a new build is ready to swap in */
+  freshCoat: {
+    label: 'Fresh coat available — tap to update',
+  },
 } as const;
 
 export type Copy = typeof COPY;
