@@ -1,0 +1,454 @@
+{
+  "_readme": "Hand-maintained. The Region facet used to be free text, so one scene minted as many region tags as it had nicknames ('bay-area','the-bay','sf-bay-area','bay' were four feeds). This file is the curated fix: a list of canonical graffiti-scene regions plus an alias map that folds the nicknames onto one slug. BUNDLED into the app (small enough — ~90 regions — that it costs nothing to ship, unlike the ~2.5k-city wall list which is fetched on demand). Keys starting '_' are documentation, not data. `canonicalizeBoard` itself lives in @1nky/protocol; this file only supplies the data. Aliases point straight at a canonical slug; the slugs in 'regions' are the only valid targets.",
+
+  "regions": [
+    { "slug": "bay-area",            "name": "Bay Area" },
+    { "slug": "socal",               "name": "Southern California" },
+    { "slug": "norcal",              "name": "Northern California" },
+    { "slug": "inland-empire",       "name": "Inland Empire" },
+    { "slug": "pnw",                 "name": "Pacific Northwest" },
+    { "slug": "tri-state",          "name": "Tri-State Area" },
+    { "slug": "new-england",         "name": "New England" },
+    { "slug": "midwest",             "name": "Midwest" },
+    { "slug": "dirty-south",         "name": "Dirty South" },
+    { "slug": "gulf-coast",          "name": "Gulf Coast" },
+    { "slug": "front-range",         "name": "Front Range" },
+    { "slug": "rust-belt",           "name": "Rust Belt" },
+    { "slug": "dmv",                 "name": "DMV" },
+    { "slug": "southwest",           "name": "Southwest" },
+    { "slug": "mountain-west",       "name": "Mountain West" },
+    { "slug": "great-lakes",         "name": "Great Lakes" },
+    { "slug": "texas",              "name": "Texas" },
+    { "slug": "florida",            "name": "Florida" },
+    { "slug": "carolinas",          "name": "The Carolinas" },
+    { "slug": "appalachia",          "name": "Appalachia" },
+    { "slug": "hawaii",             "name": "Hawaii" },
+
+    { "slug": "gta",                 "name": "Greater Toronto Area" },
+    { "slug": "southern-ontario",    "name": "Southern Ontario" },
+    { "slug": "quebec",             "name": "Quebec" },
+    { "slug": "bc-lower-mainland",   "name": "BC Lower Mainland" },
+    { "slug": "alberta-corridor",    "name": "Alberta Corridor" },
+    { "slug": "maritimes",          "name": "The Maritimes" },
+
+    { "slug": "cdmx-metro",          "name": "CDMX Metro" },
+    { "slug": "baja",               "name": "Baja California" },
+
+    { "slug": "caribbean",          "name": "The Caribbean" },
+
+    { "slug": "greater-sao-paulo",   "name": "Greater São Paulo" },
+    { "slug": "rio-metro",          "name": "Rio Metro" },
+    { "slug": "brazil-sul",         "name": "Southern Brazil" },
+    { "slug": "brazil-northeast",   "name": "Northeast Brazil" },
+    { "slug": "greater-buenos-aires","name": "Greater Buenos Aires" },
+
+    { "slug": "greater-london",      "name": "Greater London" },
+    { "slug": "midlands",           "name": "Midlands" },
+    { "slug": "north-west-england",  "name": "North West England" },
+    { "slug": "north-east-england",  "name": "North East England" },
+    { "slug": "central-belt",       "name": "Central Belt" },
+    { "slug": "south-wales",        "name": "South Wales" },
+    { "slug": "ile-de-france",      "name": "Île-de-France" },
+    { "slug": "ruhr",              "name": "Ruhr" },
+    { "slug": "rhine-main",        "name": "Rhine-Main" },
+    { "slug": "low-countries",     "name": "Low Countries" },
+    { "slug": "randstad",          "name": "Randstad" },
+    { "slug": "madrid-metro",       "name": "Madrid Metro" },
+    { "slug": "catalonia",         "name": "Catalonia" },
+    { "slug": "basque-country",     "name": "Basque Country" },
+    { "slug": "lisbon-region",      "name": "Lisbon Region" },
+    { "slug": "northern-italy",     "name": "Northern Italy" },
+    { "slug": "southern-italy",     "name": "Southern Italy" },
+
+    { "slug": "scandinavia",        "name": "Scandinavia" },
+
+    { "slug": "berlin-brandenburg",  "name": "Berlin-Brandenburg" },
+    { "slug": "bavaria",           "name": "Bavaria" },
+    { "slug": "central-poland",     "name": "Central Poland" },
+    { "slug": "czech-basin",        "name": "Czech Basin" },
+    { "slug": "vienna-region",      "name": "Vienna Region" },
+    { "slug": "balkans",           "name": "The Balkans" },
+    { "slug": "aegean-greece",      "name": "Aegean Greece" },
+    { "slug": "marmara",           "name": "Marmara" },
+
+    { "slug": "moscow-region",      "name": "Moscow Region" },
+    { "slug": "baltic-states",      "name": "Baltic States" },
+    { "slug": "ukraine-central",    "name": "Central Ukraine" },
+
+    { "slug": "levant",            "name": "The Levant" },
+    { "slug": "gulf-states",        "name": "Gulf States" },
+    { "slug": "maghreb",           "name": "Maghreb" },
+    { "slug": "nile-delta",         "name": "Nile Delta" },
+
+    { "slug": "kanto",             "name": "Kanto" },
+    { "slug": "kansai",            "name": "Kansai" },
+    { "slug": "eastern-china",      "name": "Eastern China" },
+    { "slug": "southern-china",     "name": "Southern China" },
+    { "slug": "northern-china",     "name": "Northern China" },
+    { "slug": "pearl-river-delta",  "name": "Pearl River Delta" },
+    { "slug": "western-taiwan",     "name": "Western Taiwan" },
+    { "slug": "seoul-capital",      "name": "Seoul Capital" },
+
+    { "slug": "western-india",      "name": "Western India" },
+    { "slug": "southern-india",     "name": "South India" },
+    { "slug": "northern-india",     "name": "North India" },
+    { "slug": "mainland-sea",       "name": "Mainland Southeast Asia" },
+    { "slug": "maritime-sea",       "name": "Maritime Southeast Asia" },
+
+    { "slug": "greater-sydney",     "name": "Greater Sydney" },
+    { "slug": "greater-melbourne",  "name": "Greater Melbourne" },
+    { "slug": "greater-brisbane",   "name": "Greater Brisbane" },
+    { "slug": "greater-perth",      "name": "Greater Perth" },
+    { "slug": "north-island-nz",    "name": "North Island New Zealand" },
+
+    { "slug": "gauteng",           "name": "Gauteng" },
+    { "slug": "western-cape",       "name": "Western Cape" },
+    { "slug": "east-africa-urban",   "name": "East African Urban" },
+    { "slug": "west-africa-urban",   "name": "West African Urban" }
+  ],
+
+  "aliases": {
+    "the-bay": "bay-area",
+    "bay": "bay-area",
+    "sf-bay-area": "bay-area",
+    "sf-bay": "bay-area",
+    "bayarea": "bay-area",
+    "the-bay-area": "bay-area",
+    "frisco-bay": "bay-area",
+    "yay-area": "bay-area",
+    "san-francisco-bay-area": "bay-area",
+
+    "so-cal": "socal",
+    "southern-california": "socal",
+    "southern-cal": "socal",
+    "southland": "socal",
+
+    "northern-california": "norcal",
+    "nor-cal": "norcal",
+    "northern-cal": "norcal",
+
+    "ie": "inland-empire",
+    "the-ie": "inland-empire",
+    "ie-ca": "inland-empire",
+
+    "pacific-northwest": "pnw",
+    "pacific-nw": "pnw",
+    "cascadia": "pnw",
+
+    "new-york-metro": "tri-state",
+    "nyc-metro": "tri-state",
+    "ny-metro": "tri-state",
+    "tristate": "tri-state",
+    "tri-state-area": "tri-state",
+    "ny-nj-ct": "tri-state",
+
+    "ne-us": "new-england",
+
+    "mid-west": "midwest",
+    "the-midwest": "midwest",
+    "midwestern-us": "midwest",
+
+    "the-dirty-south": "dirty-south",
+    "dirty-south-us": "dirty-south",
+    "the-south": "dirty-south",
+    "deep-south": "dirty-south",
+
+    "gulf-coast-us": "gulf-coast",
+    "gulf-states-us": "gulf-coast",
+
+    "front-range-co": "front-range",
+    "the-front-range": "front-range",
+
+    "the-rust-belt": "rust-belt",
+    "rustbelt": "rust-belt",
+
+    "dc-metro": "dmv",
+    "dc-md-va": "dmv",
+    "the-dmv": "dmv",
+    "national-capital-region": "dmv",
+
+    "the-southwest": "southwest",
+    "southwest-us": "southwest",
+    "desert-southwest": "southwest",
+
+    "the-mountain-west": "mountain-west",
+    "intermountain": "mountain-west",
+
+    "great-lakes-region": "great-lakes",
+
+    "tx": "texas",
+    "lone-star": "texas",
+    "the-lone-star-state": "texas",
+
+    "fl": "florida",
+    "the-sunshine-state": "florida",
+
+    "nc-sc": "carolinas",
+    "north-and-south-carolina": "carolinas",
+
+    "appalachian-region": "appalachia",
+
+    "hi": "hawaii",
+    "the-islands": "hawaii",
+    "hawaiian-islands": "hawaii",
+
+    "greater-toronto": "gta",
+    "toronto-metro": "gta",
+    "the-gta": "gta",
+
+    "south-ontario": "southern-ontario",
+    "southern-ont": "southern-ontario",
+
+    "qc": "quebec",
+    "quebec-city-metro": "quebec",
+
+    "vancouver-metro": "bc-lower-mainland",
+    "lower-mainland": "bc-lower-mainland",
+    "bc-metro": "bc-lower-mainland",
+
+    "calgary-edmonton": "alberta-corridor",
+    "edmonton-region": "alberta-corridor",
+    "calgary-region": "alberta-corridor",
+
+    "maritime-provinces": "maritimes",
+    "atlantic-canada": "maritimes",
+
+    "cdmx": "cdmx-metro",
+    "mexico-city-metro": "cdmx-metro",
+    "valley-of-mexico": "cdmx-metro",
+
+    "baja-california": "baja",
+    "baja-mx": "baja",
+
+    "west-indies": "caribbean",
+
+    "sao-paulo-metro": "greater-sao-paulo",
+    "sp-metro": "greater-sao-paulo",
+
+    "rio-de-janeiro-metro": "rio-metro",
+    "rio-janeiro": "rio-metro",
+    "rj-metro": "rio-metro",
+
+    "southern-brazil": "brazil-sul",
+    "sul-brazil": "brazil-sul",
+
+    "nordeste": "brazil-northeast",
+    "northeast-brazil": "brazil-northeast",
+
+    "buenos-aires-metro": "greater-buenos-aires",
+    "gba": "greater-buenos-aires",
+    "baires-metro": "greater-buenos-aires",
+
+    "london-metro": "greater-london",
+    "m25": "greater-london",
+    "greater-london-region": "greater-london",
+
+    "the-midlands": "midlands",
+    "west-midlands-region": "midlands",
+
+    "nw-england": "north-west-england",
+    "greater-manchester": "north-west-england",
+    "merseyside": "north-west-england",
+    "lancashire": "north-west-england",
+
+    "ne-england": "north-east-england",
+    "tyneside": "north-east-england",
+    "teesside": "north-east-england",
+
+    "central-belt-scotland": "central-belt",
+    "central-scotland": "central-belt",
+    "scottish-central-belt": "central-belt",
+
+    "south-wales-region": "south-wales",
+    "welsh-valleys": "south-wales",
+
+    "paris-region": "ile-de-france",
+    "paris-metro": "ile-de-france",
+    "idf": "ile-de-france",
+
+    "ruhr-region": "ruhr",
+    "rhine-ruhr": "ruhr",
+    "ruhrgebiet": "ruhr",
+    "ruhr-valley": "ruhr",
+
+    "frankfurt-region": "rhine-main",
+    "rhein-main": "rhine-main",
+    "frankfurt-rhine-main": "rhine-main",
+
+    "benelux": "low-countries",
+    "the-low-countries": "low-countries",
+
+    "holland": "randstad",
+    "netherlands": "randstad",
+    "the-netherlands": "randstad",
+    "randstad-region": "randstad",
+    "dutch-cities": "randstad",
+
+    "madrid-region": "madrid-metro",
+    "community-of-madrid": "madrid-metro",
+
+    "catalunya": "catalonia",
+    "cataluna": "catalonia",
+
+    "euskadi": "basque-country",
+    "basque-region": "basque-country",
+    "pais-vasco": "basque-country",
+
+    "lisboa-region": "lisbon-region",
+    "lisbon-metro": "lisbon-region",
+    "lisboa-metro": "lisbon-region",
+
+    "padania": "northern-italy",
+    "north-italy": "northern-italy",
+    "po-valley": "northern-italy",
+
+    "south-italy": "southern-italy",
+    "mezzogiorno": "southern-italy",
+
+    "scandinavian-region": "scandinavia",
+    "nordics": "scandinavia",
+    "nordic": "scandinavia",
+
+    "berlin-region": "berlin-brandenburg",
+    "berlin-metro": "berlin-brandenburg",
+    "brandenburg": "berlin-brandenburg",
+
+    "bayern": "bavaria",
+    "bavaria-region": "bavaria",
+
+    "poland-central": "central-poland",
+    "warsaw-region": "central-poland",
+    "mazovia": "central-poland",
+
+    "bohemia": "czech-basin",
+    "prague-region": "czech-basin",
+    "czech-republic-region": "czech-basin",
+
+    "vienna-metro": "vienna-region",
+    "wien": "vienna-region",
+    "austria-east": "vienna-region",
+
+    "the-balkans": "balkans",
+    "balkan-region": "balkans",
+    "former-yugoslavia": "balkans",
+
+    "athenian-region": "aegean-greece",
+    "attica": "aegean-greece",
+    "greece-aegean": "aegean-greece",
+
+    "istanbul-region": "marmara",
+    "istanbul-metro": "marmara",
+    "marmara-region": "marmara",
+    "thrace": "marmara",
+
+    "moscow-metro": "moscow-region",
+    "moskva": "moscow-region",
+    "moscow-oblast": "moscow-region",
+
+    "the-baltics": "baltic-states",
+    "baltic-region": "baltic-states",
+
+    "central-ukraine": "ukraine-central",
+    "kyiv-region": "ukraine-central",
+    "kyiv-metro": "ukraine-central",
+
+    "the-levant": "levant",
+    "levant-region": "levant",
+    "levantine": "levant",
+
+    "gcc": "gulf-states",
+    "arabian-gulf": "gulf-states",
+    "persian-gulf": "gulf-states",
+    "arabian-peninsula": "gulf-states",
+
+    "the-maghreb": "maghreb",
+    "north-africa": "maghreb",
+
+    "cairo-metro": "nile-delta",
+    "cairo-region": "nile-delta",
+    "lower-egypt": "nile-delta",
+
+    "kanto-region": "kanto",
+    "greater-tokyo": "kanto",
+    "tokyo-region": "kanto",
+    "tokyo-metro": "kanto",
+
+    "kansai-region": "kansai",
+    "keihanshin": "kansai",
+    "osaka-region": "kansai",
+    "kinki": "kansai",
+
+    "east-china": "eastern-china",
+    "shanghai-region": "eastern-china",
+    "yangtze-delta": "eastern-china",
+
+    "south-china": "southern-china",
+    "lingnan": "southern-china",
+
+    "north-china": "northern-china",
+    "beijing-region": "northern-china",
+    "jing-jin-ji": "northern-china",
+
+    "prd": "pearl-river-delta",
+    "pearl-river": "pearl-river-delta",
+    "zhujiang-delta": "pearl-river-delta",
+
+    "taipei-region": "western-taiwan",
+    "taipei-metro": "western-taiwan",
+    "taiwan-west": "western-taiwan",
+
+    "seoul-metro": "seoul-capital",
+    "sudogwon": "seoul-capital",
+    "seoul-region": "seoul-capital",
+    "capital-area": "seoul-capital",
+
+    "west-india": "western-india",
+    "mumbai-region": "western-india",
+    "bombay-region": "western-india",
+
+    "south-india": "southern-india",
+    "bengaluru-region": "southern-india",
+    "chennai-region": "southern-india",
+
+    "north-india": "northern-india",
+    "delhi-region": "northern-india",
+    "ncr": "northern-india",
+
+    "mainland-southeast-asia": "mainland-sea",
+    "indochina": "mainland-sea",
+
+    "maritime-southeast-asia": "maritime-sea",
+    "malay-archipelago": "maritime-sea",
+
+    "sydney-metro": "greater-sydney",
+    "sydney-region": "greater-sydney",
+
+    "melbourne-metro": "greater-melbourne",
+    "melbourne-region": "greater-melbourne",
+
+    "brisbane-metro": "greater-brisbane",
+    "brisbane-region": "greater-brisbane",
+    "southeast-queensland": "greater-brisbane",
+
+    "perth-metro": "greater-perth",
+    "perth-region": "greater-perth",
+
+    "north-island": "north-island-nz",
+    "auckland-region": "north-island-nz",
+    "wellington-region": "north-island-nz",
+    "nz-north": "north-island-nz",
+
+    "joburg-region": "gauteng",
+    "johannesburg-region": "gauteng",
+    "pretoria-region": "gauteng",
+
+    "cape-town-region": "western-cape",
+    "cape-metro": "western-cape",
+
+    "east-africa": "east-africa-urban",
+    "nairobi-region": "east-africa-urban",
+
+    "west-africa": "west-africa-urban",
+    "lagos-region": "west-africa-urban"
+  }
+}
