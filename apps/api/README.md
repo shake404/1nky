@@ -37,6 +37,7 @@ people in this database.
 | `GET` | `/board/:slug?cursor=&limit=` | One board's threads, liveliest first, with an excerpt and reply count each. Paginated. |
 | `GET` | `/thread/:id` | One thread OP, its writer, and the whole reply tree nested. |
 | `GET` | `/writer/:pubkey` | A writer's profile and their flicks, buffed ones excluded. Paginated. |
+| `GET` | `/mentions/:pubkey?cursor=&limit=` | Comments that deliberately named this writer, newest first, each with who said it and where. Paginated. Reply-target tags are not mentions — see below. |
 | `GET` | `/search?q=&limit=` | Full-text search over captions, thread subjects and thread bodies, plus a board-tag match. Returns `{ q, boards, flicks, videos, threads }`. |
 | `GET` | `/mod/queue?limit=` | Reports with the reported content, its thumbnail, and reporter stats. **Requires `X-Mod-Key`.** |
 | `GET` | `/mod/banlist` | Banned pubkeys with their counts. **Requires `X-Mod-Key`.** |
@@ -58,6 +59,23 @@ anyone scrolling. Keyset pagination cannot.
 last_reply_at)`, so a thread with a fresh reply floats to the top of the board.
 The cursor carries that activity timestamp rather than the OP's own, which is
 why a board cursor and a feed cursor are not interchangeable.
+
+### Mentions
+
+`/mentions/:pubkey` answers "who said my name", and only that. A comment
+already carries `p` tags nobody typed — the parent author and the thread root's
+author, which is how NIP-22 addresses a reply — so an inbox keyed on `p` alone
+would be a second copy of the reply feed. `@1nky/protocol` therefore marks a
+deliberate mention in position 3 of the tag (`['p', <pubkey>, '', 'mention']`)
+and the indexer files only those, in the `mentions` table (migration 009). This
+endpoint reads that table; it never inspects tags itself.
+
+Forward-only: an event published before the marker existed produces no row.
+Nothing is backfilled.
+
+There is no read state here and there must never be one. Whether a writer has
+looked at their own mentions is kept on their device — there is no account
+server-side to hang it off (hard rule #2).
 
 ### Expiring content
 

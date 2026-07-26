@@ -25,6 +25,7 @@ import { Restore } from './routes/Restore.js';
 import { Roadmap } from './routes/Roadmap.js';
 import { Search } from './routes/Search.js';
 import { Settings } from './routes/Settings.js';
+import { Shoutouts } from './routes/Shoutouts.js';
 import { Thread } from './routes/Thread.js';
 import { MyWall, Writer } from './routes/Writer.js';
 import { useTag } from './state/TagProvider.js';
@@ -85,6 +86,7 @@ export function App(): JSX.Element {
         <Route path="/crews" element={<Crews />} />
         <Route path="/me" element={<MyWall />} />
         <Route path="/post" element={<PostFlick />} />
+        <Route path="/mentions" element={<Shoutouts />} />
         <Route path="/messages" element={<Messages />} />
         <Route path="/messages/:pubkey" element={<Conversation />} />
         <Route path="/profile/edit" element={<ProfileEdit />} />

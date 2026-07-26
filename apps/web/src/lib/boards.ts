@@ -157,7 +157,13 @@ function optionalInt(value: unknown): number | null {
   return null;
 }
 
-function writerFrom(value: unknown): ThreadWriter | null {
+/**
+ * Shape the writer object every list row carries.
+ *
+ * Exported because a shout-out row has one too — same wall, same defensive
+ * casts, same rule that the mark is derived here rather than trusted.
+ */
+export function writerFrom(value: unknown): ThreadWriter | null {
   const raw = record(value);
   if (!raw) return null;
   const pubkey = str(raw['pubkey']).toLowerCase();

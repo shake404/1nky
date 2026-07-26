@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { relay, type ConnectionState } from '../lib/relay.js';
+import { subscribeShoutsSeen, unseenShoutCount } from '../lib/shoutouts.js';
 import { useTag } from '../state/TagProvider.js';
 import { BackupNag } from './BackupNag.js';
 import { InstallPrompt } from './InstallPrompt.js';
@@ -68,6 +69,66 @@ function SearchGlyph(): JSX.Element {
   );
 }
 
+/**
+ * Shout-outs, and whether there are new ones.
+ *
+ * A glyph in the top bar rather than a ninth tab or an eighth word. The dock is
+ * full at eight (see TABS) and the desktop row is full at seven-plus-one; this
+ * is the same call the search glyph made, except it stays visible at every
+ * width, because there is no worded twin of it anywhere else.
+ *
+ * The dot is the whole feature on this end: a writer should be able to tell
+ * from any screen that somebody said their name, without opening anything. It
+ * clears the moment the screen is opened, because the screen writes the
+ * last-looked stamp this subscribes to.
+ */
+function ShoutsGlyph({ pubkey }: { pubkey: string }): JSX.Element {
+  const [unseen, setUnseen] = useState(0);
+
+  useEffect(() => {
+    if (!pubkey) return;
+    let live = true;
+    const controller = new AbortController();
+    void unseenShoutCount(pubkey, controller.signal)
+      .then((count) => {
+        if (live) setUnseen(count);
+      })
+      // A wall we cannot reach is not a reason to shout. Stay quiet.
+      .catch(() => undefined);
+    const stop = subscribeShoutsSeen(() => {
+      if (live) setUnseen(0);
+    });
+    return () => {
+      live = false;
+      controller.abort();
+      stop();
+    };
+  }, [pubkey]);
+
+  const label = unseen > 0 ? `Shout-outs, ${String(unseen)} new` : 'Shout-outs';
+
+  return (
+    <NavLink
+      to="/mentions"
+      className={({ isActive }) => `topbar__glyph ${isActive ? 'is-active' : ''}`}
+      aria-label={label}
+      title={label}
+    >
+      <svg viewBox="0 0 20 20" width="19" height="19" aria-hidden="true" focusable="false">
+        {/* A speech bubble: somebody talking about you, somewhere else. */}
+        <path
+          d="M2.6 3.4h14.8v10H8.2L4.4 17v-3.6H2.6z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {unseen > 0 ? <span className="topbar__badge" aria-hidden="true" /> : null}
+    </NavLink>
+  );
+}
+
 export function TopBar(): JSX.Element {
   const { tag } = useTag();
   return (
@@ -96,6 +157,7 @@ export function TopBar(): JSX.Element {
         </div>
         <div className="row" style={{ gap: 12 }}>
           <SearchGlyph />
+          {tag ? <ShoutsGlyph pubkey={tag.pubkey} /> : null}
           {tag ? (
             // The device holds ONE tag at a time (single-identity store — see
             // db.ts). Posting as a crew works by importing the crew's blackbook
