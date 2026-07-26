@@ -25,6 +25,7 @@ vi.mock('../lib/relay.js', () => ({
 
 const { TopBar } = await import('./Shell.js');
 const { TagProvider } = await import('../state/TagProvider.js');
+const { ToastProvider } = await import('../state/ToastProvider.js');
 const { createTag } = await import('../lib/identity.js');
 const { resetDbHandle } = await import('../lib/db.js');
 const { resetIgnoredCache } = await import('../lib/mute.js');
@@ -90,11 +91,15 @@ async function mount(): Promise<void> {
   root = createRoot(container);
   await act(async () => {
     root!.render(
-      <TagProvider>
-        <MemoryRouter initialEntries={['/']}>
-          <TopBar />
-        </MemoryRouter>
-      </TagProvider>,
+      // ToastProvider because the top bar now carries the crew switcher,
+      // which toasts on switch failures.
+      <ToastProvider>
+        <TagProvider>
+          <MemoryRouter initialEntries={['/']}>
+            <TopBar />
+          </MemoryRouter>
+        </TagProvider>
+      </ToastProvider>,
     );
   });
   await settle();
