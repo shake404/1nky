@@ -90,6 +90,11 @@ export function Crew(): JSX.Element {
 
   const { crew, members, repping, flicks } = page;
 
+  // The roster subsumes the claim: once the crew has signed a writer on,
+  // showing them under Reppin' too reads as a duplicate (and offers a
+  // pointless "Put on the roster" button).
+  const reppingOnly = repping.filter((r) => !members.some((m) => m.pubkey === r.pubkey));
+
   const repThisCrew = async (): Promise<void> => {
     if (!tag) return;
     const current = await fetchWriterCrews(tag.pubkey);
@@ -246,14 +251,14 @@ export function Crew(): JSX.Element {
         )}
       </section>
 
-      {repping.length > 0 ? (
+      {reppingOnly.length > 0 ? (
         <section className="stack">
-          <h3>Reppin&apos; ({repping.length})</h3>
+          <h3>Reppin&apos; ({reppingOnly.length})</h3>
           <p className="help" style={{ marginTop: 0 }}>
             A claim, not a roster — these writers say they are down; the crew has not necessarily said so.
           </p>
           <div className="chips" style={{ gap: 10 }}>
-            {repping.map((m) => (
+            {reppingOnly.map((m) => (
               <div key={m.pubkey} className="writer" style={{ gap: 8 }}>
                 <Link to={`/w/${m.pubkey}`} className="row" style={{ gap: 8, alignItems: 'center', minWidth: 0 }}>
                   <Avatar pubkey={m.pubkey} avatarSha256={m.avatarSha256} size={22} alt={m.tag || ''} />
