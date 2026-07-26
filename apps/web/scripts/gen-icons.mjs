@@ -97,7 +97,9 @@ const refHeight = refBBox.y2 - refBBox.y1;
 function buildGeometry(size, diameterFrac, glyphHeightFrac = 0.66) {
   const center = size / 2;
   const outerRadius = (size * diameterFrac) / 2;
-  const strokeWidth = Math.max(1, Math.round(size / 64)); // same hairline rule as the old frame
+  // A bold band, not a hairline: at 16px tab size a size/64 ring rendered a
+  // quarter-pixel and vanished. size/16 keeps it visible down to favicon scale.
+  const strokeWidth = Math.max(2, Math.round(size / 16));
 
   const targetHeight = outerRadius * 2 * glyphHeightFrac;
   const fontSize = REF_SIZE * (targetHeight / refHeight);
@@ -211,18 +213,18 @@ function chunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-/** @param {number} w @param {number} h @param {Uint8Array} rgb row-major RGB */
-function encodePng(w, h, rgb) {
+/** @param {number} w @param {number} h @param {Uint8Array} rgba row-major RGBA */
+function encodePng(w, h, rgba) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0);
   ihdr.writeUInt32BE(h, 4);
   ihdr[8] = 8; // bit depth
-  ihdr[9] = 2; // colour type: truecolour
-  const raw = Buffer.alloc(h * (1 + w * 3));
+  ihdr[9] = 6; // colour type: truecolour with alpha
+  const raw = Buffer.alloc(h * (1 + w * 4));
   for (let y = 0; y < h; y++) {
-    raw[y * (1 + w * 3)] = 0; // filter: none
-    rgb.subarray(y * w * 3, (y + 1) * w * 3).forEach((v, i) => {
-      raw[y * (1 + w * 3) + 1 + i] = v;
+    raw[y * (1 + w * 4)] = 0; // filter: none
+    rgba.subarray(y * w * 4, (y + 1) * w * 4).forEach((v, i) => {
+      raw[y * (1 + w * 4) + 1 + i] = v;
     });
   }
   return Buffer.concat([
@@ -233,24 +235,33 @@ function encodePng(w, h, rgb) {
   ]);
 }
 
+/** RGBA canvas. `bg` of null means fully transparent (browser-tab icons);
+ * otherwise an opaque [r,g,b] fill (maskable + apple-touch, which must not
+ * be transparent per their platforms' rules). */
 function canvas(size, bg) {
-  const px = new Uint8Array(size * size * 3);
-  for (let i = 0; i < size * size; i++) {
-    px[i * 3] = bg[0];
-    px[i * 3 + 1] = bg[1];
-    px[i * 3 + 2] = bg[2];
+  const px = new Uint8Array(size * size * 4);
+  if (bg) {
+    for (let i = 0; i < size * size; i++) {
+      px[i * 4] = bg[0];
+      px[i * 4 + 1] = bg[1];
+      px[i * 4 + 2] = bg[2];
+      px[i * 4 + 3] = 255;
+    }
   }
   return px;
 }
 
 function setPixel(px, size, x, y, colour) {
   if (x < 0 || y < 0 || x >= size || y >= size) return;
-  const i = (y * size + x) * 3;
+  const i = (y * size + x) * 4;
   px[i] = colour[0];
   px[i + 1] = colour[1];
   px[i + 2] = colour[2];
+  px[i + 3] = 255;
 }
 
+/** Straight-alpha "source over" so marks composite correctly onto the
+ * transparent canvas as well as onto an opaque one. */
 function blendPixel(px, size, x, y, colour, alpha) {
   if (alpha <= 0) return;
   if (x < 0 || y < 0 || x >= size || y >= size) return;
@@ -258,10 +269,14 @@ function blendPixel(px, size, x, y, colour, alpha) {
     setPixel(px, size, x, y, colour);
     return;
   }
-  const i = (y * size + x) * 3;
-  px[i] = Math.round(px[i] * (1 - alpha) + colour[0] * alpha);
-  px[i + 1] = Math.round(px[i + 1] * (1 - alpha) + colour[1] * alpha);
-  px[i + 2] = Math.round(px[i + 2] * (1 - alpha) + colour[2] * alpha);
+  const i = (y * size + x) * 4;
+  const destA = px[i + 3] / 255;
+  const outA = alpha + destA * (1 - alpha);
+  if (outA <= 0) return;
+  px[i] = Math.round((colour[0] * alpha + px[i] * destA * (1 - alpha)) / outA);
+  px[i + 1] = Math.round((colour[1] * alpha + px[i + 1] * destA * (1 - alpha)) / outA);
+  px[i + 2] = Math.round((colour[2] * alpha + px[i + 2] * destA * (1 - alpha)) / outA);
+  px[i + 3] = Math.round(outA * 255);
 }
 
 /** Thin ink ring, antialiased analytically (no supersampling needed for a circle). */
@@ -313,8 +328,8 @@ function fillGlyph(px, size, subpaths, bbox, options) {
   }
 }
 
-function buildIcon(size, { diameterFrac, glyphHeightFrac = 0.66 }) {
-  const px = canvas(size, SOOT);
+function buildIcon(size, { diameterFrac, glyphHeightFrac = 0.66, solid = false }) {
+  const px = canvas(size, solid ? SOOT : null);
   const { center, outerRadius, strokeWidth, path, bbox } = buildGeometry(size, diameterFrac, glyphHeightFrac);
   const subpaths = flattenPath(path.commands);
 
@@ -335,7 +350,7 @@ function buildIcon(size, { diameterFrac, glyphHeightFrac = 0.66 }) {
 /** Builds the standalone SVG mark — the same font-derived path, exact colours,
  * and the paint-order stroke trick the old wordmark SVGs already used for
  * their hard keyline instead of a separate offset copy. */
-function buildSvg(size, { diameterFrac, glyphHeightFrac = 0.66 }) {
+function buildSvg(size, { diameterFrac, glyphHeightFrac = 0.66, solid = false }) {
   const CANVAS = 512; // fixed design canvas; width/height attrs just scale it
   const { center, outerRadius, strokeWidth, path } = buildGeometry(CANVAS, diameterFrac, glyphHeightFrac);
   const ringRadius = outerRadius - strokeWidth / 2;
@@ -347,8 +362,7 @@ function buildSvg(size, { diameterFrac, glyphHeightFrac = 0.66 }) {
 ${CHROME_STOPS.map((s) => `      <stop offset="${Math.round(s.t * 100)}%" stop-color="#${s.c.map((v) => v.toString(16).padStart(2, '0')).join('')}"/>`).join('\n')}
     </linearGradient>
   </defs>
-  <rect width="${CANVAS}" height="${CANVAS}" fill="#0c0a11"/>
-  <circle cx="${center}" cy="${center}" r="${ringRadius.toFixed(2)}" fill="none" stroke="${INK}" stroke-width="${strokeWidth}"/>
+${solid ? `  <rect width="${CANVAS}" height="${CANVAS}" fill="#0c0a11"/>\n` : ''}  <circle cx="${center}" cy="${center}" r="${ringRadius.toFixed(2)}" fill="none" stroke="${INK}" stroke-width="${strokeWidth}"/>
   <path d="${path.toPathData(2)}" fill="url(#chrome)" stroke="#06050a" stroke-width="${glyphStroke}" paint-order="stroke" stroke-linejoin="round"/>
 </svg>
 `;
@@ -357,15 +371,21 @@ ${CHROME_STOPS.map((s) => `      <stop offset="${Math.round(s.t * 100)}%" stop-c
 // --- Write everything --------------------------------------------------------
 mkdirSync(OUT, { recursive: true });
 
+// Browser-tab icons are transparent — just the ring and the 1, no dark slab.
+// The two platform icons that MUST stay opaque keep the soot fill: Android's
+// maskable spec crops a full-bleed shape (transparency shows the OS surface
+// through the corners), and iOS composites apple-touch transparency onto
+// white, which would silver-on-white the glyph.
 const NORMAL = { diameterFrac: 0.86 };
-const MASKABLE = { diameterFrac: 0.6 }; // ~60% of canvas, inside Android's safe zone
+const MASKABLE = { diameterFrac: 0.6, solid: true }; // ~60% of canvas, inside Android's safe zone
+const APPLE = { diameterFrac: 0.86, solid: true };
 
 writeFileSync(join(OUT, 'favicon.svg'), buildSvg(64, NORMAL));
 writeFileSync(join(OUT, 'icon.svg'), buildSvg(512, NORMAL));
 writeFileSync(join(OUT, 'icon-192.png'), buildIcon(192, NORMAL));
 writeFileSync(join(OUT, 'icon-512.png'), buildIcon(512, NORMAL));
 writeFileSync(join(OUT, 'icon-maskable-512.png'), buildIcon(512, MASKABLE));
-writeFileSync(join(OUT, 'apple-touch-icon.png'), buildIcon(180, NORMAL));
+writeFileSync(join(OUT, 'apple-touch-icon.png'), buildIcon(180, APPLE));
 // Small PNG fallback for consumers that don't want the SVG (e.g. the docs
 // site's <link rel="icon">) — same mark, favicon-sized.
 writeFileSync(join(OUT, 'favicon-48.png'), buildIcon(48, NORMAL));
