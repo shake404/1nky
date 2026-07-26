@@ -2242,3 +2242,94 @@ main {
   background: var(--ink);
   transition: width 200ms linear;
 }
+
+/* --- Shout-outs -------------------------------------------------------------
+ * The times somebody said your name. A row is a door into the conversation, so
+ * it is laid out like a quote with a byline over it rather than like a message:
+ * who said it, then what they said, then where to go and read the rest.
+ */
+.shout {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+  transition: border-color 120ms ease;
+}
+
+.shout:hover {
+  border-color: var(--line-strong);
+}
+
+/* Landed since the last look. Same ink bar the unread word rows use, so "new"
+   looks like one thing across the app. */
+.shout--new {
+  border-left: 3px solid var(--ink);
+  padding-left: 10px;
+}
+
+.shout__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.shout__said {
+  color: var(--chalk);
+  line-height: 1.5;
+  word-break: break-word;
+  /* Three lines is enough to know whether to go and read it. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.shout__where {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shout__dot {
+  position: absolute;
+  top: 18px;
+  right: 0;
+}
+
+/* --- Top bar glyphs ---------------------------------------------------------
+ * The search glyph's twin, minus the hide-at-desktop rule: shout-outs have no
+ * worded link anywhere, so this one is the only way in at every width.
+ */
+.topbar__glyph {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-height: 40px;
+  color: var(--buff);
+  border: 1px solid transparent;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.topbar__glyph:hover,
+.topbar__glyph.is-active {
+  color: var(--chalk);
+  border-color: var(--line-strong);
+}
+
+/* Somebody said your name and you have not looked yet. */
+.topbar__badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  background: var(--ink);
+  box-shadow: 0 0 8px rgba(255, 61, 138, 0.55);
+}

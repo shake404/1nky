@@ -168,6 +168,55 @@ describe.skipIf(!enabled)('schema against a live Postgres', () => {
     expect(boards.rows).toHaveLength(1);
   });
 
+  it('files a deliberate mention and lets a buff take it away', async () => {
+    const counters = newCounters();
+    const namedSk = generateSecretKey();
+    const named = getPublicKey(namedSk);
+
+    const op = finalizeEvent(
+      buildThreadOp({ subject: 'who was that', boards: ['sf'], createdAt: now - 400, content: 'x' }),
+      sk,
+    );
+    await indexEvent(db, op, counters, { now });
+
+    const ref = { id: op.id, pubkey: op.pubkey, kind: KINDS.NOTE };
+    const named_reply = finalizeEvent(
+      buildComment(ref, { content: 'ask @them', mentions: [named], createdAt: now - 100 }),
+      sk,
+    );
+    const plain_reply = finalizeEvent(
+      buildComment(ref, { content: 'no idea', createdAt: now - 90 }),
+      sk,
+    );
+    await indexEvent(db, named_reply, counters, { now });
+    await indexEvent(db, plain_reply, counters, { now });
+
+    const inbox = async (pubkey: string) =>
+      (
+        await db.query<{ event_id: string; root_id: string; author_pubkey: string }>(
+          'select event_id, root_id, author_pubkey from mentions where mentioned_pubkey = $1',
+          [pubkey],
+        )
+      ).rows;
+
+    expect(await inbox(named)).toEqual([
+      { event_id: named_reply.id, root_id: op.id, author_pubkey: op.pubkey },
+    ]);
+    // The thread author is `p`-tagged by BOTH replies (that is how NIP-22
+    // addresses one) and mentioned by neither.
+    expect(await inbox(op.pubkey)).toEqual([]);
+
+    // Buff the comment and the mention goes with it, through the cascade —
+    // there is no second delete to remember.
+    await indexEvent(
+      db,
+      finalizeEvent(buildBuff([named_reply.id], { kinds: [KINDS.COMMENT] }), sk),
+      counters,
+      { now },
+    );
+    expect(await inbox(named)).toEqual([]);
+  });
+
   it('stores a happening date on the thread row and rebuilds it from the event', async () => {
     const counters = newCounters();
     const happeningAt = now + 86_400;

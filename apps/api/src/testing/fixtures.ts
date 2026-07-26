@@ -205,6 +205,24 @@ export function threadRow(overrides: Record<string, unknown> = {}): Record<strin
   };
 }
 
+/** A `mentionsQuery` row — the comment that named somebody, plus where. */
+export function mentionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    event_id: hex('33'),
+    created_at: '1700000100',
+    root_id: hex('11'),
+    pubkey: hex('ab'),
+    content: 'ask @KILO, he was there',
+    tag_name: 'SMOG',
+    city: 'sf',
+    avatar_sha256: null,
+    root_type: 'flick',
+    root_subject: null,
+    root_excerpt: 'rooftop',
+    ...overrides,
+  };
+}
+
 export function commentRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     event_id: hex('22'),

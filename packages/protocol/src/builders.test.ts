@@ -26,7 +26,11 @@ import {
   imetaTag,
   INVITE_DTAG_PREFIX,
   inviteRedemptionTag,
+  isMentionTag,
   isSubtreeBan,
+  MENTION_MARKER,
+  mentionedPubkeys,
+  mentionTag,
   normalizeBoard,
   parseInvite,
   parseInviteRedemption,
@@ -646,31 +650,47 @@ describe('buildComment', () => {
     );
   });
 
-  it('adds one p tag per mention', () => {
+  it('adds one marked p tag per mention', () => {
     const ev = buildComment(flick, { content: 'yo @C @D', mentions: [HEX_C, HEX_D] });
-    // The parent author's p, then the two mentioned writers'.
+    // The parent author's p (unmarked — the reply implies it), then the two
+    // writers who were actually named, each carrying the mention marker.
     expect(find(ev.tags, 'p')).toEqual([
       ['p', HEX_B, ''],
-      ['p', HEX_C],
-      ['p', HEX_D],
+      ['p', HEX_C, '', 'mention'],
+      ['p', HEX_D, '', 'mention'],
     ]);
+  });
+
+  it('marks mentions so a reader can tell them from reply targets', () => {
+    const ev = buildComment(flick, { content: 'yo @C', mentions: [HEX_C] });
+    const ps = find(ev.tags, 'p');
+    expect(ps.filter(isMentionTag)).toEqual([['p', HEX_C, '', MENTION_MARKER]]);
+    expect(mentionedPubkeys(ev)).toEqual([HEX_C]);
+  });
+
+  it('reports no mentions for a plain reply', () => {
+    const ev = buildComment(flick, { content: 'nice' });
+    expect(find(ev.tags, 'p').some(isMentionTag)).toBe(false);
+    expect(mentionedPubkeys(ev)).toEqual([]);
   });
 
   it('dedupes a mention that repeats within the list', () => {
     const ev = buildComment(flick, { content: 'x', mentions: [HEX_C, HEX_C] });
     expect(find(ev.tags, 'p')).toEqual([
       ['p', HEX_B, ''],
-      ['p', HEX_C],
+      ['p', HEX_C, '', 'mention'],
     ]);
   });
 
   it('does not double-tag a mention that is already the parent author', () => {
-    // HEX_B is the flick (parent) author — mentioning them adds nothing.
+    // HEX_B is the flick (parent) author — mentioning them adds nothing, and the
+    // reply already reaches them, so there is no mention to report either.
     const ev = buildComment(flick, { content: 'x', mentions: [HEX_B, HEX_C] });
     expect(find(ev.tags, 'p')).toEqual([
       ['p', HEX_B, ''],
-      ['p', HEX_C],
+      ['p', HEX_C, '', 'mention'],
     ]);
+    expect(mentionedPubkeys(ev)).toEqual([HEX_C]);
   });
 
   it('does not re-tag the root author on a nested reply', () => {
@@ -679,12 +699,46 @@ describe('buildComment', () => {
     const ev = buildComment(reply, { content: 'x', root: flick, mentions: [HEX_B] });
     expect(find(ev.tags, 'p')).toEqual([['p', HEX_D, '']]);
     expect(find(ev.tags, 'P')).toEqual([['P', HEX_B, '']]);
+    expect(mentionedPubkeys(ev)).toEqual([]);
   });
 
   it('validates mention pubkeys and leaves the tags untouched when none pass', () => {
     expect(() => buildComment(flick, { content: 'x', mentions: ['nope'] })).toThrow(TypeError);
     const ev = buildComment(flick, { content: 'x', mentions: [] });
     expect(find(ev.tags, 'p')).toEqual([['p', HEX_B, '']]);
+  });
+});
+
+describe('mention marker', () => {
+  it('builds a marked p tag', () => {
+    expect(mentionTag(HEX_C)).toEqual(['p', HEX_C, '', 'mention']);
+    expect(() => mentionTag('nope')).toThrow(TypeError);
+  });
+
+  it('recognises only a marked p tag', () => {
+    expect(isMentionTag(['p', HEX_C, '', MENTION_MARKER])).toBe(true);
+    // A reply target: same tag name, no marker.
+    expect(isMentionTag(['p', HEX_C, ''])).toBe(false);
+    expect(isMentionTag(['p', HEX_C])).toBe(false);
+    // The marker only means this on a `p`; an `e` tag's markers are NIP-10's.
+    expect(isMentionTag(['e', HEX_C, '', MENTION_MARKER])).toBe(false);
+    expect(isMentionTag(['p', HEX_C, '', 'reply'])).toBe(false);
+    expect(isMentionTag(['p', 'nope', '', MENTION_MARKER])).toBe(false);
+    expect(isMentionTag(undefined)).toBe(false);
+  });
+
+  it('reads mentions in tag order, deduped and lowercased', () => {
+    const event = {
+      tags: [
+        ['E', HEX_A, '', HEX_B],
+        ['p', HEX_B, ''],
+        ['p', HEX_D.toUpperCase(), '', MENTION_MARKER],
+        ['p', HEX_C, '', MENTION_MARKER],
+        ['p', HEX_D, '', MENTION_MARKER],
+      ],
+    };
+    expect(mentionedPubkeys(event)).toEqual([HEX_D, HEX_C]);
+    expect(mentionedPubkeys({})).toEqual([]);
   });
 });
 

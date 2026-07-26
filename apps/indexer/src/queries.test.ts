@@ -9,6 +9,7 @@ import {
   expirationSweep,
   incrementReportCount,
   insertInviteEdge,
+  insertMention,
   redeemInvite,
   selectBanList,
   selectInvitedList,
@@ -287,6 +288,7 @@ describe('rebuild', () => {
       'threads',
       'profiles',
       'comments',
+      'mentions',
       'reports',
       'deletions',
       'boards',
@@ -305,8 +307,34 @@ describe('rebuild', () => {
     expect(truncateDerived().text).toContain('threads');
   });
 
+  it('rebuilds mentions from the relay too', () => {
+    expect(DERIVED_TABLES).toContain('mentions');
+    expect(truncateDerived().text).toContain('mentions');
+  });
+
   it('never unbans anyone', () => {
     expect(DERIVED_TABLES).not.toContain('banned_pubkeys');
     expect(truncateDerived().text).not.toContain('banned_pubkeys');
+  });
+});
+
+describe('insertMention', () => {
+  const row = {
+    event_id: hex('33'),
+    mentioned_pubkey: TARGET,
+    author_pubkey: AUTHOR,
+    root_id: hex('11'),
+    created_at: 1_700_000_000,
+  };
+
+  it('binds every value and never interpolates one', () => {
+    const sql = insertMention(row);
+    expect(sql.text).toContain('insert into mentions');
+    expect(sql.params).toEqual([hex('33'), TARGET, AUTHOR, hex('11'), 1_700_000_000]);
+    expect(sql.text).not.toContain(TARGET);
+  });
+
+  it('is idempotent — a re-delivered comment cannot double up', () => {
+    expect(insertMention(row).text).toContain('on conflict (event_id, mentioned_pubkey) do nothing');
   });
 });

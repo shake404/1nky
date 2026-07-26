@@ -12,6 +12,7 @@ import {
   shapeFeedItem,
   shapeFlick,
   shapeHappening,
+  shapeMention,
   shapeProfile,
   shapeThread,
   shapeThreadSummary,
@@ -23,6 +24,7 @@ import {
   flickRow,
   happeningRow,
   hex,
+  mentionRow,
   threadRow,
   threadSummaryRow,
   videoRow,
@@ -281,6 +283,51 @@ describe('threadComments', () => {
   it('returns nothing for an empty thread', () => {
     expect(threadComments([], ROOT)).toEqual([]);
     expect(countComments([])).toBe(0);
+  });
+});
+
+describe('shapeMention', () => {
+  it('says who named you, what they said and where', () => {
+    const json = shapeMention(mentionRow() as never);
+    expect(json).toEqual({
+      id: hex('33'),
+      createdAt: 1_700_000_100,
+      content: 'ask @KILO, he was there',
+      writer: {
+        pubkey: AUTHOR,
+        tag: 'SMOG',
+        mark: fingerprint(AUTHOR),
+        avatarSha256: null,
+        city: 'sf',
+      },
+      where: { id: hex('11'), type: 'flick', subject: null, excerpt: 'rooftop' },
+    });
+  });
+
+  it('carries a thread title through as the place name', () => {
+    const json = shapeMention(
+      mentionRow({ root_type: 'thread', root_subject: 'Alameda wall' }) as never,
+    );
+    expect(json.where).toMatchObject({ type: 'thread', subject: 'Alameda wall' });
+  });
+
+  it('falls back to a nameless post rather than emitting null', () => {
+    const json = shapeMention(
+      mentionRow({ root_type: null, root_excerpt: null, content: null }) as never,
+    );
+    expect(json.where.type).toBe('post');
+    expect(json.where.excerpt).toBe('');
+    expect(json.content).toBe('');
+  });
+
+  it('never claims to know whether it has been seen', () => {
+    expect(Object.keys(shapeMention(mentionRow() as never))).toEqual([
+      'id',
+      'createdAt',
+      'content',
+      'writer',
+      'where',
+    ]);
   });
 });
 

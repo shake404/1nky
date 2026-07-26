@@ -9,6 +9,7 @@ import {
   inviteRedemptionFromEvent,
   inviteRowFromEvent,
   isExpired,
+  mentionRowsFromEvent,
   modBanActionFromEvent,
   routeOf,
   tagValue,
@@ -32,6 +33,8 @@ export interface Counters {
   /** Kind-1 thread OPs on city boards. */
   threads: number;
   comments: number;
+  /** Deliberate @-mentions filed for a "somebody said your name" inbox. */
+  mentions: number;
   reports: number;
   deletions: number;
   boards: number;
@@ -69,6 +72,7 @@ export function newCounters(): Counters {
     videos: 0,
     threads: 0,
     comments: 0,
+    mentions: 0,
     reports: 0,
     deletions: 0,
     boards: 0,
@@ -244,6 +248,14 @@ export async function indexEvent(
       }
       await run(db, q.upsertComment(comment));
       counters.comments += 1;
+
+      // Deliberate @-mentions only. A comment's `p` tags include the reply
+      // targets NIP-22 requires; `mentionRowsFromEvent` keeps just the ones
+      // carrying the mention marker, so the inbox is "somebody said your name"
+      // and not a duplicate of the reply feed.
+      for (const mention of mentionRowsFromEvent(event)) {
+        counters.mentions += await run(db, q.insertMention(mention));
+      }
       return;
     }
 

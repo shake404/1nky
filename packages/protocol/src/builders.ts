@@ -438,6 +438,72 @@ export function buildThreadOp(input: BuildThreadOpInput): EventTemplate {
   return template(KINDS.NOTE, tags, input.content, options);
 }
 
+// ---------------------------------------------------------------------------
+// Mentions — a `p` tag somebody meant, told apart from one the reply implies
+// ---------------------------------------------------------------------------
+
+/**
+ * The NIP-10 marker that makes a `p` tag a deliberate mention.
+ *
+ * Every comment already carries `p` tags nobody typed: the parent author and
+ * (via `P`) the thread root's author, which is how a reply is addressed. If a
+ * "you were named" inbox keyed on `p` alone it would be a second copy of the
+ * reply feed — every writer in a thread would be "mentioned" by every reply
+ * under them.
+ *
+ * So a mention carries a marker in position 3, exactly where NIP-10 puts
+ * `root`/`reply`/`mention` on an `e` tag: `['p', <pubkey>, '', 'mention']`.
+ * Reply-target tags stay unmarked (`['p', <pubkey>, <relay>]`), which means the
+ * distinction is in the signed event itself and every reader — indexer, client,
+ * any future one — agrees without extra state.
+ *
+ * Forward-only, and that is fine: the marker ships with the read side, and
+ * @-mentions themselves are new enough that the only events without a marker
+ * are ones from before mentions could be typed at all.
+ */
+export const MENTION_MARKER = 'mention';
+
+/** `['p', pubkey, '', 'mention']` — one deliberately named writer. */
+export function mentionTag(pubkey: string): Tag {
+  return ['p', assertHex32(pubkey, 'mentionTag(pubkey)'), '', MENTION_MARKER];
+}
+
+/**
+ * Is this tag a deliberate mention?
+ *
+ * The one place the marker convention is spelled out, shared by every reader so
+ * the indexer and the client can never drift on what counts. A `p` tag with no
+ * marker (or any other marker) is a reply target, not a mention.
+ */
+export function isMentionTag(tag: readonly string[] | undefined): boolean {
+  if (!tag || tag[0] !== 'p') return false;
+  if (tag[3] !== MENTION_MARKER) return false;
+  // Lowercased before the check rather than required lowercase: our own
+  // builders always emit canonical hex, but a mention that reaches us from
+  // another signer should still find its way to the writer it names.
+  return HEX64.test((tag[1] ?? '').toLowerCase());
+}
+
+/**
+ * Every writer an event deliberately named, lowercase, in tag order, deduped.
+ *
+ * Nothing about the event's kind is checked here — only comments carry mentions
+ * today, and a caller who wants that rule applies it where it has consequences
+ * (the indexer routes by kind already).
+ */
+export function mentionedPubkeys(event: { tags?: readonly string[][] }): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const tag of event.tags ?? []) {
+    if (!isMentionTag(tag)) continue;
+    const pubkey = (tag[1] as string).toLowerCase();
+    if (seen.has(pubkey)) continue;
+    seen.add(pubkey);
+    out.push(pubkey);
+  }
+  return out;
+}
+
 export interface BuildCommentOptions extends BuilderOptions {
   content: string;
   /**
@@ -446,9 +512,10 @@ export interface BuildCommentOptions extends BuilderOptions {
    */
   root?: EventRef;
   /**
-   * Writers named in the body (an @-mention). Each becomes one `['p', pubkey]`
-   * tag so the mention is a *real* reference the wall can key on later — the
-   * seed of a "you were mentioned" signal — not just literal text.
+   * Writers named in the body (an @-mention). Each becomes one marked
+   * `['p', pubkey, '', 'mention']` tag (see {@link MENTION_MARKER}) so the
+   * mention is a *real* reference a reader can key on — and can tell apart from
+   * the reply-target `p` tags the comment carries anyway.
    *
    * Deduped against the parent/root `p`/`P` tags already emitted and against
    * each other, so a writer already anchored by the reply (the parent author,
@@ -483,7 +550,9 @@ export function buildComment(parent: EventRef, options: BuildCommentOptions): Ev
 
   if (options.mentions?.length) {
     // Everyone already referenced by an `E`/`e`/`P`/`p` tag — a mention that
-    // matches one of these adds nothing and must not emit a second `p`.
+    // matches one of these adds nothing and must not emit a second `p`. The
+    // reply already addresses them; a duplicate would also make the inbox
+    // report a "mention" for what is really just a reply.
     const seen = new Set<string>();
     for (const tag of tags) {
       if (tag[0] === 'p' || tag[0] === 'P') seen.add(tag[1] as string);
@@ -492,7 +561,7 @@ export function buildComment(parent: EventRef, options: BuildCommentOptions): Ev
       const pubkey = assertHex32(mention, 'buildComment(mention)');
       if (seen.has(pubkey)) continue;
       seen.add(pubkey);
-      tags.push(['p', pubkey]);
+      tags.push(mentionTag(pubkey));
     }
   }
 

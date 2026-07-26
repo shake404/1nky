@@ -295,6 +295,77 @@ order by c.created_at asc, c.event_id asc`,
   };
 }
 
+export interface MentionsOptions {
+  /** The writer whose inbox this is. */
+  pubkey: string;
+  cursor?: Cursor | undefined;
+  limit: number;
+}
+
+/**
+ * `GET /mentions/:pubkey` — every comment that deliberately named a writer.
+ *
+ * The selection rule lives entirely in the `mentions` table: the indexer only
+ * files a row for a `p` tag carrying the mention marker, so the reply-target
+ * tags NIP-22 puts on every comment never get here and this read does not have
+ * to know the difference. See migration 009.
+ *
+ * Both ends of the row have to still be readable, hence two joins to `events`:
+ *
+ *   - `e` is the comment that did the naming. Expired, buffed or from a banned
+ *     writer and the mention is gone with it — the same rules every other
+ *     public read applies.
+ *   - `re` is the flick, clip or thread the conversation hangs off, and it is an
+ *     INNER join on purpose: a mention whose thread has expired has nowhere to
+ *     send the reader, and a row that cannot be opened is not worth showing.
+ *
+ * `root_type` is what the client needs to build the link, and it comes from
+ * which derived table the root turns up in rather than from a stored column, so
+ * it cannot drift from the row it points at.
+ *
+ * Nothing here is private. Every field is read off a signed, published event
+ * that anyone could pull from the relay with the same `#p` filter; the inbox
+ * only saves the reader from doing it by hand. Read state is deliberately NOT
+ * here — whose device has seen what is that device's business.
+ */
+export function mentionsQuery(options: MentionsOptions): Sql {
+  return {
+    text: `select m.event_id, m.created_at, m.root_id,
+       c.pubkey, left(c.content, 240) as content,
+       ${WRITER_COLUMNS},
+       case
+         when f.event_id is not null then 'flick'
+         when v.event_id is not null then 'video'
+         when t.event_id is not null then 'thread'
+         else 'post'
+       end as root_type,
+       t.subject as root_subject,
+       coalesce(f.caption, v.caption, left(re.content, 160)) as root_excerpt
+from mentions m
+join comments c on c.event_id = m.event_id
+join events e on e.id = m.event_id
+join events re on re.id = m.root_id
+left join profiles p on p.pubkey = c.pubkey
+left join flicks f on f.event_id = m.root_id
+left join videos v on v.event_id = m.root_id
+left join threads t on t.event_id = m.root_id
+where m.mentioned_pubkey = $1
+  and ${notBanned('c.pubkey')}
+  and ${notBuffed('c.pubkey', 'c.event_id')}
+  and ${NOT_EXPIRED}
+  and (re.expires_at is null or re.expires_at > extract(epoch from now())::bigint)
+  and ($2::bigint is null or (m.created_at, m.event_id) < ($2::bigint, $3::text))
+order by m.created_at desc, m.event_id desc
+limit $4::int`,
+    params: [
+      options.pubkey,
+      options.cursor?.createdAt ?? null,
+      options.cursor?.eventId ?? null,
+      options.limit,
+    ],
+  };
+}
+
 /**
  * `put_on` is the ONLY thing about the invite forest that is public: a boolean,
  * "was this writer vouched for by somebody already here". Who put them on, when,

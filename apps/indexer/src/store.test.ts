@@ -1,5 +1,6 @@
 import {
   buildBuff,
+  buildComment,
   buildCrewBadgeRegistry,
   buildCrewDefinition,
   buildFlick,
@@ -436,6 +437,65 @@ function modBan(
   });
   return makeEvent({ ...template, kind: KINDS.APP_DATA, pubkey: MOD, id: hex('44'), ...overrides });
 }
+
+describe('mentions (kind 1111)', () => {
+  const PARENT = { id: hex('11'), pubkey: hex('ef'), kind: KINDS.FLICK };
+  const NAMED = hex('7a');
+
+  function comment(options: Parameters<typeof buildComment>[1], id = hex('33')) {
+    const template = buildComment(PARENT, { createdAt: NOW - 5, ...options });
+    return makeEvent({ ...template, id, pubkey: AUTHOR });
+  }
+
+  it('files a row for a writer who was actually named', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, comment({ content: 'ask @named', mentions: [NAMED] }), counters, {
+      now: NOW,
+    });
+
+    expect(counters.comments).toBe(1);
+    expect(counters.mentions).toBe(1);
+    const params = db.matching('insert into mentions')[0]?.params;
+    expect(params?.[0]).toBe(hex('33'));
+    expect(params?.[1]).toBe(NAMED);
+    expect(params?.[2]).toBe(AUTHOR);
+    // The deep link target: the thread this hangs off.
+    expect(params?.[3]).toBe(PARENT.id);
+  });
+
+  it('files nothing for a plain reply', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, comment({ content: 'clean' }), counters, { now: NOW });
+
+    // The parent author gets a `p` tag from NIP-22 alone. A reply is not a
+    // mention, or the inbox would just be the reply feed again.
+    expect(counters.comments).toBe(1);
+    expect(counters.mentions).toBe(0);
+    expect(db.matching('insert into mentions')).toHaveLength(0);
+  });
+
+  it('files nothing for a comment it refuses to store', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(
+      db,
+      makeEvent({
+        kind: KINDS.COMMENT,
+        id: hex('34'),
+        pubkey: AUTHOR,
+        tags: [['p', NAMED, '', 'mention']],
+      }),
+      counters,
+      { now: NOW },
+    );
+
+    // Anchored to nothing: no comment row, so no mention hanging off one.
+    expect(counters.invalid).toBe(1);
+    expect(db.matching('insert into mentions')).toHaveLength(0);
+  });
+});
 
 describe('moderator bans (kind 30078, d:ban:<pubkey>)', () => {
   it('applies a ban signed by a moderator', async () => {

@@ -27,6 +27,7 @@ import {
   inviteRedemptionFromEvent,
   inviteRowFromEvent,
   isExpired,
+  mentionRowsFromEvent,
   modBanActionFromEvent,
   parseImeta,
   routeOf,
@@ -450,6 +451,65 @@ describe('toCommentRow (kind 1111)', () => {
 
   it('drops a comment anchored to nothing', () => {
     expect(toCommentRow(makeEvent({ kind: 1111, content: 'orphan' }))).toBeNull();
+  });
+});
+
+describe('mentionRowsFromEvent (kind 1111)', () => {
+  const parent = { id: hex('11'), pubkey: hex('ef'), kind: KINDS.FLICK };
+  const NAMED = hex('7a');
+  const OTHER = hex('7b');
+
+  it('files only the p tags that were deliberately typed', () => {
+    const template = buildComment(parent, { content: 'yo @named', mentions: [NAMED] });
+    const event = makeEvent({ ...template, id: hex('33'), pubkey: AUTHOR });
+    expect(mentionRowsFromEvent(event)).toEqual([
+      {
+        event_id: hex('33'),
+        mentioned_pubkey: NAMED,
+        author_pubkey: AUTHOR,
+        root_id: parent.id,
+        created_at: event.created_at,
+      },
+    ]);
+  });
+
+  it('ignores the reply-target p tags every comment carries', () => {
+    // The parent author rides a `p` tag nobody typed. That is a reply, not a
+    // mention, and it must never reach the inbox.
+    const template = buildComment(parent, { content: 'nice one' });
+    const rows = mentionRowsFromEvent(makeEvent({ ...template, pubkey: AUTHOR }));
+    expect(rows).toEqual([]);
+  });
+
+  it('files one row per named writer, in tag order', () => {
+    const template = buildComment(parent, { content: 'x', mentions: [NAMED, OTHER] });
+    const rows = mentionRowsFromEvent(makeEvent({ ...template, pubkey: AUTHOR }));
+    expect(rows.map((r) => r.mentioned_pubkey)).toEqual([NAMED, OTHER]);
+  });
+
+  it('never files a writer naming themselves', () => {
+    const template = buildComment(parent, { content: '@me', mentions: [AUTHOR] });
+    expect(mentionRowsFromEvent(makeEvent({ ...template, pubkey: AUTHOR }))).toEqual([]);
+  });
+
+  it('keeps the thread root for the deep link, not the immediate parent', () => {
+    const root = { id: hex('22'), pubkey: hex('cc'), kind: KINDS.FLICK };
+    const template = buildComment(parent, { content: 'x', root, mentions: [NAMED] });
+    const rows = mentionRowsFromEvent(makeEvent({ ...template, pubkey: AUTHOR }));
+    expect(rows[0]?.root_id).toBe(root.id);
+  });
+
+  it('ignores a p tag marked as anything else', () => {
+    const event = makeEvent({
+      kind: KINDS.COMMENT,
+      pubkey: AUTHOR,
+      tags: [
+        ['E', hex('11'), '', hex('ef')],
+        ['p', NAMED, '', 'reply'],
+        ['p', OTHER, ''],
+      ],
+    });
+    expect(mentionRowsFromEvent(event)).toEqual([]);
   });
 });
 

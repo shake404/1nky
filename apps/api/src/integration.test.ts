@@ -58,6 +58,8 @@ describe.skipIf(!enabled)('endpoints against a live Postgres', () => {
     ['/happenings'],
     ['/happenings?city=sf&limit=5'],
     [`/writer/${'a'.repeat(64)}`],
+    [`/mentions/${'a'.repeat(64)}`],
+    [`/mentions/${'a'.repeat(64)}?limit=5`],
     [`/flick/${'a'.repeat(64)}`],
     [`/thread/${'a'.repeat(64)}`],
     [`/crew/${'a'.repeat(64)}`],
