@@ -85,7 +85,7 @@ async function settle(rounds = 8): Promise<void> {
   }
 }
 
-async function mount(at = '/b/sf-bay/new'): Promise<void> {
+async function mount(at = '/b/oakland/new'): Promise<void> {
   root = createRoot(container);
   await act(async () => {
     root!.render(
@@ -177,7 +177,7 @@ describe('starting a thread', () => {
     expect(template.kind).toBe(KINDS.NOTE);
     expect(template.content).toBe('somebody rolled the whole thing overnight');
     expect(tagsNamed('subject')).toEqual([['subject', 'Who buffed the yard']]);
-    expect(tagsNamed('t')).toEqual([['t', 'sf-bay']]);
+    expect(tagsNamed('t')).toEqual([['t', 'oakland']]);
 
     const lifetime = tagsNamed('expiration')[0]?.[1];
     expect(lifetime).toBeDefined();
@@ -235,7 +235,11 @@ describe('starting a thread', () => {
     expect(tagsNamed('subject')).toEqual([]);
   });
 
-  it('slugifies whatever board it was opened on', async () => {
+  // "SF Bay" is both messy AND a known nickname, so it exercises both halves of
+  // the URL path: slugify to `sf-bay`, then canonicalize onto `san-francisco`.
+  // A thread started from a sloppy link joins the city's real wall rather than
+  // founding a second one.
+  it('slugifies and canonicalizes whatever board it was opened on', async () => {
     root = createRoot(container);
     await act(async () => {
       root!.render(
@@ -259,7 +263,7 @@ describe('starting a thread', () => {
     });
     await settle();
 
-    expect(tagsNamed('t')).toEqual([['t', 'sf-bay']]);
+    expect(tagsNamed('t')).toEqual([['t', 'san-francisco']]);
   });
 
   it('will not put up an empty thread', async () => {
@@ -366,7 +370,7 @@ describe('putting a happening up', () => {
     expect(when).toBe(happeningSeconds(daysOut(10)));
 
     // The marker rides alongside the board it went up on.
-    expect(tagsNamed('t')).toEqual([['t', 'sf-bay'], ['t', 'happening']]);
+    expect(tagsNamed('t')).toEqual([['t', 'oakland'], ['t', 'happening']]);
 
     const lifetime = Number(tagsNamed('expiration')[0]?.[1]);
     expect(lifetime).toBe(when + HAPPENING_GRACE_SECONDS);
@@ -414,11 +418,11 @@ describe('putting a happening up', () => {
     await settle();
 
     expect(tagsNamed('when')).toEqual([]);
-    expect(tagsNamed('t')).toEqual([['t', 'sf-bay']]);
+    expect(tagsNamed('t')).toEqual([['t', 'oakland']]);
   });
 
   it('opens with the switch already flipped when sent through that door', async () => {
-    await mount('/b/sf-bay/new?happening=1');
+    await mount('/b/oakland/new?happening=1');
 
     expect(switchNamed("It's a happening").checked).toBe(true);
     expect(container.querySelector('#thread-when')).not.toBeNull();

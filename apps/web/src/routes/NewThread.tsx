@@ -1,6 +1,6 @@
-import { normalizeBoard } from '@1nky/protocol';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { ThreadCompose } from '../components/ThreadCompose.js';
+import { canonicalWall } from '../lib/walls.js';
 import { useTag } from '../state/TagProvider.js';
 
 /**
@@ -11,14 +11,24 @@ import { useTag } from '../state/TagProvider.js';
  *
  * `?happening=1` opens with the date switch already flipped — that is the door
  * the happenings list sends somebody through when they came to post a jam.
+ *
+ * The board comes from the URL, so this is the OTHER way a wall gets named —
+ * `canonicalWall` rather than a bare `normalizeBoard` means typing `/b/sf/new`
+ * starts the thread on `san-francisco` instead of minting a second wall for the
+ * same city. The query string rides along so `?happening=1` survives the hop.
  */
 export function NewThread(): JSX.Element {
   const { slug = '' } = useParams();
   const [search] = useSearchParams();
   const { tag } = useTag();
 
-  const board = normalizeBoard(slug);
+  const board = canonicalWall(slug);
   const happening = search.get('happening') === '1';
+
+  if (board && board !== slug) {
+    const query = search.toString();
+    return <Navigate to={`/b/${board}/new${query ? `?${query}` : ''}`} replace />;
+  }
 
   if (!tag) return <div className="shell empty" />;
 

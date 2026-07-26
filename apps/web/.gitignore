@@ -1,0 +1,3 @@
+# Cached GeoNames dumps for scripts/gen-cities.mjs. Source data, ~25MB, and
+# re-downloadable — only the trimmed public/cities.json it produces is committed.
+.geonames/

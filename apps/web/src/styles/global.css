@@ -878,6 +878,60 @@ main {
   flex: none;
 }
 
+/* --- "Where" wall typeahead ----------------------------------------------- */
+/* Same drop-down furniture as the @-mention menu, kept as its own block so the
+   two can drift apart without either one breaking. Two lines per row here: the
+   city, and the region that tells London, England from London, Ontario. */
+.wall-picker {
+  position: relative;
+}
+
+.wall-picker__menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--soot-2);
+  border: 2px solid var(--line-strong);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.35);
+}
+
+.wall-picker__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--chalk);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wall-picker__item.is-active,
+.wall-picker__item:hover {
+  background: var(--soot-3);
+  color: var(--sodium);
+}
+
+.wall-picker__name {
+  font-weight: 600;
+}
+
+.wall-picker__where {
+  flex: none;
+  font-size: 0.8rem;
+}
+
 .help {
   font-size: 0.85rem;
   color: var(--buff);

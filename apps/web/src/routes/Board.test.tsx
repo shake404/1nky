@@ -11,6 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * to read as urgent, a thread that stays up gets no chip at all, and one whose
  * time already ran out must not still be sitting in the list as if it were
  * live.
+ *
+ * The fixture board is `oakland` rather than the old `sf-bay` because `sf-bay`
+ * is now an alias of `san-francisco` and this page redirects aliases away — see
+ * WallRedirect.test.tsx for that behaviour. These tests want a board that stays
+ * put, so they use a canonical one.
  */
 
 vi.mock('../components/Identicon.js', () => ({ Identicon: () => null }));
@@ -50,7 +55,7 @@ function writer(pubkey: string, tag: string): Record<string, unknown> {
 }
 
 const BOARD = {
-  board: { slug: 'sf-bay', title: 'sf-bay', kind: 'city', regionSlug: 'bay-area' },
+  board: { slug: 'oakland', title: 'oakland', kind: 'city', regionSlug: 'bay-area' },
   threads: [
     {
       id: LIVE,
@@ -133,7 +138,7 @@ async function mount(): Promise<void> {
   await act(async () => {
     root!.render(
       <TagProvider>
-        <MemoryRouter initialEntries={['/b/sf-bay']}>
+        <MemoryRouter initialEntries={['/b/oakland']}>
           <Routes>
             <Route path="/b/:slug" element={<Board />} />
           </Routes>
@@ -159,7 +164,7 @@ describe('a board page', () => {
 
     await mount();
 
-    expect(container.querySelector('h2')?.textContent).toBe('sf-bay');
+    expect(container.querySelector('h2')?.textContent).toBe('oakland');
     expect(row(LIVE)?.textContent).toContain('Who buffed the yard');
     // No title: the first line stands in for one, and only the first line.
     expect(row(HOT)?.textContent).toContain('last call on this one');
@@ -211,7 +216,7 @@ describe('a board page', () => {
 
     await mount();
 
-    const start = container.querySelector('a[href="/b/sf-bay/new"]');
+    const start = container.querySelector('a[href="/b/oakland/new"]');
     expect(start).not.toBeNull();
     expect(start!.textContent).toContain('Start one');
   });
@@ -263,7 +268,7 @@ describe('a board page', () => {
     // The wall was asked for this board only.
     const feedCall = fetchMock.mock.calls.map((c) => String(c[0])).find((u) => u.includes('/feed'));
     expect(feedCall).toBeDefined();
-    expect(new URL(feedCall!).searchParams.get('board')).toBe('sf-bay');
+    expect(new URL(feedCall!).searchParams.get('board')).toBe('oakland');
     expect(container.querySelector('.wall')).not.toBeNull();
     expect(container.textContent).toContain('on the board');
   });
