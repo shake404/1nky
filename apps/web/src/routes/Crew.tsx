@@ -539,7 +539,10 @@ function FounderPanel({ crew, members, onRosterChange, onCrewInfoChange, onStage
                 )}
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                   <label className="btn btn--ghost btn--sm sticker" style={{ cursor: 'pointer' }}>
-                    Put a face on it
+                    {/* Never "face" — inviting a face photo is anti-opsec. A
+                        sticker (slap) is graffiti-native and explicitly not a
+                        selfie. */}
+                    Slap a sticker on it
                     <input
                       type="file"
                       accept="image/*"

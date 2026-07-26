@@ -166,7 +166,9 @@ export function ProfileEdit(): JSX.Element {
       </div>
 
       <div className="field">
-        <label htmlFor="avatar">Put a face on it</label>
+        {/* Never "face" — inviting a face photo is anti-opsec. A sticker
+            (slap) is graffiti-native and explicitly not a selfie. */}
+        <label htmlFor="avatar">Slap a sticker on it</label>
         {cropFile ? (
           <AvatarCropper file={cropFile} onDone={onCropped} onCancel={cancelCrop} />
         ) : (
