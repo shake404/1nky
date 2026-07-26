@@ -30,7 +30,7 @@ infra/
 ├── deploy/
 │   ├── cloud-init.yml          Ubuntu 24.04 bootstrap
 │   ├── provision.sh            doctl: droplet + reserved ip
-│   ├── deploy.sh               git pull + compose up on the droplet
+│   ├── deploy.sh               git pull + apps/web build/ship + compose up
 │   └── dns-runbook.md          the registrar → a cloud host, and the Cloudflare posture
 └── README.md
 ```
@@ -503,7 +503,10 @@ docker compose exec tor wget -qO- http://caddy:8080/api/healthz
 # -> {"status":"ok","db":true}
 
 docker compose exec tor wget -qO- http://caddy:8080/
-# -> 1NKY
+# -> the PWA's index.html if apps/web/dist has been shipped into
+#    infra/web-dist (see infra/deploy/deploy.sh); an empty ./web-dist bind
+#    mount otherwise gives a 404 here, which just means "not deployed yet",
+#    not a broken vhost
 
 docker compose ps tor        # -> healthy once the descriptor is published
 docker compose logs tor      # -> ends with "Bootstrapped 100% (done)"
@@ -532,11 +535,19 @@ curl --socks5-hostname 127.0.0.1:9050 http://<address>.onion/api/healthz
   relay and the API are genuinely mirrored today; media is not, and saying
   otherwise in public copy would be a lie. Fixing it is a web/api change
   (host-relative media URLs, or a per-origin base), not an infra one.
-* **The PWA itself is on Vercel, so `/` on the onion is a placeholder.** The
-  onion mirrors the *backend*. It becomes a full mirror the moment `apps/web`'s
-  `dist/` is mounted into the caddy container and the `handle` block in the
-  `:8080` vhost is switched to `root`/`try_files`/`file_server` — the commented
-  `1nky.com` block shows the exact trio.
+* **The onion is a full mirror, PWA included.** `apps/web`'s `dist/` is
+  bind-mounted read-only into the caddy container at `/srv/web`
+  (`docker-compose.yml`'s caddy service, `./web-dist:/srv/web:ro`), and the
+  `:8080` vhost's root `handle` serves it with the same
+  `root`/`try_files`/`file_server` trio as the commented `1nky.com` block.
+  `apps/web/src/lib/config.ts` detects the `.onion` hostname at runtime and
+  points `API_BASE`/`MEDIA_BASE`/`RELAY_WS_URL` back at the same origin
+  (`/api`, `/media`, `/relay`), so it is the exact same `dist/` shipped to
+  1nky.com — no separate onion build. `infra/deploy/deploy.sh` builds
+  `apps/web` and rsyncs `dist/` into `infra/web-dist` on every deploy
+  (`SKIP_WEB=1` to skip). Until the first deploy ships something, `./web-dist`
+  is an empty directory and `/` on the onion 404s — that is "not deployed
+  yet," not a broken vhost.
 * **Do not add a `redir` to the clearnet host in the `:8080` vhost.** It would
   walk a Tor visitor out of Tor, which is the one thing that vhost exists to
   prevent. (The interim-TLS vhost redirects; the onion one must not.)
@@ -654,8 +665,12 @@ is set once and survives rebuilds. It stores no secrets and prints none.
 
 `deploy.sh` does git-pull-on-the-droplet plus `docker compose up -d --build`.
 No registry, no CI credentials on the server. Your local `.env` is streamed
-over ssh into a 0600 file — never in argv, never in a shell history. Redeploys
-and rollbacks do not touch the LMDB or Postgres volumes, so no events are lost.
+over ssh into a 0600 file — never in argv, never in a shell history. It also
+builds `apps/web` locally (`pnpm --filter @1nky/web build`) and rsyncs
+`dist/` into `infra/web-dist` on the droplet — the directory caddy
+bind-mounts read-only at `/srv/web` for both the .onion mirror and, later,
+the clearnet vhost (`SKIP_WEB=1` to skip). Redeploys and rollbacks do not
+touch the LMDB or Postgres volumes, so no events are lost.
 
 The handoff (Part 8) specs Hetzner CX32; this targets a cloud host `sfo3` per
 the task, on the smaller box strfry's own guide says is sufficient to start.
