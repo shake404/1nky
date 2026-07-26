@@ -42,6 +42,7 @@ const SHOCK = 'a'.repeat(64);
 const ANSWER = {
   q: 'sf',
   boards: ['sf-bay', 'oakland'],
+  writers: [{ pubkey: SHOCK, tag: 'SHOCK', mark: 'aa11bb', avatarSha256: null, city: 'sf' }],
   flicks: [
     {
       id: FLICK,
@@ -171,6 +172,37 @@ describe('the search screen', () => {
     expect(container.textContent).toContain('Looking for something?');
     // Nothing typed, nothing asked.
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('puts the writers first — somebody typing a tag is after the writer', async () => {
+    await createTag('WRITER');
+    answering(ANSWER);
+
+    await mount();
+    await type('shock');
+    await waitForAsk();
+
+    const headings = [...container.querySelectorAll('h3')].map((h) => h.textContent);
+    expect(headings[0]).toBe('Writers');
+    expect(headings).toEqual(['Writers', 'Walls', 'Up', 'Talk']);
+
+    // The row is a door to their wall, and it carries their mark.
+    const row = container.querySelector(`a[href="/w/${SHOCK}"]`);
+    expect(row).not.toBeNull();
+    expect(row!.textContent).toContain('SHOCK');
+    expect(row!.textContent).toContain('aa11bb');
+  });
+
+  it('finds a writer even when nothing else matched — the bug this fixes', async () => {
+    await createTag('WRITER');
+    answering({ q: 'shake', boards: [], writers: ANSWER.writers, flicks: [], videos: [], threads: [] });
+
+    await mount();
+    await type('shake');
+    await waitForAsk();
+
+    expect(container.textContent).not.toContain('Nothing on the wall for that.');
+    expect(container.querySelector(`a[href="/w/${SHOCK}"]`)).not.toBeNull();
   });
 
   it('lays the answer out as walls, then what is up, then talk', async () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Avatar } from '../components/Avatar.js';
 import { FlickCard } from '../components/FlickCard.js';
 import { debounce } from '../lib/debounce.js';
 import {
@@ -14,9 +15,12 @@ import { ThreadRowCard } from './Board.js';
 /**
  * `/search` — one box for the whole wall.
  *
- * Walls first, because a wall is a place a writer can go and keep looking; then
- * what is up, in the same grid as everywhere else; then talk. Ordered by how
- * useful the answer is, not by how the wall happened to group it.
+ * Writers first: somebody who types a tag is looking for the writer who uses it,
+ * and every row carries their mark, because the same name with a different mark
+ * is a different writer. Then walls, because a wall is a place a writer can go
+ * and keep looking; then what is up, in the same grid as everywhere else; then
+ * talk. Ordered by how useful the answer is, not by how the wall happened to
+ * group it.
  *
  * The box asks the wall once the typing stops. An abort controller kills the
  * previous ask on every new one so a slow answer for "sf" can never land on top
@@ -141,6 +145,31 @@ export function Search(): JSX.Element {
         </div>
       ) : results ? (
         <div className="stack stack--wide">
+          {results.writers.length > 0 ? (
+            <section className="stack" style={{ gap: 10 }}>
+              <h3>Writers</h3>
+              <div className="chips" style={{ gap: 10 }}>
+                {results.writers.map((writer) => (
+                  <Link
+                    key={writer.pubkey}
+                    to={`/w/${writer.pubkey}`}
+                    className="writer"
+                    style={{ gap: 8 }}
+                  >
+                    <Avatar
+                      pubkey={writer.pubkey}
+                      avatarSha256={writer.avatarSha256}
+                      size={22}
+                      alt={writer.tag ?? ''}
+                    />
+                    <span className="writer__name">{writer.tag ?? 'unnamed'}</span>
+                    <span className="writer__mark">{writer.mark}</span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {results.boards.length > 0 ? (
             <section className="stack" style={{ gap: 10 }}>
               <h3>Walls</h3>

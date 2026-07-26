@@ -26,6 +26,7 @@ import {
   searchQuery,
   searchThreadsQuery,
   searchVideosQuery,
+  searchWritersQuery,
   threadQuery,
   writerFlicksQuery,
 } from './queries.js';
@@ -59,6 +60,7 @@ const ALL = [
   mentionsQuery({ pubkey: hex('7a'), limit: 24, cursor: { createdAt: 100, eventId: hex('33') } }),
   searchVideosQuery('burner', 24),
   searchThreadsQuery('burner', 24),
+  searchWritersQuery('shake', 24),
   inviteRootsQuery(),
   inviteEdgesQuery(),
   inviteNodeQuery(hex('ab')),
@@ -503,6 +505,66 @@ describe('search over videos and threads', () => {
 
   it('matches a thread by board tag too', () => {
     expect(searchThreadsQuery('oakland', 10).text).toContain('t.boards && $2::text[]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Search over writers — the half that was missing: typing a tag has to find
+// the writer who uses it, not only the posts that mention it.
+// ---------------------------------------------------------------------------
+
+describe('searchWritersQuery', () => {
+  it('matches a tag name anywhere in it, case-insensitively', () => {
+    const sql = searchWritersQuery('shake', 10);
+    expect(sql.text).toContain('from profiles p');
+    expect(sql.text).toContain('p.tag_name ilike $2');
+    expect(sql.params).toEqual(['shake', '%shake%', 'shake%', 10]);
+  });
+
+  it('ranks an exact tag first, then a prefix, then anything else', () => {
+    const text = searchWritersQuery('shake', 10).text;
+    expect(text).toContain('when lower(p.tag_name) = lower($1) then 0');
+    expect(text).toContain('when p.tag_name ilike $3 then 1');
+    expect(text).toContain('else 2');
+    expect(text).toContain('order by match_rank asc');
+  });
+
+  it('breaks a tie deterministically, so the same rows always page the same', () => {
+    const text = searchWritersQuery('shake', 10).text;
+    expect(text).toContain('length(p.tag_name) asc');
+    expect(text).toContain('p.pubkey asc');
+    expect(text).not.toContain('offset');
+  });
+
+  it('hides banned writers, like every other public read', () => {
+    expect(searchWritersQuery('shake', 10).text).toContain(
+      'not exists (select 1 from banned_pubkeys b where b.pubkey = p.pubkey)',
+    );
+  });
+
+  it('leaves out a writer who has never named themselves', () => {
+    expect(searchWritersQuery('shake', 10).text).toContain("coalesce(p.tag_name, '') <> ''");
+  });
+
+  it('escapes the wildcards somebody could type, so "%" is not "everybody"', () => {
+    const sql = searchWritersQuery('50%_off\\', 10);
+    expect(sql.params[1]).toBe('%50\\%\\_off\\\\%');
+    expect(sql.params[2]).toBe('50\\%\\_off\\\\%');
+  });
+
+  it('carries exactly the writer columns the rest of the API reports', () => {
+    const text = searchWritersQuery('shake', 10).text;
+    for (const column of ['p.pubkey', 'p.tag_name', 'p.city', 'p.avatar_sha256']) {
+      expect(text).toContain(column);
+    }
+    // Nothing about who put them on, and no bio — this is a list row.
+    expect(text).not.toContain('invite_edges');
+    expect(text).not.toContain('p.about');
+  });
+
+  it('caps how many come back with the bound limit', () => {
+    expect(searchWritersQuery('shake', 7).text).toContain('limit $4::int');
+    expect(searchWritersQuery('shake', 7).params[3]).toBe(7);
   });
 });
 

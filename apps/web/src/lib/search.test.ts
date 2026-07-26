@@ -67,6 +67,10 @@ function threadRow(id: string, pubkey: string): Record<string, unknown> {
 const FULL = {
   q: 'sf',
   boards: ['sf-bay', 'oakland'],
+  writers: [
+    { pubkey: shock, tag: 'SHOCK', mark: 'aa11bb', avatarSha256: null, city: 'sf' },
+    { pubkey: rask, tag: 'RASK', mark: 'bb22cc', avatarSha256: 'c'.repeat(64), city: null },
+  ],
   flicks: [flickRow('1'.repeat(64), shock, 'rooftop', NOW - 500)],
   videos: [clipRow('2'.repeat(64), rask, NOW - 100)],
   threads: [threadRow('3'.repeat(64), shock)],
@@ -83,13 +87,50 @@ afterEach(() => {
 });
 
 describe('parseSearchResponse', () => {
-  it('reads all four lists', () => {
+  it('reads all the lists', () => {
     const results = search.parseSearchResponse(FULL);
 
     expect(results.q).toBe('sf');
     expect(results.boards).toEqual(['sf-bay', 'oakland']);
+    expect(results.writers.map((w) => w.tag)).toEqual(['SHOCK', 'RASK']);
     expect(results.media).toHaveLength(2);
     expect(results.threads.map((t) => t.id)).toEqual(['3'.repeat(64)]);
+    expect(search.isEmpty(results)).toBe(false);
+  });
+
+  it('keeps the writers in the order the wall ranked them', () => {
+    const results = search.parseSearchResponse({
+      writers: [
+        { pubkey: rask, tag: 'RASK' },
+        { pubkey: shock, tag: 'SHOCK' },
+      ],
+    });
+    expect(results.writers.map((w) => w.pubkey)).toEqual([rask, shock]);
+  });
+
+  it('gives a writer a mark of its own when the wall did not send one', () => {
+    const results = search.parseSearchResponse({ writers: [{ pubkey: shock, tag: 'SHOCK' }] });
+    expect(results.writers[0]?.mark).toBeTypeOf('string');
+    expect(results.writers[0]?.mark.length).toBeGreaterThan(0);
+    expect(results.writers[0]?.avatarSha256).toBeNull();
+    expect(results.writers[0]?.city).toBeNull();
+  });
+
+  it('drops a writer row with no usable id, and never the same writer twice', () => {
+    const results = search.parseSearchResponse({
+      writers: [
+        { pubkey: shock, tag: 'SHOCK' },
+        { pubkey: shock.toUpperCase(), tag: 'SHOCK' },
+        { pubkey: 'nope', tag: 'TOY' },
+        'not even a row',
+        { tag: 'no id at all' },
+      ],
+    });
+    expect(results.writers.map((w) => w.pubkey)).toEqual([shock]);
+  });
+
+  it('a writer alone is still an answer', () => {
+    const results = search.parseSearchResponse({ q: 'shake', writers: [{ pubkey: shock, tag: 'SHAKE' }] });
     expect(search.isEmpty(results)).toBe(false);
   });
 
@@ -108,18 +149,20 @@ describe('parseSearchResponse', () => {
     expect(results.media[0]?.duration).toBe(14);
   });
 
-  it('is fine with an older box that sends no clips and no talk at all', () => {
+  it('is fine with an older box that sends no writers, no clips and no talk at all', () => {
     const results = search.parseSearchResponse({ q: 'sf', boards: ['sf-bay'], flicks: FULL.flicks });
 
     expect(results.media).toHaveLength(1);
+    expect(results.writers).toEqual([]);
     expect(results.threads).toEqual([]);
     expect(results.boards).toEqual(['sf-bay']);
   });
 
   it('is fine with an answer that has nothing in it at all', () => {
-    for (const payload of [{}, null, undefined, [], 'nope', { boards: 'sf', flicks: 7, threads: {} }]) {
+    for (const payload of [{}, null, undefined, [], 'nope', { boards: 'sf', flicks: 7, threads: {}, writers: 3 }]) {
       const results = search.parseSearchResponse(payload);
       expect(results.boards).toEqual([]);
+      expect(results.writers).toEqual([]);
       expect(results.media).toEqual([]);
       expect(results.threads).toEqual([]);
       expect(search.isEmpty(results)).toBe(true);
@@ -138,7 +181,7 @@ describe('parseSearchResponse', () => {
     expect(search.parseSearchResponse(both).media).toHaveLength(1);
   });
 
-  it('keeps a writer you are ignoring out of both the wall and the talk', async () => {
+  it('keeps a writer you are ignoring out of the wall, the talk and the writer list', async () => {
     await setPref('ignored-writers', [shock]);
     await mute.loadIgnored();
 
@@ -146,6 +189,7 @@ describe('parseSearchResponse', () => {
 
     expect(results.media.map((m) => m.id)).toEqual(['2'.repeat(64)]);
     expect(results.threads).toEqual([]);
+    expect(results.writers.map((w) => w.pubkey)).toEqual([rask]);
   });
 
   it('lifts a flat writer id on a thread row into the shape a row needs', () => {
