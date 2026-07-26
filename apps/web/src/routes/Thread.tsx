@@ -17,7 +17,7 @@ import { HAPPENING_BOARD, runsLine } from '../lib/happenings.js';
 import { collectParticipants, extractMentions, type MentionCandidate } from '../lib/mentions.js';
 import { ago } from '../lib/platform.js';
 import { postComment, type Stage } from '../lib/publish.js';
-import { useTag } from '../state/TagProvider.js';
+import { useActiveTag, useTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
 
 const REPLY_MAX = 2000;
@@ -39,7 +39,11 @@ export function Thread(): JSX.Element {
   // Set by the compose page: this thread went up a heartbeat ago, so the
   // first read waits out the wall's filing delay instead of calling it gone.
   const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true;
+  // `tag` (me) still gates the composer and owns the flag/ownership checks —
+  // those are about the writer, not who they are posting as. `active` is only
+  // the SIGNER for the comment itself.
   const { tag } = useTag();
+  const { active, actingAsCrew } = useActiveTag();
   const { say } = useToast();
 
   const [view, setView] = useState<ThreadView | null>(null);
@@ -109,7 +113,7 @@ export function Thread(): JSX.Element {
 
   const send = useCallback(
     async (parentId: string | null, text: string): Promise<void> => {
-      if (!tag || !root || !text.trim() || stage) return;
+      if (!active || !root || !text.trim() || stage) return;
 
       // Answering the opening post: the parent IS the top of the thread.
       // Answering a reply: the parent is that reply, the top is still the OP.
@@ -122,7 +126,12 @@ export function Thread(): JSX.Element {
 
       setStage('spraying');
       try {
-        await postComment(tag, parent, text, { root, mentions, onStage: setStage });
+        await postComment(active, parent, text, {
+          root,
+          mentions,
+          recordOwn: actingAsCrew === null,
+          onStage: setStage,
+        });
         if (parentId) {
           setReplyDraft('');
           setReplyingTo(null);
@@ -136,7 +145,7 @@ export function Thread(): JSX.Element {
         setStage(null);
       }
     },
-    [tag, root, stage, byId, load, say, op, candidates],
+    [active, actingAsCrew, root, stage, byId, load, say, op, candidates],
   );
 
   if (missing) {

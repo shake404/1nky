@@ -12,7 +12,7 @@ import { KINDS, type SignedEvent } from '@1nky/protocol';
 import { getPref, setPref } from '../lib/db.js';
 import { decodeWrap, dmKey, sendMessage, type DecodedDm } from '../lib/dm.js';
 import { relay } from '../lib/relay.js';
-import { useTag } from './TagProvider.js';
+import { useActiveTag, useTag } from './TagProvider.js';
 
 /**
  * The on-device message store.
@@ -73,7 +73,11 @@ function summaries(cache: CacheShape, readAt: Record<string, number>): Conversat
 }
 
 export function DmProvider({ children }: { children: ReactNode }): JSX.Element {
+  // The INBOX (subscription + cache) is always the writer's own tag — a crew's
+  // messages are its own inbox, not ours. Only the OUTGOING wrap is signed by
+  // the active signer, so a message sent "as a crew" leaves under the crew key.
   const { tag } = useTag();
+  const { active } = useActiveTag();
   const [cache, setCache] = useState<CacheShape>({});
   const [readAt, setReadAt] = useState<Record<string, number>>({});
   const [ready, setReady] = useState(false);
@@ -145,20 +149,21 @@ export function DmProvider({ children }: { children: ReactNode }): JSX.Element {
 
   const send = useCallback(
     async (partner: string, text: string): Promise<void> => {
-      if (!tag) return;
-      await sendMessage(tag, partner, text);
+      const signer = active ?? tag;
+      if (!signer) return;
+      await sendMessage(signer, partner, text);
       const createdAt = Math.floor(Date.now() / 1000);
       const trimmed = text.trim();
       upsert({
-        key: dmKey({ senderPubkey: tag.pubkey, createdAt, text: trimmed }),
+        key: dmKey({ senderPubkey: signer.pubkey, createdAt, text: trimmed }),
         partner,
-        senderPubkey: tag.pubkey,
+        senderPubkey: signer.pubkey,
         text: trimmed,
         createdAt,
         mine: true,
       });
     },
-    [tag, upsert],
+    [active, tag, upsert],
   );
 
   const markRead = useCallback(

@@ -13,7 +13,7 @@ import { candidatesFrom, extractMentions, type MentionCandidate } from '../lib/m
 import { ago } from '../lib/platform.js';
 import { buffEvents, postComment, type Stage } from '../lib/publish.js';
 import { relay } from '../lib/relay.js';
-import { useTag } from '../state/TagProvider.js';
+import { useActiveTag, useTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
 
 interface Comment {
@@ -27,7 +27,10 @@ interface Comment {
 export function FlickDetail(): JSX.Element {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  // `tag` (me) owns buffing and the mine/flag checks; `active` only signs the
+  // comment (own tag, or a crew when the switcher is on).
   const { tag } = useTag();
+  const { active, actingAsCrew } = useActiveTag();
   const { say } = useToast();
 
   const [flick, setFlick] = useState<Flick | null>(null);
@@ -111,18 +114,22 @@ export function FlickDetail(): JSX.Element {
   );
 
   const send = useCallback(async () => {
-    if (!tag || !parent || !draft.trim()) return;
+    if (!active || !parent || !draft.trim()) return;
     const mentions = extractMentions(draft, candidates);
     setStage('spraying');
     try {
-      await postComment(tag, parent, draft, { mentions, onStage: setStage });
+      await postComment(active, parent, draft, {
+        mentions,
+        recordOwn: actingAsCrew === null,
+        onStage: setStage,
+      });
       setDraft('');
     } catch (error) {
       say(error instanceof Error ? error.message : 'That did not go up.', 'hazard');
     } finally {
       setStage(null);
     }
-  }, [tag, parent, draft, say, candidates]);
+  }, [active, actingAsCrew, parent, draft, say, candidates]);
 
   const buff = useCallback(async () => {
     if (!tag || !flick) return;
