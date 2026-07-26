@@ -1,4 +1,5 @@
 import {
+  buildAmendment,
   buildBuff,
   buildComment,
   buildCrewBadgeRegistry,
@@ -984,5 +985,156 @@ describe('truncateDerived', () => {
     const db = fakeDb();
     await truncateDerived(db);
     expect(db.calls[0]?.text).not.toContain('banned_pubkeys');
+  });
+});
+
+
+describe('amendments — "Add to this" (kind 1113)', () => {
+  const TARGET = hex('11');
+  const NAMED = hex('7a');
+  const target = { id: TARGET, pubkey: AUTHOR, kind: KINDS.FLICK };
+
+  function amendment(
+    input: Parameters<typeof buildAmendment>[1] = { boards: ['oakland'] },
+    author = AUTHOR,
+  ) {
+    const template = buildAmendment(target, { ...input, createdAt: NOW - 1 });
+    return makeEvent({ ...template, id: hex('44'), pubkey: author });
+  }
+
+  it('records the amendment and merges its boards into the post', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, amendment({ boards: ['Oakland', 'trains'] }), counters, { now: NOW });
+
+    expect(counters.amendments).toBe(1);
+    expect(counters.invalid).toBe(0);
+    // The raw event is kept like every other, and the amendment is recorded.
+    expect(db.matching('insert into events')).toHaveLength(1);
+    const stored = db.matching('insert into amendments')[0];
+    expect(stored?.params).toEqual([
+      hex('44'),
+      TARGET,
+      AUTHOR,
+      ['oakland', 'trains'],
+      [],
+      NOW - 1,
+    ]);
+
+    // The original event row is NEVER rewritten — only the derived read model.
+    expect(db.matching('insert into flicks')).toHaveLength(0);
+    for (const table of ['update flicks', 'update videos', 'update threads']) {
+      const update = db.matching(table)[0];
+      expect(update?.params).toEqual([TARGET, AUTHOR, ['oakland', 'trains']]);
+    }
+  });
+
+  it('registers the added walls so they show up in the board list', async () => {
+    const db = fakeDb();
+    await indexEvent(db, amendment({ boards: ['oakland'] }), newCounters(), { now: NOW });
+    expect(db.matching('insert into boards')[0]?.params).toContain('oakland');
+  });
+
+  it('registers nothing when the merge did not apply to any post', async () => {
+    // rowCount 0 from every update: the target is buffed, or is not this author's.
+    const db = fakeDb((text) =>
+      text.startsWith('update ') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    await indexEvent(db, amendment({ boards: ['oakland'] }), counters, { now: NOW });
+
+    expect(counters.amendments).toBe(1);
+    expect(db.matching('insert into boards')).toHaveLength(0);
+  });
+
+  it('files a shout-out for every writer it names, guarded on the target', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, amendment({ mentions: [NAMED] }), counters, { now: NOW });
+
+    expect(counters.mentions).toBe(1);
+    const mention = db.matching('insert into mentions')[0];
+    // Never an unguarded insert: a buffed or foreign target files nothing.
+    expect(mention?.text).toContain('where exists');
+    expect(mention?.params.slice(0, 5)).toEqual([hex('44'), NAMED, AUTHOR, TARGET, NOW - 1]);
+  });
+
+  it('files no shout-out when the amended post is gone (buffed)', async () => {
+    // The `where exists` guard matched nothing, which is what a hard-deleted
+    // original looks like from here.
+    const db = fakeDb((text) =>
+      text.includes('insert into mentions') ? { rows: [], rowCount: 0 } : undefined,
+    );
+    const counters = newCounters();
+    await indexEvent(db, amendment({ mentions: [NAMED] }), counters, { now: NOW });
+
+    expect(counters.mentions).toBe(0);
+    expect(counters.amendments).toBe(1);
+  });
+
+  it('touches no board update at all when the amendment only names writers', async () => {
+    const db = fakeDb();
+    await indexEvent(db, amendment({ mentions: [NAMED] }), newCounters(), { now: NOW });
+    expect(db.matching('update flicks')).toHaveLength(0);
+    expect(db.matching('insert into boards')).toHaveLength(0);
+  });
+
+  it('counts an unreadable amendment as invalid but keeps the event', async () => {
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, makeEvent({ kind: KINDS.AMENDMENT, tags: [] }), counters, { now: NOW });
+
+    expect(counters.invalid).toBe(1);
+    expect(counters.amendments).toBe(0);
+    expect(db.matching('insert into events')).toHaveLength(1);
+    expect(db.matching('insert into amendments')).toHaveLength(0);
+  });
+
+  it('stores a stranger amendment as inert — the SQL guard is what refuses it', async () => {
+    const stranger = hex('cc');
+    const db = fakeDb();
+    const counters = newCounters();
+    await indexEvent(db, amendment({ boards: ['oakland'] }, stranger), counters, { now: NOW });
+
+    expect(counters.amendments).toBe(1);
+    // Every merge statement carries the STRANGER's pubkey, so `pubkey = $2`
+    // cannot match the target's row. Proved for real against Postgres in
+    // integration.test.ts.
+    expect(db.matching('update flicks')[0]?.params[1]).toBe(stranger);
+    expect(db.matching('insert into mentions')).toHaveLength(0);
+  });
+
+  it('replays the amendments that arrived before the post they amend', async () => {
+    // A relay hands back stored events newest first, so on a rebuild this is the
+    // normal order, not the odd one.
+    const pending = {
+      event_id: hex('44'),
+      target_id: TARGET,
+      author_pubkey: AUTHOR,
+      boards: ['oakland'],
+      mentions: [NAMED],
+      created_at: NOW - 1,
+    };
+    const db = fakeDb((text) =>
+      text.includes('from amendments') ? { rows: [pending], rowCount: 1 } : undefined,
+    );
+    const counters = newCounters();
+    await indexEvent(db, flick({ id: TARGET }), counters, { now: NOW });
+
+    expect(counters.flicks).toBe(1);
+    expect(db.matching('from amendments')[0]?.params).toEqual([TARGET, AUTHOR]);
+    expect(db.matching('update flicks')[0]?.params).toEqual([TARGET, AUTHOR, ['oakland']]);
+    expect(counters.mentions).toBe(1);
+  });
+
+  it('looks for pending amendments on clips and threads too', async () => {
+    const db = fakeDb();
+    await indexEvent(db, video(), newCounters(), { now: NOW });
+    expect(db.matching('from amendments')).toHaveLength(1);
+
+    const db2 = fakeDb();
+    const thread = buildThreadOp({ content: 'yo', boards: ['sf'] });
+    await indexEvent(db2, makeEvent({ ...thread, pubkey: AUTHOR }), newCounters(), { now: NOW });
+    expect(db2.matching('from amendments')).toHaveLength(1);
   });
 });

@@ -1,4 +1,4 @@
-import { fingerprint } from '@1nky/protocol';
+import { fingerprint, KINDS } from '@1nky/protocol';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -293,6 +293,7 @@ describe('shapeMention', () => {
       id: hex('33'),
       createdAt: 1_700_000_100,
       content: 'ask @KILO, he was there',
+      source: 'reply',
       writer: {
         pubkey: AUTHOR,
         tag: 'SMOG',
@@ -302,6 +303,25 @@ describe('shapeMention', () => {
       },
       where: { id: hex('11'), type: 'flick', subject: null, excerpt: 'rooftop' },
     });
+  });
+
+  it('tells a tag apart from a reply, so the client need not know a kind', () => {
+    // An amendment (kind 1113) — the author added this writer to their own post
+    // afterwards. There is no text to show, so the row says which sort it is.
+    const tagged = shapeMention(
+      mentionRow({ source_kind: KINDS.AMENDMENT, content: null }) as never,
+    );
+    expect(tagged.source).toBe('tag');
+    expect(tagged.content).toBe('');
+    // The door still works: a tag lands you on the post you were tagged into.
+    expect(tagged.where).toMatchObject({ id: hex('11'), type: 'flick' });
+  });
+
+  it('reads a reply as a reply even when the kind is missing', () => {
+    // Rows written before `source_kind` existed, and any future kind: a mention
+    // with text is a reply until something says otherwise.
+    expect(shapeMention(mentionRow({ source_kind: null }) as never).source).toBe('reply');
+    expect(shapeMention(mentionRow({ source_kind: '1111' }) as never).source).toBe('reply');
   });
 
   it('carries a thread title through as the place name', () => {
@@ -325,6 +345,7 @@ describe('shapeMention', () => {
       'id',
       'createdAt',
       'content',
+      'source',
       'writer',
       'where',
     ]);

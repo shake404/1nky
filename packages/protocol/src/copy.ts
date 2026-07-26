@@ -46,6 +46,18 @@ export const COPY = {
     past: 'buffed',
   },
 
+  /**
+   * additive amendment (kind 1113) — adding to a post that is already up.
+   *
+   * Never "edit": nothing about what went up changes. You put more on it, the
+   * way you would go back to a wall and add to the piece.
+   */
+  addTo: {
+    label: 'Add to this',
+    blurb: 'Tag writers, add walls. Whatever is on it already stays on it.',
+    done: 'Added.',
+  },
+
   /** retire identity — a ritual, not an error state */
   hangItUp: {
     label: 'Hang it up',

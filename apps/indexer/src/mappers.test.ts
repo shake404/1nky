@@ -1,4 +1,5 @@
 import {
+  buildAmendment,
   buildBuff,
   buildComment,
   buildCrewBadgeRegistry,
@@ -17,6 +18,9 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  AMENDABLE_KINDS,
+  amendmentMentionRows,
+  amendmentRowFromEvent,
   boardKindOf,
   boardRowsFromFlick,
   boardRowsFromRegistry,
@@ -941,10 +945,101 @@ describe('routeOf', () => {
     expect(routeOf(KINDS.FLICK)).toBe('flick');
     expect(routeOf(KINDS.VIDEO)).toBe('video');
     expect(routeOf(KINDS.COMMENT)).toBe('comment');
+    expect(routeOf(KINDS.AMENDMENT)).toBe('amendment');
     expect(routeOf(KINDS.REPORT)).toBe('report');
     expect(routeOf(KINDS.DELETE)).toBe('deletion');
     expect(routeOf(KINDS.APP_DATA)).toBe('registry');
     expect(routeOf(KINDS.NOTE)).toBe('thread');
     expect(routeOf(KINDS.MUTE_LIST)).toBe('event');
+  });
+});
+
+
+describe('amendmentRowFromEvent (kind 1113)', () => {
+  const target = { id: hex('11'), pubkey: AUTHOR, kind: KINDS.FLICK };
+  const NAMED = hex('7a');
+
+  function amendment(input: Parameters<typeof buildAmendment>[1], author = AUTHOR) {
+    const template = buildAmendment(target, input);
+    return makeEvent({ ...template, id: hex('44'), pubkey: author });
+  }
+
+  it('reads the target, the added boards and the named writers', () => {
+    const event = amendment({ boards: ['Oakland', 'trains'], mentions: [NAMED] });
+    expect(amendmentRowFromEvent(event)).toEqual({
+      event_id: hex('44'),
+      target_id: hex('11'),
+      author_pubkey: AUTHOR,
+      boards: ['oakland', 'trains'],
+      mentions: [NAMED],
+      created_at: event.created_at,
+    });
+  });
+
+  it('does not check authorship — that guard lives in SQL, where it bites', () => {
+    const stranger = hex('cc');
+    const row = amendmentRowFromEvent(amendment({ boards: ['oakland'] }, stranger));
+    // The row is produced and stored; the merge is what refuses it.
+    expect(row?.author_pubkey).toBe(stranger);
+    expect(row?.target_id).toBe(hex('11'));
+  });
+
+  it('drops a self-mention, exactly as a comment does', () => {
+    // buildAmendment already refuses to emit one, so this is the hand-rolled case.
+    const event = makeEvent({
+      kind: KINDS.AMENDMENT,
+      id: hex('44'),
+      pubkey: AUTHOR,
+      tags: [
+        ['e', hex('11'), '', AUTHOR],
+        ['k', '20'],
+        ['p', AUTHOR, '', 'mention'],
+        ['p', NAMED, '', 'mention'],
+      ],
+    });
+    expect(amendmentRowFromEvent(event)?.mentions).toEqual([NAMED]);
+  });
+
+  it('is null when an amendment adds nothing at all', () => {
+    const empty = makeEvent({
+      kind: KINDS.AMENDMENT,
+      pubkey: AUTHOR,
+      tags: [
+        ['e', hex('11'), '', AUTHOR],
+        ['k', '20'],
+        // Only a self-mention and a junk board: nothing left once read.
+        ['p', AUTHOR, '', 'mention'],
+        ['t', '###'],
+      ],
+    });
+    expect(amendmentRowFromEvent(empty)).toBeNull();
+  });
+
+  it('is null for every event that is not an amendment', () => {
+    expect(amendmentRowFromEvent(makeEvent({ kind: KINDS.COMMENT }))).toBeNull();
+    expect(amendmentRowFromEvent(makeEvent({ kind: KINDS.AMENDMENT, tags: [] }))).toBeNull();
+  });
+
+  it('files a mention row per named writer, pointing at the amended post', () => {
+    const event = amendment({ mentions: [NAMED] });
+    const row = amendmentRowFromEvent(event);
+    expect(row).not.toBeNull();
+    expect(amendmentMentionRows(row!)).toEqual([
+      {
+        event_id: hex('44'),
+        mentioned_pubkey: NAMED,
+        author_pubkey: AUTHOR,
+        // The deep link goes to the flick, not to the amendment: the amendment
+        // has nothing to read.
+        root_id: hex('11'),
+        created_at: event.created_at,
+      },
+    ]);
+  });
+
+  it('only lets a flick, a clip or a thread be amended', () => {
+    expect([...AMENDABLE_KINDS]).toEqual([KINDS.FLICK, KINDS.VIDEO, KINDS.NOTE]);
+    expect(AMENDABLE_KINDS).not.toContain(KINDS.COMMENT);
+    expect(AMENDABLE_KINDS).not.toContain(KINDS.PROFILE);
   });
 });

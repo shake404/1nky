@@ -488,3 +488,138 @@ describe.skipIf(!enabled)('the invite tree over real HTTP', () => {
     expect((await request(app, `/mod/tree/${MIDDLE}`)).status).toBe(401);
   });
 });
+
+/**
+ * Amendments ("Add to this"), end to end.
+ *
+ * The API is read-only and has no amendment endpoint, and that is the claim
+ * under test: the indexer merges an amendment into the read model, so the
+ * ordinary reads — the flick, the board it was added to, the shout-outs inbox —
+ * report the amended state with no new route and no client change.
+ *
+ * Seeded the way the indexer would leave it: a flick whose `boards` array has
+ * already had the added wall merged in, plus a `mentions` row whose naming event
+ * is the amendment (kind 1113) rather than a comment. That second half is the
+ * part the mentions read had to learn — an amendment has no `comments` row.
+ */
+describe.skipIf(!enabled)('amended posts read back through the ordinary endpoints', () => {
+  let config: ApiConfig;
+  let db: Database;
+  let app: Express;
+  let seed: pg.Pool;
+
+  const WRITER = hex('a5');
+  const NAMED = hex('a6');
+  const FLICK = hex('e1');
+  const AMENDMENT = hex('e2');
+  const ADDED_BOARD = 'pgtest-added-wall';
+  const now = Math.floor(Date.now() / 1000);
+
+  beforeAll(async () => {
+    config = loadConfig({
+      ...process.env,
+      MOD_API_KEY: process.env['MOD_API_KEY'] ?? 'pgtest-mod-key',
+    });
+    db = connect(config.databaseUrl);
+    app = createApp(db, config);
+    seed = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
+
+    for (const id of [FLICK, AMENDMENT]) {
+      await seed.query('delete from events where id = $1', [id]);
+    }
+
+    await seed.query(
+      `insert into events (id, pubkey, kind, created_at, content, tags, raw, expires_at)
+       values ($1, $2, 20, $3, 'rooftop panel', '[]'::jsonb, '{}'::jsonb, null)
+       on conflict (id) do nothing`,
+      [FLICK, WRITER, now - 600],
+    );
+    // The amendment itself: kind 1113, no content — an amendment is tags.
+    await seed.query(
+      `insert into events (id, pubkey, kind, created_at, content, tags, raw, expires_at)
+       values ($1, $2, 1113, $3, '', '[]'::jsonb, '{}'::jsonb, null)
+       on conflict (id) do nothing`,
+      [AMENDMENT, WRITER, now - 300],
+    );
+    // `boards` as the merge leaves it: the original wall plus the added one.
+    await seed.query(
+      `insert into flicks (event_id, pubkey, created_at, url, sha256, width, height, blurhash, caption, boards)
+       values ($1, $2, $3, 'https://cdn.example/e1.webp', $4, 100, 200, null, 'rooftop panel',
+               array['pgtest-original-wall', $5]::text[])
+       on conflict (event_id) do update set boards = excluded.boards`,
+      [FLICK, WRITER, now - 600, 'e1'.repeat(32), ADDED_BOARD],
+    );
+    await seed.query(
+      `insert into boards (slug, title, kind, created_by, created_at)
+       values ($1, $1, 'city', null, $2) on conflict (slug) do nothing`,
+      [ADDED_BOARD, now - 300],
+    );
+    await seed.query(
+      `insert into mentions (event_id, mentioned_pubkey, author_pubkey, root_id, created_at)
+       values ($1, $2, $3, $4, $5) on conflict (event_id, mentioned_pubkey) do nothing`,
+      [AMENDMENT, NAMED, WRITER, FLICK, now - 300],
+    );
+  });
+
+  afterAll(async () => {
+    if (seed) {
+      for (const id of [FLICK, AMENDMENT]) {
+        await seed.query('delete from events where id = $1', [id]);
+      }
+      await seed.query('delete from boards where slug = $1', [ADDED_BOARD]);
+      await seed.end();
+    }
+    if (db) await db.end();
+  });
+
+  it('reports the added wall on the flick itself', async () => {
+    const res = await request(app, `/flick/${FLICK}`);
+    expect(res.status).toBe(200);
+    const flick = (res.body as { flick: { boards: string[] } }).flick;
+    expect(flick.boards).toContain('pgtest-original-wall');
+    expect(flick.boards).toContain(ADDED_BOARD);
+  });
+
+  it('puts the flick on the wall it was added to, and in the feed for it', async () => {
+    const board = await request(app, `/feed?board=${ADDED_BOARD}`);
+    expect(board.status).toBe(200);
+    const ids = (board.body as { flicks: { id: string }[] }).flicks.map((f) => f.id);
+    expect(ids).toContain(FLICK);
+
+    // And through Explore, which filters on the same array.
+    const explore = await request(app, `/explore?city=${ADDED_BOARD}`);
+    expect((explore.body as { flicks: { id: string }[] }).flicks.map((f) => f.id)).toContain(FLICK);
+  });
+
+  it('counts the flick on the board it was added to', async () => {
+    const res = await request(app, '/boards');
+    const board = (res.body as { boards: { slug: string; flickCount: number }[] }).boards.find(
+      (b) => b.slug === ADDED_BOARD,
+    );
+    expect(board?.flickCount).toBe(1);
+  });
+
+  it('lands a tag in the named writer shout-outs, with a door to the flick', async () => {
+    const res = await request(app, `/mentions/${NAMED}`);
+    expect(res.status).toBe(200);
+    const mentions = (
+      res.body as {
+        mentions: { id: string; source: string; content: string; writer: { pubkey: string }; where: { id: string; type: string } }[];
+      }
+    ).mentions;
+    const row = mentions.find((m) => m.id === AMENDMENT);
+    expect(row).toBeDefined();
+    // The naming writer comes from the denormalised author, not from a comment.
+    expect(row?.writer.pubkey).toBe(WRITER);
+    expect(row?.source).toBe('tag');
+    expect(row?.content).toBe('');
+    expect(row?.where).toMatchObject({ id: FLICK, type: 'flick' });
+  });
+
+  it('drops the tag the moment the amendment is buffed', async () => {
+    await seed.query('delete from events where id = $1', [AMENDMENT]);
+    const res = await request(app, `/mentions/${NAMED}`);
+    const ids = (res.body as { mentions: { id: string }[] }).mentions.map((m) => m.id);
+    expect(ids).not.toContain(AMENDMENT);
+  });
+});

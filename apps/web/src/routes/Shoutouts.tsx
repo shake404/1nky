@@ -161,7 +161,9 @@ export function ShoutRow({ shout, fresh }: { shout: Shout; fresh: boolean }): JS
         <span className="mono faint">{ago(shout.createdAt)}</span>
       </div>
 
-      <p className="shout__said">{shout.content}</p>
+      <p className={`shout__said${shout.source === 'tag' ? ' faint' : ''}`}>
+        {shout.source === 'tag' ? 'put your name on this one' : shout.content}
+      </p>
 
       <span className="mono faint shout__where">
         {kind} {where}

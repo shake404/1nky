@@ -30,12 +30,24 @@ export interface ShoutPlace {
   excerpt: string;
 }
 
+/**
+ * How your name came up.
+ *
+ * `reply` — somebody typed it in a reply.
+ * `tag`   — a writer put it on their own post afterwards (see "Add to this").
+ *
+ * There is nothing to read for a tag, so a row shows who put you on what rather
+ * than pretending to quote them.
+ */
+export type ShoutSource = 'reply' | 'tag';
+
 /** One shout-out: who said your name, what they said, and where. */
 export interface Shout {
-  /** The reply that named you. */
+  /** The reply, or the addition, that named you. */
   id: string;
   createdAt: number;
   content: string;
+  source: ShoutSource;
   writer: ThreadWriter;
   where: ShoutPlace;
 }
@@ -90,7 +102,17 @@ function shoutFrom(value: unknown): Shout | null {
   if (!writer) return null;
   const where = placeFrom(raw['where']);
   if (!where) return null;
-  return { id, createdAt: int(raw['createdAt']), content: str(raw['content']), writer, where };
+  // Anything the wall does not label is a reply — which is what every row was
+  // before there was anything else to be.
+  const source: ShoutSource = str(raw['source']) === 'tag' ? 'tag' : 'reply';
+  return {
+    id,
+    createdAt: int(raw['createdAt']),
+    content: str(raw['content']),
+    source,
+    writer,
+    where,
+  };
 }
 
 /**

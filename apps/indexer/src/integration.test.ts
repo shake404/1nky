@@ -1,4 +1,5 @@
 import {
+  buildAmendment,
   buildBuff,
   buildComment,
   buildFlick,
@@ -902,5 +903,294 @@ describe.skipIf(!enabled)('invite trees against a live Postgres', () => {
       [a.pk],
     );
     expect(rows.map((r) => r.pubkey).sort()).toEqual([b.pk, c.pk].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Amendments — "Add to this" (kind 1113) against a live Postgres.
+//
+// These live here rather than in store.test.ts because every rule that matters
+// is one Postgres enforces: the authorship predicate on the merge, the `where
+// exists` on the mention insert, the array union, and the cascade that keeps a
+// buffed post buffed. A fake db can only prove the statements were sent.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!enabled)('amendments against a live Postgres', () => {
+  let db: Database;
+  const now = Math.floor(Date.now() / 1000);
+  let seq = 0;
+
+  beforeAll(async () => {
+    db = connect(DATABASE_URL);
+    await migrate(db);
+    await truncateDerived(db);
+  });
+
+  afterAll(async () => {
+    if (db) await db.end();
+  });
+
+  /** A fresh flick from a fresh writer, so no test can collide with another. */
+  async function postFlick(secret: Uint8Array, boards: readonly string[]) {
+    seq += 1;
+    const event = finalizeEvent(
+      buildFlick({
+        url: `https://cdn.example/amend-${String(seq)}.webp`,
+        sha256: seq.toString(16).padStart(2, '0').repeat(32),
+        dims: { width: 100, height: 200 },
+        boards,
+        caption: 'wall',
+        createdAt: now - 300,
+      }),
+      secret,
+    );
+    await indexEvent(db, event, newCounters(), { now });
+    return event;
+  }
+
+  const boardsOfFlick = async (id: string): Promise<string[]> =>
+    (await db.query<{ boards: string[] }>('select boards from flicks where event_id = $1', [id]))
+      .rows[0]?.boards ?? [];
+
+  const inbox = async (pubkey: string): Promise<{ event_id: string; root_id: string }[]> =>
+    (
+      await db.query<{ event_id: string; root_id: string }>(
+        'select event_id, root_id from mentions where mentioned_pubkey = $1 order by created_at',
+        [pubkey],
+      )
+    ).rows;
+
+  it('adds a wall to a post that is already up, without touching the post', async () => {
+    const secret = generateSecretKey();
+    const flick = await postFlick(secret, ['sf']);
+    const before = await db.query<{ raw: string }>('select raw::text as raw from events where id = $1', [
+      flick.id,
+    ]);
+
+    const counters = newCounters();
+    await indexEvent(
+      db,
+      finalizeEvent(
+        buildAmendment(
+          { id: flick.id, pubkey: getPublicKey(secret), kind: KINDS.FLICK },
+          { boards: ['Oakland'], createdAt: now - 100 },
+        ),
+        secret,
+      ),
+      counters,
+      { now },
+    );
+
+    expect(counters.amendments).toBe(1);
+    expect(await boardsOfFlick(flick.id)).toEqual(['sf', 'oakland']);
+    // The signed event itself is byte-for-byte what it always was.
+    const after = await db.query<{ raw: string }>('select raw::text as raw from events where id = $1', [
+      flick.id,
+    ]);
+    expect(after.rows[0]?.raw).toBe(before.rows[0]?.raw);
+    // And the added wall is a board now, so it is reachable from the board list.
+    expect((await db.query('select 1 from boards where slug = $1', ['oakland'])).rows).toHaveLength(1);
+  });
+
+  it('is a union: repeated slugs, repeated deliveries and two amendments all converge', async () => {
+    const secret = generateSecretKey();
+    const pubkey = getPublicKey(secret);
+    const flick = await postFlick(secret, ['sf']);
+    const ref = { id: flick.id, pubkey, kind: KINDS.FLICK };
+
+    const first = finalizeEvent(
+      buildAmendment(ref, { boards: ['sf', 'oakland'], createdAt: now - 100 }),
+      secret,
+    );
+    const second = finalizeEvent(buildAmendment(ref, { boards: ['trains'], createdAt: now - 90 }), secret);
+
+    await indexEvent(db, first, newCounters(), { now });
+    await indexEvent(db, second, newCounters(), { now });
+    // A re-delivery (the indexer replays an overlap window on every reconnect).
+    await indexEvent(db, first, newCounters(), { now });
+
+    expect(await boardsOfFlick(flick.id)).toEqual(['sf', 'oakland', 'trains']);
+  });
+
+  it('applies an amendment that arrived BEFORE the post it amends', async () => {
+    // The rebuild case: a relay hands back stored events newest first.
+    const secret = generateSecretKey();
+    const pubkey = getPublicKey(secret);
+    const flick = finalizeEvent(
+      buildFlick({
+        url: 'https://cdn.example/early.webp',
+        sha256: 'ab'.repeat(32),
+        dims: { width: 10, height: 20 },
+        boards: ['sf'],
+        createdAt: now - 300,
+      }),
+      secret,
+    );
+    const named = getPublicKey(generateSecretKey());
+
+    const counters = newCounters();
+    await indexEvent(
+      db,
+      finalizeEvent(
+        buildAmendment(
+          { id: flick.id, pubkey, kind: KINDS.FLICK },
+          { boards: ['oakland'], mentions: [named], createdAt: now - 100 },
+        ),
+        secret,
+      ),
+      counters,
+      { now },
+    );
+
+    // Nothing to merge into yet, and nothing filed in anybody's inbox.
+    expect(counters.amendments).toBe(1);
+    expect(await inbox(named)).toEqual([]);
+
+    await indexEvent(db, flick, counters, { now });
+
+    expect(await boardsOfFlick(flick.id)).toEqual(['sf', 'oakland']);
+    expect(await inbox(named)).toEqual([{ event_id: expect.any(String), root_id: flick.id }]);
+  });
+
+  it("refuses an amendment on somebody else's post", async () => {
+    const mine = generateSecretKey();
+    const flick = await postFlick(mine, ['sf']);
+    const stranger = generateSecretKey();
+    const named = getPublicKey(generateSecretKey());
+
+    // A hand-rolled amendment: `buildAmendment` is happy to build it (it cannot
+    // know who will sign), and the relay accepts it. The INDEX is where it dies.
+    const counters = newCounters();
+    await indexEvent(
+      db,
+      finalizeEvent(
+        buildAmendment(
+          { id: flick.id, pubkey: getPublicKey(mine), kind: KINDS.FLICK },
+          { boards: ['tagfarm'], mentions: [named], createdAt: now - 100 },
+        ),
+        stranger,
+      ),
+      counters,
+      { now },
+    );
+
+    // Stored (the relay accepted it, and the relay is the source of truth) and
+    // completely inert.
+    expect(counters.amendments).toBe(1);
+    expect(await boardsOfFlick(flick.id)).toEqual(['sf']);
+    expect(await inbox(named)).toEqual([]);
+    expect((await db.query('select 1 from boards where slug = $1', ['tagfarm'])).rows).toHaveLength(0);
+  });
+
+  it('does not resurrect a buffed post — an amendment on it is ignored', async () => {
+    const secret = generateSecretKey();
+    const pubkey = getPublicKey(secret);
+    const flick = await postFlick(secret, ['sf']);
+    const named = getPublicKey(generateSecretKey());
+
+    const counters = newCounters();
+    await indexEvent(db, finalizeEvent(buildBuff([flick.id], { kinds: [KINDS.FLICK] }), secret), counters, {
+      now,
+    });
+    expect((await db.query('select 1 from events where id = $1', [flick.id])).rows).toHaveLength(0);
+
+    await indexEvent(
+      db,
+      finalizeEvent(
+        buildAmendment(
+          { id: flick.id, pubkey, kind: KINDS.FLICK },
+          { boards: ['oakland'], mentions: [named], createdAt: now - 50 },
+        ),
+        secret,
+      ),
+      counters,
+      { now },
+    );
+
+    // No flick row to merge into, and — the part that matters — nothing lands in
+    // a writer's inbox pointing at a post that no longer exists.
+    expect(await boardsOfFlick(flick.id)).toEqual([]);
+    expect(await inbox(named)).toEqual([]);
+    expect((await db.query('select 1 from flicks where event_id = $1', [flick.id])).rows).toHaveLength(0);
+  });
+
+  it('takes its own row down when the amendment itself is buffed', async () => {
+    const secret = generateSecretKey();
+    const pubkey = getPublicKey(secret);
+    const flick = await postFlick(secret, ['sf']);
+    const named = getPublicKey(generateSecretKey());
+
+    const amendment = finalizeEvent(
+      buildAmendment(
+        { id: flick.id, pubkey, kind: KINDS.FLICK },
+        { boards: ['oakland'], mentions: [named], createdAt: now - 100 },
+      ),
+      secret,
+    );
+    await indexEvent(db, amendment, newCounters(), { now });
+    expect(await inbox(named)).toHaveLength(1);
+
+    await indexEvent(
+      db,
+      finalizeEvent(buildBuff([amendment.id], { kinds: [KINDS.AMENDMENT] }), secret),
+      newCounters(),
+      { now },
+    );
+
+    // The cascade takes the amendment row and its mention with it.
+    expect(
+      (await db.query('select 1 from amendments where event_id = $1', [amendment.id])).rows,
+    ).toHaveLength(0);
+    expect(await inbox(named)).toEqual([]);
+  });
+
+  it('amends a thread OP as well as a flick', async () => {
+    const secret = generateSecretKey();
+    const pubkey = getPublicKey(secret);
+    const op = finalizeEvent(
+      buildThreadOp({ subject: 'the yard', boards: ['sf'], content: 'who is out', createdAt: now - 300 }),
+      secret,
+    );
+    await indexEvent(db, op, newCounters(), { now });
+
+    await indexEvent(
+      db,
+      finalizeEvent(
+        buildAmendment({ id: op.id, pubkey, kind: KINDS.NOTE }, { boards: ['oakland'], createdAt: now - 100 }),
+        secret,
+      ),
+      newCounters(),
+      { now },
+    );
+
+    const { rows } = await db.query<{ boards: string[] }>(
+      'select boards from threads where event_id = $1',
+      [op.id],
+    );
+    expect(rows[0]?.boards).toEqual(['sf', 'oakland']);
+  });
+
+  it('rebuilds the merged state from the relay, in either replay order', async () => {
+    const secret = generateSecretKey();
+    const pubkey = getPublicKey(secret);
+    const flick = await postFlick(secret, ['sf']);
+    const amendment = finalizeEvent(
+      buildAmendment({ id: flick.id, pubkey, kind: KINDS.FLICK }, { boards: ['oakland'], createdAt: now - 100 }),
+      secret,
+    );
+    await indexEvent(db, amendment, newCounters(), { now });
+    expect(await boardsOfFlick(flick.id)).toEqual(['sf', 'oakland']);
+
+    // Throw the cache away and replay newest-first, which is what strfry does.
+    await truncateDerived(db);
+    await indexEvent(db, amendment, newCounters(), { now });
+    await indexEvent(db, flick, newCounters(), { now });
+    expect(await boardsOfFlick(flick.id)).toEqual(['sf', 'oakland']);
+
+    // And oldest-first, for good measure: a union does not care.
+    await truncateDerived(db);
+    await indexEvent(db, flick, newCounters(), { now });
+    await indexEvent(db, amendment, newCounters(), { now });
+    expect(await boardsOfFlick(flick.id)).toEqual(['sf', 'oakland']);
   });
 });

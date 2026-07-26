@@ -213,6 +213,8 @@ export function mentionRow(overrides: Record<string, unknown> = {}): Record<stri
     root_id: hex('11'),
     pubkey: hex('ab'),
     content: 'ask @KILO, he was there',
+    // 1111: a comment named them. An amendment row carries 1113 and no content.
+    source_kind: 1111,
     tag_name: 'SMOG',
     city: 'sf',
     avatar_sha256: null,

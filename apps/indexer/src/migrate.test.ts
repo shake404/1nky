@@ -21,6 +21,7 @@ describe('loadMigrations', () => {
       '007_invites.sql',
       '008_happenings.sql',
       '009_mentions.sql',
+      '010_amendments.sql',
     ]);
     expect(migrations[0]?.sql).toContain('create table if not exists events');
   });

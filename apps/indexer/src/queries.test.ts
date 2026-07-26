@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AMENDABLE_TABLES,
+  applyAmendmentBoards,
   banSubtree,
   buffDelete,
   buffPlan,
@@ -8,8 +10,11 @@ import {
   DERIVED_TABLES,
   expirationSweep,
   incrementReportCount,
+  insertAmendment,
+  insertAmendmentMention,
   insertInviteEdge,
   insertMention,
+  selectPendingAmendments,
   redeemInvite,
   selectBanList,
   selectInvitedList,
@@ -289,6 +294,7 @@ describe('rebuild', () => {
       'profiles',
       'comments',
       'mentions',
+      'amendments',
       'reports',
       'deletions',
       'boards',
@@ -310,6 +316,14 @@ describe('rebuild', () => {
   it('rebuilds mentions from the relay too', () => {
     expect(DERIVED_TABLES).toContain('mentions');
     expect(truncateDerived().text).toContain('mentions');
+  });
+
+  it('rebuilds amendments from the relay too', () => {
+    // Add-only means the merge is a union, so a replay in any order lands on the
+    // same board set — but the table itself has to be thrown away first, or a
+    // rebuild would merge every amendment twice into a freshly rebuilt flick.
+    expect(DERIVED_TABLES).toContain('amendments');
+    expect(truncateDerived().text).toContain('amendments');
   });
 
   it('never unbans anyone', () => {
@@ -336,5 +350,87 @@ describe('insertMention', () => {
 
   it('is idempotent — a re-delivered comment cannot double up', () => {
     expect(insertMention(row).text).toContain('on conflict (event_id, mentioned_pubkey) do nothing');
+  });
+});
+
+
+describe('amendments (kind 1113)', () => {
+  const row = {
+    event_id: hex('44'),
+    target_id: hex('11'),
+    author_pubkey: AUTHOR,
+    boards: ['oakland', 'trains'],
+    mentions: [TARGET],
+    created_at: 1_700_000_000,
+  };
+
+  it('binds every value and never interpolates one', () => {
+    const sql = insertAmendment(row);
+    expect(sql.text).toContain('insert into amendments');
+    expect(sql.params).toEqual([
+      hex('44'),
+      hex('11'),
+      AUTHOR,
+      ['oakland', 'trains'],
+      [TARGET],
+      1_700_000_000,
+    ]);
+    expect(sql.text).not.toContain(AUTHOR);
+  });
+
+  it('is idempotent — a re-delivered amendment adds nothing twice', () => {
+    expect(insertAmendment(row).text).toContain('on conflict (event_id) do nothing');
+  });
+
+  it('merges boards only into the author own post — the rule is the where clause', () => {
+    for (const table of AMENDABLE_TABLES) {
+      const sql = applyAmendmentBoards(table, row);
+      expect(sql.text).toContain(`update ${table}`);
+      expect(sql.text).toContain('where t.event_id = $1');
+      expect(sql.text).toContain('and t.pubkey = $2');
+      expect(sql.params).toEqual([hex('11'), AUTHOR, ['oakland', 'trains']]);
+    }
+  });
+
+  it('adds, never replaces: the existing boards are kept and only new slugs appended', () => {
+    const sql = applyAmendmentBoards('flicks', row);
+    expect(sql.text).toContain('set boards = t.boards ||');
+    expect(sql.text).toContain('where s <> all(t.boards)');
+    // No delete, no full overwrite: add-only is the semantic.
+    expect(sql.text.toLowerCase()).not.toContain('delete');
+  });
+
+  it('covers exactly the three tables that carry board tags', () => {
+    expect([...AMENDABLE_TABLES]).toEqual(['flicks', 'videos', 'threads']);
+  });
+
+  it('files a mention only when the amended post is really the author own', () => {
+    const sql = insertAmendmentMention(
+      {
+        event_id: hex('44'),
+        mentioned_pubkey: TARGET,
+        author_pubkey: AUTHOR,
+        root_id: hex('11'),
+        created_at: 1_700_000_000,
+      },
+      [20, 22, 1],
+    );
+    expect(sql.text).toContain('insert into mentions');
+    // The guard is in SQL, so a buffed (hard-deleted) target files nothing.
+    expect(sql.text).toContain('where exists');
+    expect(sql.text).toContain('e.id = $4');
+    expect(sql.text).toContain('e.pubkey = $3');
+    expect(sql.text).toContain('e.kind = any($6::int[])');
+    expect(sql.params[5]).toEqual([20, 22, 1]);
+    expect(sql.text).toContain('on conflict (event_id, mentioned_pubkey) do nothing');
+  });
+
+  it('replays only the target author own amendments', () => {
+    const sql = selectPendingAmendments(hex('11'), AUTHOR);
+    expect(sql.text).toContain('from amendments');
+    expect(sql.text).toContain('where target_id = $1');
+    expect(sql.text).toContain('and author_pubkey = $2');
+    expect(sql.text).toContain('order by created_at asc, event_id asc');
+    expect(sql.params).toEqual([hex('11'), AUTHOR]);
   });
 });

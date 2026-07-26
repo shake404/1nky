@@ -568,6 +568,143 @@ export function buildComment(parent: EventRef, options: BuildCommentOptions): Ev
   return template(KINDS.COMMENT, tags, options.content, options);
 }
 
+// ---------------------------------------------------------------------------
+// Amendments — "Add to this". Kind 1113 (see KINDS.AMENDMENT).
+//
+// A signed event is immutable and every comment under a flick references that
+// flick's id, so there is no way to "edit" a post: buffing and reposting would
+// orphan the whole conversation. An amendment is the additive answer — a second
+// event, by the SAME author, that names the original and carries the tags that
+// were missing (walls, and writers who should have been named).
+//
+// ADD-ONLY, and deliberately so:
+//   * The merge a reader performs is then a set UNION, which is commutative and
+//     idempotent. That is what makes the read model converge no matter what
+//     order the events arrive in — and a relay hands back stored events newest
+//     first, so an amendment routinely arrives BEFORE the thing it amends.
+//   * Removal would need somewhere to hold the original's pre-amendment tag set
+//     to recompute against, i.e. a second source of truth for something the
+//     signed event already says.
+//   * A tag that has had consequences cannot honestly be taken back: a mention
+//     has already landed in somebody's shout-outs. Add-only says so out loud.
+//   * The escape hatch for a genuinely wrong wall is the one that already
+//     exists and is already destructive: buff it and put it up again.
+// ---------------------------------------------------------------------------
+
+export interface BuildAmendmentInput extends BuilderOptions {
+  /** City walls / board slugs to ADD. Normalised through `normalizeBoard`. */
+  boards?: readonly string[];
+  /**
+   * Writers to name, each emitted as a marked `['p', pubkey, '', 'mention']`
+   * tag (see {@link MENTION_MARKER}) — the same convention a comment's
+   * @-mentions use, so one reader (`isMentionTag`) recognises both.
+   */
+  mentions?: readonly string[];
+}
+
+/**
+ * Kind 1113 — add tags to your own earlier post.
+ *
+ * `e` + `k` point at the original exactly as a comment's do, so the amendment is
+ * self-contained: a reader knows which event and which kind it speaks for without
+ * a lookup. The original's author rides in the `e` tag's fourth element, which is
+ * what lets a reader check "same author" from the amendment alone.
+ *
+ * The author is never emitted as a mention: an amendment is signed by the
+ * original's author, so naming yourself would only file a shout-out from you to
+ * you. Throws when there is nothing to add — an amendment that adds no tag is a
+ * programming error, not an empty gesture.
+ */
+export function buildAmendment(
+  original: EventRef,
+  input: BuildAmendmentInput = {},
+): EventTemplate {
+  assertHex32(original.id, 'buildAmendment(original.id)');
+  assertHex32(original.pubkey, 'buildAmendment(original.pubkey)');
+  if (!Number.isInteger(original.kind) || original.kind < 0) {
+    throw new TypeError('buildAmendment: original.kind must be a non-negative integer');
+  }
+
+  const boards = boardTags(input.boards);
+
+  const mentions: Tag[] = [];
+  // Seeded with the author, so a self-mention is dropped rather than tagged.
+  const seen = new Set<string>([original.pubkey]);
+  for (const mention of input.mentions ?? []) {
+    const pubkey = assertHex32(mention, 'buildAmendment(mention)');
+    if (seen.has(pubkey)) continue;
+    seen.add(pubkey);
+    mentions.push(mentionTag(pubkey));
+  }
+
+  if (boards.length === 0 && mentions.length === 0) {
+    throw new TypeError('buildAmendment: nothing to add — pass boards and/or mentions');
+  }
+
+  const tags: Tag[] = [
+    ['e', original.id, original.relay ?? '', original.pubkey],
+    ['k', String(original.kind)],
+    ...boards,
+    ...mentions,
+  ];
+
+  return template(KINDS.AMENDMENT, tags, '', input);
+}
+
+/** What an amendment says it adds, and to what. */
+export interface ParsedAmendment {
+  /** The event being amended. */
+  targetId: string;
+  /** The target's kind from the `k` tag, or null when it says nothing readable. */
+  targetKind: number | null;
+  /** Normalised board slugs, deduped, in tag order. */
+  boards: string[];
+  /** Deliberately named writers, lowercase, deduped, in tag order. */
+  mentions: string[];
+}
+
+/**
+ * Read an amendment, or null when the event is not one.
+ *
+ * Defensive in the same style as `parseModBan` and `parseInvite`: every other
+ * kind and every malformed `e` tag falls through as null rather than throwing,
+ * because the indexer hands this whatever comes off the firehose. Authorship is
+ * NOT checked here — that comparison has consequences, so it lives where the
+ * consequences are (the indexer's SQL guard).
+ */
+export function parseAmendment(event: {
+  kind: number;
+  tags?: readonly (readonly string[])[];
+}): ParsedAmendment | null {
+  if (event.kind !== KINDS.AMENDMENT) return null;
+  const tags = event.tags ?? [];
+
+  const eTag = tags.find((tag) => tag[0] === 'e');
+  const targetId = (eTag?.[1] ?? '').toLowerCase();
+  if (!HEX64.test(targetId)) return null;
+
+  const kindRaw = (tags.find((tag) => tag[0] === 'k')?.[1] ?? '').trim();
+  const parsedKind = UNSIGNED_INT.test(kindRaw) ? Number.parseInt(kindRaw, 10) : NaN;
+  const targetKind = Number.isSafeInteger(parsedKind) ? parsedKind : null;
+
+  const boards: string[] = [];
+  const seenBoard = new Set<string>();
+  for (const tag of tags) {
+    if (tag[0] !== 't') continue;
+    const slug = normalizeBoard(tag[1] ?? '');
+    if (!slug || seenBoard.has(slug)) continue;
+    seenBoard.add(slug);
+    boards.push(slug);
+  }
+
+  return {
+    targetId,
+    targetKind,
+    boards,
+    mentions: mentionedPubkeys({ tags: tags as readonly string[][] }),
+  };
+}
+
 export interface BuildBuffOptions extends BuilderOptions {
   /** Kinds of the events being buffed — NIP-09 recommends including these. */
   kinds?: readonly number[];

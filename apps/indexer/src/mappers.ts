@@ -4,6 +4,7 @@ import {
   KINDS,
   mentionedPubkeys,
   normalizeBoard,
+  parseAmendment,
   parseInvite,
   parseInviteRedemption,
   parseModBan,
@@ -439,6 +440,89 @@ export function mentionRowsFromEvent(event: SignedEvent): MentionRow[] {
   return rows;
 }
 
+// ---------------------------------------------------------------------------
+// Amendments — kind 1113, "Add to this" (migration 010)
+// ---------------------------------------------------------------------------
+
+/**
+ * The kinds an amendment may add tags to: a flick, a clip, or a thread OP.
+ *
+ * Everything else is refused at merge time. Amending a comment or a profile
+ * would mean nothing — neither carries city walls — and a `k` tag claiming one
+ * must not become a way to file a mention against an arbitrary event id.
+ */
+export const AMENDABLE_KINDS: readonly number[] = Object.freeze([
+  KINDS.FLICK,
+  KINDS.VIDEO,
+  KINDS.NOTE,
+]);
+
+/** A row of `amendments`. Every column is read off the signed event. */
+export interface AmendmentRow {
+  /** The amendment event. */
+  event_id: string;
+  /** The post it adds to. */
+  target_id: string;
+  /** The amendment's signer, checked against the target's author at merge time. */
+  author_pubkey: string;
+  /** Board slugs to add, normalised and deduped. */
+  boards: string[];
+  /** Writers named, excluding the author. */
+  mentions: string[];
+  created_at: number;
+}
+
+/**
+ * Kind 1113 — what an author is adding to their own earlier post.
+ *
+ * Returns null when the event is not a readable amendment (no `e` tag, or a
+ * malformed one), and null when it adds nothing at all: an amendment with
+ * neither a board nor a mention has no effect on any read model, so storing it
+ * would only be a row nothing ever looks at.
+ *
+ * Authorisation is deliberately NOT checked here — this file is pure mapping.
+ * Whether the signer is the target's author is a SQL guard (`applyAmendment*`
+ * in `queries.ts`), because that is where it has consequences. The author is
+ * excluded from `mentions` for the same reason `mentionRowsFromEvent` excludes a
+ * self-mention: an inbox that tells you that you said your own name is noise.
+ */
+export function amendmentRowFromEvent(event: SignedEvent): AmendmentRow | null {
+  const parsed = parseAmendment(event);
+  if (parsed === null) return null;
+
+  const author = event.pubkey.toLowerCase();
+  const mentions = parsed.mentions.filter((pubkey) => pubkey !== author);
+  if (parsed.boards.length === 0 && mentions.length === 0) return null;
+
+  return {
+    event_id: event.id,
+    target_id: parsed.targetId,
+    author_pubkey: author,
+    boards: parsed.boards,
+    mentions,
+    created_at: event.created_at,
+  };
+}
+
+/**
+ * The `mentions` rows an amendment files — the same shape a comment's produce,
+ * so the shout-outs inbox needs no second read path.
+ *
+ * `root_id` is the amended post: that is where the reader has to be sent, and it
+ * is what `mentionRowsFromEvent` would have produced from the amendment's `e`
+ * tag anyway. Shared by the live path and the pending replay, which is what
+ * keeps the two from drifting.
+ */
+export function amendmentMentionRows(row: AmendmentRow): MentionRow[] {
+  return row.mentions.map((mentioned) => ({
+    event_id: row.event_id,
+    mentioned_pubkey: mentioned,
+    author_pubkey: row.author_pubkey,
+    root_id: row.target_id,
+    created_at: row.created_at,
+  }));
+}
+
 export interface ReportRow {
   event_id: string;
   reporter: string;
@@ -810,6 +894,7 @@ export function routeOf(
   | 'flick'
   | 'video'
   | 'comment'
+  | 'amendment'
   | 'report'
   | 'deletion'
   | 'registry'
@@ -825,6 +910,8 @@ export function routeOf(
       return 'video';
     case KINDS.COMMENT:
       return 'comment';
+    case KINDS.AMENDMENT:
+      return 'amendment';
     case KINDS.REPORT:
       return 'report';
     case KINDS.DELETE:

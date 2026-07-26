@@ -2,6 +2,10 @@ import { KINDS, type SignedEvent } from '@1nky/protocol';
 
 import type { Queryable, Sql } from './types.js';
 import {
+  AMENDABLE_KINDS,
+  amendmentMentionRows,
+  amendmentRowFromEvent,
+  boardKindOf,
   boardRowsFromFlick,
   boardRowsFromRegistry,
   crewBadgeRowsFromRegistry,
@@ -21,6 +25,7 @@ import {
   toReportRow,
   toThreadRow,
   toVideoRow,
+  type AmendmentRow,
 } from './mappers.js';
 import * as q from './queries.js';
 
@@ -35,6 +40,12 @@ export interface Counters {
   comments: number;
   /** Deliberate @-mentions filed for a "somebody said your name" inbox. */
   mentions: number;
+  /**
+   * Amendments ingested ("Add to this"). Counted when the event is stored, not
+   * when it merges: one that arrives before its target is a perfectly good
+   * amendment that has simply not landed yet.
+   */
+  amendments: number;
   reports: number;
   deletions: number;
   boards: number;
@@ -73,6 +84,7 @@ export function newCounters(): Counters {
     threads: 0,
     comments: 0,
     mentions: 0,
+    amendments: 0,
     reports: 0,
     deletions: 0,
     boards: 0,
@@ -96,6 +108,95 @@ export function newCounters(): Counters {
 async function run(db: Queryable, sql: Sql): Promise<number> {
   const result = await db.query(sql.text, sql.params);
   return result.rowCount ?? 0;
+}
+
+/**
+ * Merge one amendment into the read model. Returns true when it landed.
+ *
+ * Shared by both directions, which is the point: an amendment that arrives after
+ * its target is merged straight away, and one that arrived first is replayed
+ * through this same function when the target turns up
+ * ({@link applyPendingAmendments}). One implementation, so the two can never
+ * disagree about what an amendment does.
+ *
+ * Every rule is a SQL guard rather than a check here — see
+ * `applyAmendmentBoards` (the `pubkey = author` predicate) and
+ * `insertAmendmentMention` (the `where exists` on the target). Nothing is
+ * logged: refusing an amendment quietly is the only option that does not mean
+ * writing a pubkey to stderr.
+ */
+async function applyAmendment(
+  db: Queryable,
+  row: AmendmentRow,
+  counters: Counters,
+): Promise<boolean> {
+  let matched = 0;
+
+  if (row.boards.length > 0) {
+    // All three amendable tables, rather than picking one from the `k` tag: the
+    // tag is the amender's claim, and a wrong one would silently drop the merge.
+    // Each statement's `where` already refuses to touch a row that is not this
+    // author's post, so the two that miss are no-ops.
+    for (const table of q.AMENDABLE_TABLES) {
+      matched += await run(db, q.applyAmendmentBoards(table, row));
+    }
+    // Boards are registered ONLY once the merge really applied. Otherwise
+    // anybody could conjure board rows by amending event ids that are not
+    // theirs — a flick's `t` tags may discover a board, a stranger's amendment
+    // may not.
+    if (matched > 0) {
+      for (const slug of row.boards) {
+        await run(
+          db,
+          q.upsertBoard(
+            {
+              slug,
+              title: slug,
+              kind: boardKindOf(slug),
+              created_by: null,
+              created_at: row.created_at,
+            },
+            'discovered',
+          ),
+        );
+      }
+    }
+  }
+
+  for (const mention of amendmentMentionRows(row)) {
+    counters.mentions += await run(db, q.insertAmendmentMention(mention, AMENDABLE_KINDS));
+  }
+
+  return matched > 0;
+}
+
+/**
+ * Replay the amendments that arrived before the post they amend.
+ *
+ * Called right after a flick, clip or thread OP is stored. The relay hands back
+ * stored events newest first, so on a rebuild this is the NORMAL case, not the
+ * exotic one. `selectPendingAmendments` filters on the target's own pubkey, so a
+ * stranger's amendment sitting in the table is never replayed.
+ */
+async function applyPendingAmendments(
+  db: Queryable,
+  event: SignedEvent,
+  counters: Counters,
+): Promise<void> {
+  const sql = q.selectPendingAmendments(event.id, event.pubkey.toLowerCase());
+  const { rows } = await db.query<AmendmentRow>(sql.text, sql.params);
+  for (const row of rows) {
+    await applyAmendment(
+      db,
+      {
+        ...row,
+        boards: row.boards ?? [],
+        mentions: row.mentions ?? [],
+        created_at: Number(row.created_at),
+      },
+      counters,
+    );
+  }
 }
 
 export interface IndexOptions {
@@ -209,6 +310,7 @@ export async function indexEvent(
       for (const board of boardRowsFromFlick(event)) {
         await run(db, q.upsertBoard(board, 'discovered'));
       }
+      await applyPendingAmendments(db, event, counters);
       return;
     }
 
@@ -223,6 +325,7 @@ export async function indexEvent(
       for (const board of boardRowsFromFlick(event)) {
         await run(db, q.upsertBoard(board, 'discovered'));
       }
+      await applyPendingAmendments(db, event, counters);
       return;
     }
 
@@ -237,6 +340,7 @@ export async function indexEvent(
       for (const board of boardRowsFromFlick(event)) {
         await run(db, q.upsertBoard(board, 'discovered'));
       }
+      await applyPendingAmendments(db, event, counters);
       return;
     }
 
@@ -256,6 +360,23 @@ export async function indexEvent(
       for (const mention of mentionRowsFromEvent(event)) {
         counters.mentions += await run(db, q.insertMention(mention));
       }
+      return;
+    }
+
+    case 'amendment': {
+      // "Add to this" — tags the author is adding to their own earlier post
+      // (kind 1113, migration 010). The original is never touched: this merges
+      // into the derived read model and nothing else.
+      const amendment = amendmentRowFromEvent(event);
+      if (!amendment) {
+        counters.invalid += 1;
+        return;
+      }
+      // Recorded first, and unconditionally, so an amendment that arrived before
+      // its target is not lost — indexing the target replays it.
+      await run(db, q.insertAmendment(amendment));
+      counters.amendments += 1;
+      await applyAmendment(db, amendment, counters);
       return;
     }
 

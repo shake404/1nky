@@ -37,7 +37,14 @@
  *   in the clear, and storing it would publish it.
  *
  * CONFIG (env, inherited from the strfry container)
- *   ALLOWED_KINDS       csv of integer kinds. default 0,1,5,20,22,1059,1111,1984,10000,30078
+ *   ALLOWED_KINDS       csv of integer kinds. default 0,1,5,20,22,1059,1111,1113,1984,10000,30078
+ *                       (1113 = an amendment, "Add to this": tags an author adds
+ *                       to their own earlier post. Regular-range on purpose, so
+ *                       the relay keeps every one of them — see KINDS.AMENDMENT.
+ *                       No tier of its own: it falls to POW_BITS_POST, the same
+ *                       price as the comment (1111) it sits beside, because it
+ *                       adds content — a mention on one lands in somebody's
+ *                       shout-outs, so it must not be reaction-cheap.)
  *   MAX_EVENT_BYTES     default 65536
  *   POW_ENABLED         "0" disables the PoW gate entirely (local dev). default on
  *   POW_BITS_NEW        default 18  — first event seen from a pubkey, and POW_NEW_KINDS
@@ -71,7 +78,7 @@ const kindSet = (name, fallback) => {
   return out;
 };
 
-const ALLOWED_KINDS = kindSet('ALLOWED_KINDS', '0,1,5,20,22,1059,1111,1984,10000,30078');
+const ALLOWED_KINDS = kindSet('ALLOWED_KINDS', '0,1,5,20,22,1059,1111,1113,1984,10000,30078');
 const NEW_KINDS = kindSet('POW_NEW_KINDS', '0');
 const REACTION_KINDS = kindSet('POW_REACTION_KINDS', '1059,1984,10000');
 

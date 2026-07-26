@@ -205,7 +205,7 @@ documented at the root, these are the ones:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ALLOWED_KINDS` | `0,1,5,20,1111,1984,10000,30078` | Write-policy kind allowlist |
+| `ALLOWED_KINDS` | `0,1,5,20,22,1059,1111,1113,1984,10000,30078` | Write-policy kind allowlist. Mirrors `RELAY_ACCEPTED_KINDS` in `@1nky/protocol`; `relay-policy.test.ts` fails if the two drift. **Changing it needs a relay restart** — the plugin reads it once at spawn |
 | `MAX_EVENT_BYTES` | `65536` | Write-policy event size cap; mirrors `events.maxEventSize` |
 | `POW_ENABLED` | `1` | `0` disables the PoW gate. **Local dev only.** |
 | `POW_NEW_KINDS` | `0` | Kinds always charged the `POW_BITS_NEW` tier |
