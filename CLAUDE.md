@@ -1,11 +1,11 @@
 # 1NKY — build rules (read before touching anything)
 
 Anonymous, registration-free platform for graffiti writers at 1nky.com.
-Full spec: `docs/1nky-research-handoff.md` (9 parts). Architecture: Nostr data
-model (signed events, secp256k1 via `nostr-tools`), self-hosted strfry relay as
-source of truth, Postgres indexer as rebuildable cache, custom React PWA that
-hides ALL Nostr jargon, Blossom-compatible media service on S3-compatible
-storage (R2 primary).
+Full spec lives OUTSIDE the repo in `.internal/` (gitignored — not for the
+public repo). Architecture: Nostr data model (signed events, secp256k1 via
+`nostr-tools`), self-hosted strfry relay as source of truth, Postgres indexer
+as rebuildable cache, custom React PWA that hides ALL Nostr jargon,
+Blossom-compatible media service on S3-compatible storage (R2 primary).
 
 ## Hard rules (violations are bugs, no exceptions)
 

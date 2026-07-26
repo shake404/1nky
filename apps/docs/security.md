@@ -14,26 +14,37 @@ about most, what we'll do, and what you get.
 **Machine-readable:** [`/.well-known/security.txt`](/.well-known/security.txt)
 (RFC 9116).
 
-**Human:** 📋 there is still no published disclosure address, and no private issue
-tracker you can reach — the repository is not public yet
-([roadmap](/roadmap#not-yet)). We're not going to paper over that.
+Pick whichever channel fits how sensitive the finding is. In rough order of how
+much we'd prefer it for a real vulnerability:
 
-**So, the interim channel, stated plainly:** post to **Holler** inside the app saying
-you've found something and how to reach you securely — *no details, no
-proof-of-concept, nothing that describes the bug.* We'll come back to you and
-establish a channel, and then you send the specifics. It's clumsy, and it's better
-than pretending an address exists.
+- **Email, encrypted:** **security@bodegga.net**, encrypted to our PGP key (below).
+  This is the right channel for anything in the high-severity classes.
+- **Email, plain:** the same address without encryption, if the finding isn't
+  sensitive in transit. Say "encrypted reply please" and we'll take it back to PGP.
+- **GitHub private vulnerability reporting:** once the repository is public, use
+  GitHub's "Report a vulnerability" (Security Advisories) — a private thread with
+  us, no public trace until we publish together.
+- **Through 1NKY itself:** send an encrypted message to the site's tag,
+  `npub1sgcjdqktpxfqnzr7zfz2d7ngn6dl8cf934eukk2fpz3hu0wdq8xqfsgsgq` — end-to-end
+  encrypted the same way every message here is, no email required.
+- **In-app [Holler](/feedback):** for a first contentless ping if you have no other
+  way to reach us — say *that* you found something and how to reach you securely,
+  never *what*.
 
-If your finding is in the highest-severity classes below and you judge that even
+If a finding is in the highest-severity classes below and you judge that even
 saying "I found something" is too much, the entity's postal address is on the
 [transparency page](/privacy/transparency#contact).
 
-**PGP key:** 📋 TODO. We don't have a published key yet, and we're not going to
-pretend otherwise or point you at a key nobody controls. When one exists it'll be
-linked from `security.txt` with the fingerprint published here. Until then, if your
-report is sensitive enough that transport matters to you, send a minimal
-"I have something, here's a way to reach me securely" message first and we'll
-establish a channel before you send details.
+**PGP key:** [`security-at-bodegga.asc`](/security-at-bodegga.asc), also linked from
+`security.txt`.
+
+```text
+Fingerprint: 7D05 BE13 18FF 2FC4 B4D6  95FB 145E 71F5 AED5 ABFB
+```
+
+Verify the fingerprint against this page before you trust the key — this docs site
+is itself verifiable ([check the paint](/privacy/verify)), so a swapped key would
+have to survive that too.
 
 **Do not** post the details anywhere public — not Holler, not an issue, not a tweeted
 proof-of-concept. A published deanonymization vector is an active danger to real

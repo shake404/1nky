@@ -4,13 +4,8 @@
 Everywhere else on this site we describe the system in plain language, because
 users shouldn't have to learn a protocol to post a photo. Here we drop that. If
 you're auditing the privacy claims, building against us, or just want to know
-what's actually running, this is the honest version.
-
-The full design document is in the repository:
-[`docs/1nky-research-handoff.md`](https://github.com/bodegga/1nky/blob/main/docs/1nky-research-handoff.md)
-(📋 public with launch — the repo is still private, see
-[roadmap](/roadmap#not-yet)). It's nine parts and includes the cost model, the phased
-build plan and the open risks.
+what's actually running, this is the honest version — and you can check it against
+the source and against what the site actually serves ([check the paint](/privacy/verify)).
 :::
 
 ## The one-paragraph version

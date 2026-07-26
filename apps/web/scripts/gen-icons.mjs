@@ -32,7 +32,11 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const OUT = join(SCRIPT_DIR, '..', 'public');
 const REPO_ROOT = join(SCRIPT_DIR, '..', '..', '..');
-const FONT_PATH = join(REPO_ROOT, 'Bodega-extracted', 'Fonts', 'Bodega-Plain.otf');
+// Font SOURCE lives in gitignored .internal/ (licensed font — not redistributed
+// in the public repo; the woff2 the app actually ships is in public/fonts/).
+// Icons are pre-generated and committed, so a public checkout never needs this
+// unless it is regenerating the icon set.
+const FONT_PATH = join(REPO_ROOT, '.internal', 'Bodega-extracted', 'Fonts', 'Bodega-Plain.otf');
 
 // --- Palette — matches apps/web/src/styles/global.css tokens exactly ------
 const SOOT = [0x0c, 0x0a, 0x11]; // --soot

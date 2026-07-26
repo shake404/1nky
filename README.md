@@ -4,8 +4,9 @@
 Post flicks. Talk beef. Rep your city. No accounts, no emails, no logs —
 your identity is a cryptographic tag only you hold.
 
-- Spec: [docs/1nky-research-handoff.md](docs/1nky-research-handoff.md)
-- Public transparency docs: `apps/docs` (published at docs.1nky.com)
+- Transparency, privacy posture & responsible disclosure: **docs.1nky.com**
+  (source in `apps/docs`)
+- Verify what the live site serves: [docs.1nky.com/privacy/verify](https://docs.1nky.com/privacy/verify)
 - Build rules: [CLAUDE.md](CLAUDE.md)
 
 ## Architecture (short version)

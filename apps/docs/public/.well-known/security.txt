@@ -1,14 +1,22 @@
-# 1NKY security contact — RFC 9116
-# Report vulnerabilities in key custody, EXIF stripping, or anything that
-# deanonymizes a writer. Do not disclose those publicly before we fix them.
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
 
+# 1NKY / Bodegga LLC — security contact (RFC 9116)
+# This file is PGP-clearsigned with the key below; verify the signature.
+Contact: mailto:security@bodegga.net
 Contact: https://docs.1nky.com/security
-Policy: https://docs.1nky.com/security
+Encryption: https://docs.1nky.com/security-at-bodegga.asc
 Preferred-Languages: en
 Canonical: https://docs.1nky.com/.well-known/security.txt
-Expires: 2027-07-24T00:00:00.000Z
+Policy: https://docs.1nky.com/security
+Expires: 2027-07-20T00:00:00.000Z
+# PGP fingerprint: 7D05 BE13 18FF 2FC4 B4D6  95FB 145E 71F5 AED5 ABFB
+# Report deanonymization, key-custody, and EXIF/media-pipeline bugs first.
 
-# Acknowledgments: TODO — the "props" page ships with the public repo.
-# Encryption: TODO — no PGP key is published yet. We are not going to point at a
-# key nobody controls. See https://docs.1nky.com/security#contact for the interim
-# channel.
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQR9Bb4TGP8vxLTWlfsUXnH1rtWr+wUCamaDZQAKCRAUXnH1rtWr
++ykDAQDy3CVfGL/E4mk+aeKDrTJ/yfNBU5ExFGGXOKtFY2PwlQD/bXxGH71eQPIL
+lRqbOp1R3ha68hxeCP5iaJ1ROfJt9Q4=
+=n6eH
+-----END PGP SIGNATURE-----
