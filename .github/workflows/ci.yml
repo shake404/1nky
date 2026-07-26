@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # This repo's default branch is master — [main] here meant push CI never
+    # actually ran. Kept pull_request as-is.
+    branches: [master]
   pull_request:
 
 jobs:

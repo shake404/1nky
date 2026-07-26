@@ -1,0 +1,113 @@
+# =============================================================================
+# 1NKY — verifiable release build
+# =============================================================================
+#
+# Push a tag like v2026.07.26 and this workflow:
+#   1. builds the PWA from that exact commit on GitHub's public runners
+#      (nothing from any developer machine touches the artifact),
+#   2. writes dist-manifest.json — sha256 of every shipped file,
+#   3. attaches SLSA build provenance to both the tarball and the manifest
+#      (a cryptographically signed statement of "these bytes, this commit,
+#      this workflow" — verifiable with `gh attestation verify`),
+#   4. publishes tarball + manifest as release assets.
+#
+# The deploy step then ships THIS artifact, not a local build, and the docs'
+# "Check the paint yourself" page tells writers how to compare what 1nky.com
+# actually serves against this manifest. See apps/docs/privacy/verify.md.
+#
+# The VITE_* values below are BAKED INTO THE BUNDLE and are deliberately
+# plain-text here: they are public endpoints and public PoW tiers, not
+# secrets, and pinning them in the workflow is what makes the build
+# reproducible by anyone. Nothing secret may ever appear in this file.
+# =============================================================================
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write      # create the release + upload assets
+  id-token: write      # sign the provenance attestation
+  attestations: write  # store the attestation
+
+env:
+  VITE_RELAY_WS_URL: wss://api.1nky.com/relay
+  VITE_API_BASE: https://api.1nky.com/api
+  VITE_MEDIA_BASE: https://api.1nky.com/media
+  VITE_POW_BITS_NEW: "18"
+  VITE_POW_BITS_POST: "13"
+  VITE_POW_BITS_REACTION: "8"
+  VITE_MAX_UPLOAD_MB: "5"
+
+jobs:
+  build-attest-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The trailing `...` builds @1nky/protocol first — apps/web imports its
+      # compiled dist and a bare web build fails on a clean checkout.
+      - run: pnpm --filter "@1nky/web..." build
+
+      # sha256 of every file the site ships. vercel.json is excluded: it is
+      # deploy plumbing copied in at deploy time, not part of what a browser
+      # ever receives.
+      - name: Write dist manifest
+        run: |
+          node - <<'EOF'
+          const { createHash } = require('node:crypto');
+          const { readFileSync, writeFileSync, readdirSync, statSync } = require('node:fs');
+          const { join, relative } = require('node:path');
+          const root = 'apps/web/dist';
+          const files = {};
+          const walk = (dir) => {
+            for (const name of readdirSync(dir).sort()) {
+              const p = join(dir, name);
+              if (statSync(p).isDirectory()) { walk(p); continue; }
+              const rel = relative(root, p).replaceAll('\\', '/');
+              if (rel === 'vercel.json') continue;
+              files[rel] = createHash('sha256').update(readFileSync(p)).digest('hex');
+            }
+          };
+          walk(root);
+          const manifest = {
+            commit: process.env.GITHUB_SHA,
+            tag: process.env.GITHUB_REF_NAME,
+            generated: new Date().toISOString(),
+            files,
+          };
+          writeFileSync('dist-manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          console.log(Object.keys(files).length, 'files hashed');
+          EOF
+
+      - name: Pack dist
+        run: tar -C apps/web/dist -czf 1nky-web-${{ github.ref_name }}.tar.gz .
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            1nky-web-${{ github.ref_name }}.tar.gz
+            dist-manifest.json
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            1nky-web-${{ github.ref_name }}.tar.gz
+            dist-manifest.json
+          fail_on_unmatched_files: true
+          generate_release_notes: true
