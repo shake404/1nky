@@ -10,6 +10,7 @@ import { feedRoutes } from './routes/feed.js';
 import { flickRoutes } from './routes/flick.js';
 import { happeningRoutes } from './routes/happenings.js';
 import { healthRoutes } from './routes/health.js';
+import { mentionRoutes } from './routes/mentions.js';
 import { modRoutes } from './routes/mod.js';
 import { searchRoutes } from './routes/search.js';
 import { threadRoutes } from './routes/thread.js';
@@ -52,6 +53,7 @@ export function createApp(db: Queryable, config: ApiConfig): Express {
   app.use(happeningRoutes(deps));
   app.use(threadRoutes(deps));
   app.use(writerRoutes(deps));
+  app.use(mentionRoutes(deps));
   app.use(crewRoutes(deps));
   app.use(searchRoutes(deps));
   app.use(modRoutes(deps));

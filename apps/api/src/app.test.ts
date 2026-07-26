@@ -11,6 +11,7 @@ import {
   flickRow,
   happeningRow,
   hex,
+  mentionRow,
   request,
   type Responder,
   TEST_CONFIG,
@@ -642,6 +643,116 @@ describe('GET /writer/:pubkey', () => {
       `/writer/${AUTHOR}`,
     );
     expect((res.body as { writer: { putOn: boolean } }).writer.putOn).toBe(false);
+  });
+});
+
+describe('GET /mentions/:pubkey', () => {
+  const NAMED = hex('7a');
+  const mentionsDb = (rows: unknown[] = [mentionRow()]) =>
+    fakeDb((text) => (text.includes('from mentions m') ? { rows } : undefined));
+
+  it('returns who named you, what they said and where', async () => {
+    const res = await request(createApp(mentionsDb(), TEST_CONFIG), `/mentions/${NAMED}`);
+    expect(res.status).toBe(200);
+    const body = res.body as {
+      mentions: {
+        id: string;
+        createdAt: number;
+        content: string;
+        writer: { pubkey: string; tag: string; mark: string };
+        where: { id: string; type: string; subject: string | null; excerpt: string };
+      }[];
+      nextCursor: string | null;
+    };
+    expect(body.mentions).toHaveLength(1);
+    expect(body.mentions[0]).toMatchObject({
+      id: hex('33'),
+      createdAt: 1_700_000_100,
+      content: 'ask @KILO, he was there',
+      where: { id: hex('11'), type: 'flick', subject: null, excerpt: 'rooftop' },
+    });
+    expect(body.mentions[0]?.writer.tag).toBe('SMOG');
+    expect(body.mentions[0]?.writer.mark).toHaveLength(6);
+    expect(body.nextCursor).toBeNull();
+  });
+
+  it('carries a thread mention to its thread page', async () => {
+    const rows = [
+      mentionRow({ root_type: 'thread', root_subject: 'Who buffed it', root_excerpt: 'gone' }),
+    ];
+    const res = await request(createApp(mentionsDb(rows), TEST_CONFIG), `/mentions/${NAMED}`);
+    const body = res.body as { mentions: { where: { type: string; subject: string } }[] };
+    expect(body.mentions[0]?.where).toMatchObject({ type: 'thread', subject: 'Who buffed it' });
+  });
+
+  it('is an empty list rather than a 404 when nobody has named you', async () => {
+    const res = await request(app(), `/mentions/${NAMED}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ mentions: [], nextCursor: null });
+  });
+
+  it('reads the inbox by the writer it belongs to', async () => {
+    const db = mentionsDb();
+    await request(createApp(db, TEST_CONFIG), `/mentions/${NAMED}`);
+    const call = db.matching('from mentions m')[0];
+    expect(call?.params[0]).toBe(NAMED);
+    // The whole selection rule is the table: only marked mentions are in it,
+    // so a reply-target p tag can never turn up here.
+    expect(call?.text).toContain('m.mentioned_pubkey = $1');
+  });
+
+  it('hides a mention whose comment was buffed, expired, or came from a ban', async () => {
+    const db = mentionsDb();
+    await request(createApp(db, TEST_CONFIG), `/mentions/${NAMED}`);
+    const text = db.matching('from mentions m')[0]?.text ?? '';
+    expect(text).toContain('from banned_pubkeys');
+    expect(text).toContain('from deletions d');
+    expect(text).toContain('e.expires_at');
+    // And one whose thread has gone: there would be nowhere to send the reader.
+    expect(text).toContain('re.expires_at');
+  });
+
+  it('pages newest first on the keyset', async () => {
+    const rows = [
+      mentionRow({ event_id: hex('33'), created_at: '1700000200' }),
+      mentionRow({ event_id: hex('44'), created_at: '1700000100' }),
+    ];
+    const res = await request(
+      createApp(mentionsDb(rows), TEST_CONFIG),
+      `/mentions/${NAMED}?limit=2`,
+    );
+    const cursor = (res.body as { nextCursor: string | null }).nextCursor;
+    expect(decodeCursor(cursor as string)).toEqual({
+      createdAt: 1_700_000_100,
+      eventId: hex('44'),
+    });
+  });
+
+  it('passes a cursor through as the keyset bound', async () => {
+    const db = mentionsDb();
+    const cursor = encodeCursor({ createdAt: 1_700_000_100, eventId: hex('33') });
+    await request(createApp(db, TEST_CONFIG), `/mentions/${NAMED}?cursor=${cursor}`);
+    const params = db.matching('from mentions m')[0]?.params;
+    expect(params?.[1]).toBe(1_700_000_100);
+    expect(params?.[2]).toBe(hex('33'));
+  });
+
+  it('400s for a malformed writer id or cursor', async () => {
+    expect((await request(app(), '/mentions/nope')).status).toBe(400);
+    expect((await request(app(), `/mentions/${NAMED}?cursor=nope`)).status).toBe(400);
+  });
+
+  it('keeps no read state — the response says nothing about seen', async () => {
+    const res = await request(createApp(mentionsDb(), TEST_CONFIG), `/mentions/${NAMED}`);
+    const json = JSON.stringify(res.body);
+    expect(json).not.toContain('seen');
+    expect(json).not.toContain('read');
+    expect(json).not.toContain('unread');
+  });
+
+  it('refuses writes (read-only)', async () => {
+    expect((await request(app(), `/mentions/${NAMED}`, { method: 'POST' })).status).toBe(405);
+    expect((await request(app(), `/mentions/${NAMED}`, { method: 'DELETE' })).status).toBe(405);
   });
 });
 

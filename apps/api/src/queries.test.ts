@@ -19,6 +19,7 @@ import {
   inviteNodeQuery,
   inviteRootsQuery,
   inviteSubtreeEdgesQuery,
+  mentionsQuery,
   modQueueQuery,
   profileQuery,
   searchBoardTerms,
@@ -54,6 +55,8 @@ const ALL = [
   threadQuery(hex('55')),
   happeningsQuery({ limit: 24 }),
   happeningsQuery({ city: 'oakland', limit: 24, cursor: { createdAt: 1_800_000_000, eventId: hex('66') } }),
+  mentionsQuery({ pubkey: hex('7a'), limit: 24 }),
+  mentionsQuery({ pubkey: hex('7a'), limit: 24, cursor: { createdAt: 100, eventId: hex('33') } }),
   searchVideosQuery('burner', 24),
   searchThreadsQuery('burner', 24),
   inviteRootsQuery(),
@@ -78,6 +81,7 @@ const PUBLIC_EVENT_READS = [
   ['board threads', boardThreadsQuery({ slug: 'sf', limit: 24 })],
   ['thread detail', threadQuery(hex('55'))],
   ['happenings', happeningsQuery({ limit: 24 })],
+  ['mentions', mentionsQuery({ pubkey: hex('7a'), limit: 24 })],
   ['search flicks', searchQuery('burner', 24)],
   ['search videos', searchVideosQuery('burner', 24)],
   ['search threads', searchThreadsQuery('burner', 24)],
@@ -351,6 +355,63 @@ describe('threadQuery', () => {
 // ---------------------------------------------------------------------------
 // Happenings — a thread with a date on it
 // ---------------------------------------------------------------------------
+
+describe('mentionsQuery', () => {
+  const NAMED = hex('7a');
+
+  it('reads the mentions table, which only holds deliberate ones', () => {
+    const sql = mentionsQuery({ pubkey: NAMED, limit: 24 });
+    expect(sql.text).toContain('from mentions m');
+    expect(sql.text).toContain('m.mentioned_pubkey = $1');
+    expect(sql.params[0]).toBe(NAMED);
+    // The marker rule lives in the indexer, so this read never inspects tags.
+    expect(sql.text).not.toContain('tags');
+  });
+
+  it('paginates newest first by keyset, like every other paged read', () => {
+    const sql = mentionsQuery({
+      pubkey: NAMED,
+      limit: 24,
+      cursor: { createdAt: 1_700_000_100, eventId: hex('33') },
+    });
+    expect(sql.text).toContain('order by m.created_at desc, m.event_id desc');
+    expect(sql.text).toContain('(m.created_at, m.event_id) < ($2::bigint, $3::text)');
+    expect(sql.text).not.toContain('offset');
+    expect(sql.params).toEqual([NAMED, 1_700_000_100, hex('33'), 24]);
+  });
+
+  it('carries where it happened, so the row is a door and not an id', () => {
+    const text = mentionsQuery({ pubkey: NAMED, limit: 24 }).text;
+    expect(text).toContain('as root_type');
+    expect(text).toContain('t.subject as root_subject');
+    expect(text).toContain('as root_excerpt');
+  });
+
+  it('requires the thread to still be there, not just the comment', () => {
+    const text = mentionsQuery({ pubkey: NAMED, limit: 24 }).text;
+    // An inner join: a mention whose thread expired has nowhere to link to.
+    expect(text).toContain('join events re on re.id = m.root_id');
+    expect(text).toContain('re.expires_at is null or re.expires_at > extract(epoch from now())');
+  });
+
+  it('hides a banned writer and a buffed comment', () => {
+    const text = mentionsQuery({ pubkey: NAMED, limit: 24 }).text;
+    expect(text).toContain('b.pubkey = c.pubkey');
+    expect(text).toContain('c.event_id = any(d.targets)');
+  });
+
+  it('cuts the excerpt in Postgres so a 64KB comment never crosses the wire', () => {
+    expect(mentionsQuery({ pubkey: NAMED, limit: 24 }).text).toContain(
+      'left(c.content, 240) as content',
+    );
+  });
+
+  it('stores and reads no seen state — that lives on the device', () => {
+    const text = mentionsQuery({ pubkey: NAMED, limit: 24 }).text.toLowerCase();
+    expect(text).not.toContain('seen');
+    expect(text).not.toContain('read_at');
+  });
+});
 
 describe('happeningsQuery', () => {
   it('selects only dated threads, on the same predicate as the partial index', () => {

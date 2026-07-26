@@ -542,3 +542,61 @@ export function countComments(comments: readonly CommentJson[]): number {
   for (const comment of comments) total += 1 + countComments(comment.replies);
   return total;
 }
+
+// ---------------------------------------------------------------------------
+// Mentions — "somebody said your name"
+// ---------------------------------------------------------------------------
+
+export interface MentionSource extends WriterSource {
+  /** The comment that named the reader. */
+  event_id: string;
+  created_at: number | string;
+  content: string | null;
+  /** The flick, clip or thread the conversation hangs off. */
+  root_id: string;
+  root_type: string | null;
+  root_subject: string | null;
+  root_excerpt: string | null;
+}
+
+export interface MentionJson {
+  /** The comment that named you. */
+  id: string;
+  createdAt: number;
+  /** What they said. Already truncated by the query. */
+  content: string;
+  /** Who said it. */
+  writer: WriterJson;
+  /** Where it was said, and enough to name the place on a list row. */
+  where: {
+    id: string;
+    /** `flick`, `video`, `thread`, or `post` when it fits none of those. */
+    type: string;
+    /** A thread's title, when it has one. */
+    subject: string | null;
+    /** A caption or first line, so a row reads as somewhere rather than an id. */
+    excerpt: string;
+  };
+}
+
+/**
+ * One row of a writer's mentions.
+ *
+ * `where` is the whole reason the indexer keeps a root reference: a mention is
+ * only useful if the reader can get to the conversation it happened in, and the
+ * type is what decides whether that link is a picture or a thread.
+ */
+export function shapeMention(row: MentionSource): MentionJson {
+  return {
+    id: row.event_id,
+    createdAt: num(row.created_at),
+    content: row.content ?? '',
+    writer: shapeWriter(row),
+    where: {
+      id: row.root_id,
+      type: row.root_type ?? 'post',
+      subject: row.root_subject ?? null,
+      excerpt: row.root_excerpt ?? '',
+    },
+  };
+}

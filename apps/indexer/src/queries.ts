@@ -9,6 +9,7 @@ import type {
   FlickRow,
   InviteRedemption,
   InviteRow,
+  MentionRow,
   ProfileRow,
   ReportRow,
   ThreadRow,
@@ -162,6 +163,20 @@ export function upsertComment(row: CommentRow): Sql {
              root_id   = excluded.root_id,
              content   = excluded.content`,
     params: [row.event_id, row.parent_id, row.root_id, row.pubkey, row.created_at, row.content],
+  };
+}
+
+/**
+ * One deliberate @-mention (migration 009). `do nothing` on conflict: a kind
+ * 1111 is not replaceable, so the same comment always names the same writers,
+ * and a re-delivery has nothing to say.
+ */
+export function insertMention(row: MentionRow): Sql {
+  return {
+    text: `insert into mentions (event_id, mentioned_pubkey, author_pubkey, root_id, created_at)
+           values ($1, $2, $3, $4, $5)
+           on conflict (event_id, mentioned_pubkey) do nothing`,
+    params: [row.event_id, row.mentioned_pubkey, row.author_pubkey, row.root_id, row.created_at],
   };
 }
 
@@ -588,6 +603,7 @@ export const DERIVED_TABLES = [
   'threads',
   'profiles',
   'comments',
+  'mentions',
   'reports',
   'deletions',
   'boards',

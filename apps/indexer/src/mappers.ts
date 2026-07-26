@@ -2,6 +2,7 @@ import {
   HAPPENING_BOARD,
   isSubtreeBan,
   KINDS,
+  mentionedPubkeys,
   normalizeBoard,
   parseInvite,
   parseInviteRedemption,
@@ -390,6 +391,52 @@ export function toCommentRow(event: SignedEvent): CommentRow | null {
     created_at: event.created_at,
     content: event.content ?? '',
   };
+}
+
+export interface MentionRow {
+  /** The comment that named somebody. */
+  event_id: string;
+  /** Who was named — the inbox key. */
+  mentioned_pubkey: string;
+  /** Who named them. */
+  author_pubkey: string;
+  /** The flick or thread the comment hangs off, for the deep link. */
+  root_id: string | null;
+  created_at: number;
+}
+
+/**
+ * The deliberate @-mentions in a comment (migration 009).
+ *
+ * A comment's `p` tags are two different things wearing the same tag name: the
+ * reply targets NIP-22 requires (parent author, root author) and the writers
+ * somebody actually typed an `@` in front of. Only the second kind is a
+ * mention, and `isMentionTag` — shared with the client through `@1nky/protocol`
+ * — is what tells them apart, by the marker in position 3.
+ *
+ * A writer naming themselves produces no row. It is legal (the composer's
+ * candidate pool deliberately includes you) and harmless, but an inbox that
+ * tells you that you said your own name is noise, not a signal.
+ *
+ * `root_id` mirrors `toCommentRow`'s: the `E` tag, or the `e` tag when a comment
+ * carries only that.
+ */
+export function mentionRowsFromEvent(event: SignedEvent): MentionRow[] {
+  const author = event.pubkey.toLowerCase();
+  const root = tagValue(event.tags, 'E') ?? tagValue(event.tags, 'e') ?? null;
+
+  const rows: MentionRow[] = [];
+  for (const mentioned of mentionedPubkeys(event)) {
+    if (mentioned === author) continue;
+    rows.push({
+      event_id: event.id,
+      mentioned_pubkey: mentioned,
+      author_pubkey: author,
+      root_id: root,
+      created_at: event.created_at,
+    });
+  }
+  return rows;
 }
 
 export interface ReportRow {
