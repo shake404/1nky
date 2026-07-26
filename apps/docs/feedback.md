@@ -18,7 +18,7 @@ deanonymization vector puts real people at real risk before we can fix it.
 
 ## GitHub Issues {#github-issues}
 
-**[github.com/bodegga/1nky](https://github.com/bodegga/1nky)** — 📋 *not public yet;
+**[github.com/shake404/1nky](https://github.com/shake404/1nky)** — 📋 *not public yet;
 the link 404s. [Roadmap.](/roadmap#not-yet)* Everything below describes how it'll work
 when it lands, and a good bug report looks the same in Holler today.
 

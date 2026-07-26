@@ -34,7 +34,7 @@ export default defineConfig({
       // icons fall back to fetching api.iconify.design at runtime when the mask
       // isn't bundled. A third-party request would break the promise on
       // /privacy/no-logs. An anchor tag costs nothing and fetches nothing.
-      { text: 'GitHub', link: 'https://github.com/bodegga/1nky' },
+      { text: 'GitHub', link: 'https://github.com/shake404/1nky' },
     ],
     sidebar: [
       {
@@ -64,6 +64,7 @@ export default defineConfig({
         items: [
           { text: 'No logs, by architecture', link: '/privacy/no-logs' },
           { text: 'The onion mirror', link: '/privacy/onion' },
+          { text: 'Check the paint yourself', link: '/privacy/verify' },
           { text: 'Opsec for writers', link: '/privacy/opsec' },
           { text: 'Transparency & warrant canary', link: '/privacy/transparency' },
           { text: 'Security disclosure', link: '/security' },

@@ -61,7 +61,7 @@ The relay itself binds to loopback behind Caddy, so from strfry's point of view
 every connection in the world originates from `127.0.0.1`. Even if it were chatty,
 it has nothing interesting to be chatty about.
 
-**Check it:** read [`infra/caddy/Caddyfile`](https://github.com/bodegga/1nky/tree/main/infra/caddy)
+**Check it:** read [`infra/caddy/Caddyfile`](https://github.com/shake404/1nky/tree/main/infra/caddy)
 in the public repo and search it for the string `log`. If you find a logging block
 in a deployed config, that's a disclosable finding — [tell us](/security).
 
@@ -75,7 +75,7 @@ not plaintext, not hashed, not truncated, not "for rate limiting."
 This one is easy to audit because a schema is a small, flat, greppable file:
 
 ```bash
-git clone https://github.com/bodegga/1nky
+git clone https://github.com/shake404/1nky
 cd 1nky
 
 # every table definition in the indexer
@@ -203,7 +203,7 @@ adds a logging dependency, an IP column or an analytics script is visible in a
 diff, forever, with a name on it.
 
 ::: info Repo status — read this before you try the greps
-**The code is not public yet.** The links to `github.com/bodegga/1nky` on this page
+**The code is not public yet.** The links to `github.com/shake404/1nky` on this page
 404 today, and the `git clone` above won't work. That's the biggest thing still owed
 to anybody reading these pages sceptically, and it's on the
 [roadmap](/roadmap#not-yet).
