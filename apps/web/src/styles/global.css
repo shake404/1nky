@@ -1162,6 +1162,34 @@ main {
   color: var(--soot);
 }
 
+/* --- Update toast ----------------------------------------------------------
+ * "A new build is waiting" — sits above the tab bar like .toasts, but it is
+ * a standing invitation rather than a message that clears itself, so it
+ * gets its own fixed strip instead of joining the auto-dismiss stack. Full
+ * width and above .toasts (z-index) since it is the more important thing on
+ * screen once it appears.
+ */
+.update-toast {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tap) + env(safe-area-inset-bottom));
+  z-index: 500;
+  display: flex;
+  justify-content: center;
+  padding: 10px var(--gutter);
+}
+
+.update-toast__btn {
+  width: min(520px, 100%);
+}
+
+@media (min-width: 760px) {
+  .update-toast {
+    bottom: 18px;
+  }
+}
+
 /* --- Comments ------------------------------------------------------------- */
 .comment {
   padding: 12px 0;
