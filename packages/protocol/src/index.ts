@@ -111,6 +111,7 @@ export type {
 
 // --- Explore facets --------------------------------------------------------
 export {
+  FACET_PREFIXES,
   GRAF_TYPES,
   legalPermissionTag,
   LEGAL_PERMISSION_TAG,
@@ -118,9 +119,14 @@ export {
   regionTag,
   surfaceTag,
   SURFACES,
+  SYSTEM_SLUGS,
   typeTag,
 } from './facets.js';
 export type { GrafType, ParsedFacets, Surface } from './facets.js';
+
+// --- Board canonicalization (the alias layer above normalizeBoard) ---------
+export { canonicalizeBoard, isSystemBoard, MAX_ALIAS_HOPS } from './gazetteer.js';
+export type { AliasMap } from './gazetteer.js';
 
 // --- Private messages (NIP-17 / NIP-59) ------------------------------------
 export {

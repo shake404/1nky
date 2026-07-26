@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { FlickCard } from '../components/FlickCard.js';
 import { ThreadList, useBoardThreads } from '../components/ThreadList.js';
 import { fetchFeed, type Flick } from '../lib/feed.js';
+import { canonicalWall } from '../lib/walls.js';
 import { useTag } from '../state/TagProvider.js';
 
 type View = 'threads' | 'flicks';
@@ -14,9 +15,24 @@ type View = 'threads' | 'flicks';
  * are two views rather than one mixed column: what people are SAYING (threads,
  * newest activity first) and what people have PUT UP (the same wall grid as
  * everywhere else, filtered to this board).
+ *
+ * `/b/sf` lands on `/b/san-francisco`. The redirect uses the same alias map the
+ * posting form does, so a link somebody painted on a wall two years ago still
+ * arrives somewhere, and the nicknames stop splitting a city's feed. Posts
+ * already signed with an alias slug are deliberately left alone — they are
+ * signed events, and rewriting them is not a thing anyone can do. The old feed
+ * stays readable at its own address; new posts simply stop landing there.
  */
 export function Board(): JSX.Element {
   const { slug = '' } = useParams();
+  const canonical = canonicalWall(slug);
+  // Redirected BEFORE the page mounts — a thin wrapper with no data hooks in
+  // it, so an alias never fires a fetch for a feed we are about to leave.
+  if (canonical && canonical !== slug) return <Navigate to={`/b/${canonical}`} replace />;
+  return <BoardPage slug={canonical} />;
+}
+
+function BoardPage({ slug }: { slug: string }): JSX.Element {
   const { tag } = useTag();
 
   const [view, setView] = useState<View>('threads');

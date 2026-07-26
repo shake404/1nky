@@ -3,9 +3,10 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 import { useNavigate } from 'react-router-dom';
 import { BlurFaces } from '../components/BlurFaces.js';
 import { Spraying } from '../components/Spraying.js';
-import { fetchExploreFacets, type FacetOption } from '../lib/explore.js';
+import { WallPicker } from '../components/WallPicker.js';
 import { postFlick, postVideo, type Stage } from '../lib/publish.js';
 import { probeVideo } from '../lib/flicks.js';
+import { canonicalWall } from '../lib/walls.js';
 import { useActiveTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
 
@@ -44,23 +45,14 @@ export function PostFlick(): JSX.Element {
   const [blurred, setBlurred] = useState<Blob | null>(null);
   const [blurBlocked, setBlurBlocked] = useState(false);
 
-  // Facets.
-  const [cities, setCities] = useState<FacetOption[]>([]);
+  // Facets. `city` is already a canonical wall slug — WallPicker folds nicknames
+  // (sf, frisco, sf-bay) onto one city as the writer types, so the four walls
+  // one city used to sprawl into have become one.
   const [city, setCity] = useState('');
   const [typeSet, setTypeSet] = useState<Set<GrafType>>(new Set());
   const [surfaceSet, setSurfaceSet] = useState<Set<Surface>>(new Set());
   const [region, setRegion] = useState('');
   const [legal, setLegal] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    void fetchExploreFacets().then((facets) => {
-      if (live) setCities(facets.cities);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!file) {
@@ -100,7 +92,11 @@ export function PostFlick(): JSX.Element {
     // A crew post must never write the me-tag store's own-posts / hasPosted.
     const recordOwn = actingAsCrew === null;
     try {
-      const boards = city.trim() ? [city.trim()] : [];
+      // Canonicalized once more at the write boundary rather than trusting the
+      // field: this is the last point before the post is signed, and a signed
+      // event's slug can never be corrected afterwards.
+      const wall = canonicalWall(city);
+      const boards = wall ? [wall] : [];
       const facetDetails = {
         ...(boards.length ? { boards } : {}),
         ...(region.trim() ? { region: region.trim() } : {}),
@@ -189,19 +185,7 @@ export function PostFlick(): JSX.Element {
       <section className="facets">
         <div className="facet-group">
           <span className="facet-group__label">Where</span>
-          <input
-            className="input"
-            value={city}
-            onChange={(e) => setCity(e.target.value.slice(0, 32))}
-            placeholder="City slug, e.g. sf-bay"
-            list="city-suggestions"
-          />
-          <datalist id="city-suggestions">
-            {cities.map((c) => (
-              <option key={c.slug} value={c.slug} />
-            ))}
-          </datalist>
-          <p className="help">City-granularity only — never a spot. Leave blank to post to the whole wall.</p>
+          <WallPicker id="where" value={city} onChange={setCity} />
         </div>
 
         <div className="facet-group">

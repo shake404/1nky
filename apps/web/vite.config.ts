@@ -39,7 +39,12 @@ export default defineConfig({
         // rule: nothing loads from a CDN) — it is just fetched on demand rather
         // than installed with the app. Keeping it out of the precache manifest
         // also keeps the build honest about workbox's file-size ceiling.
-        globIgnores: ['models/**'],
+        // `cities.json` is the same bargain in miniature: ~110KB of city names
+        // behind the "Where" picker, fetched from this origin the first time
+        // somebody names a city and never for anyone who does not. (`.json` is
+        // not in globPatterns above either — this is the explicit half of that,
+        // so nobody adds `json` to the patterns and silently ships it.)
+        globIgnores: ['models/**', 'cities.json'],
         // Content-addressed media is immutable; cache it hard, but never
         // cache API/relay traffic.
         runtimeCaching: [

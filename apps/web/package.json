@@ -11,7 +11,8 @@
     "lint": "echo lint-ok",
     "test": "vitest run",
     "preview": "vite preview",
-    "icons": "node scripts/gen-icons.mjs"
+    "icons": "node scripts/gen-icons.mjs",
+    "cities": "node scripts/gen-cities.mjs"
   },
   "dependencies": {
     "@1nky/protocol": "workspace:*",

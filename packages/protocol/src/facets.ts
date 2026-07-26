@@ -59,6 +59,14 @@ const SURFACE_PREFIX = 'surface-';
 const REGION_PREFIX = 'region-';
 
 /**
+ * Every dash-namespace that makes a `t` tag a facet rather than a place.
+ *
+ * Exported so `canonicalizeBoard` can refuse to fold a facet slug into a city
+ * without keeping its own copy of the list — one place to add a namespace.
+ */
+export const FACET_PREFIXES = [TYPE_PREFIX, SURFACE_PREFIX, REGION_PREFIX] as const;
+
+/**
  * Unprefixed `t` slugs that are system markers rather than cities.
  *
  * The dash-prefix convention covers `type-*`, `surface-*` and `region-*`, but
@@ -68,7 +76,10 @@ const REGION_PREFIX = 'region-';
  * future bare marker belongs in this set, or somebody's Explore page grows a
  * city called `happening`.
  */
-const SYSTEM_SLUGS: ReadonlySet<string> = new Set<string>([LEGAL_PERMISSION_TAG, HAPPENING_BOARD]);
+export const SYSTEM_SLUGS: ReadonlySet<string> = new Set<string>([
+  LEGAL_PERMISSION_TAG,
+  HAPPENING_BOARD,
+]);
 
 /** `["t", "type-<slug>"]`. */
 export function typeTag(t: GrafType): BoardTag {
