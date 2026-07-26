@@ -1,0 +1,41 @@
+/*
+ * 1NKY docs — scoped brand override on top of VitePress's default theme.
+ *
+ * Owner's rule: "1NKY" branding always sets in Bodega. Two places on this
+ * site show that wordmark — the nav title ("1NKY docs") and the purple hero
+ * title on the landing page — so those two get the font swapped in. Nothing
+ * else changes: body copy, headings, code, everything else stays on the
+ * default theme's readable font stack, and the hero's colour is left exactly
+ * as the default theme sets it (--vp-c-brand-1, indigo) — only the font
+ * changes here, never the colour.
+ *
+ * Self-hosted: the only asset this pulls in is the woff2 already shipped by
+ * apps/web, copied into public/fonts/ so nothing here ever fetches a
+ * third-party stylesheet or CDN font.
+ */
+@font-face {
+  font-family: 'Bodega Plain';
+  src: url('/fonts/Bodega-Plain.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Nav bar site title ("1NKY docs"). */
+.VPNavBarTitle a.title {
+  font-family: 'Bodega Plain', 'Arial Narrow', Impact, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+}
+
+/* Landing-page hero "1NKY" — the purple (brand-colour) title only. The
+   tagline/text span next to it is untouched and stays in the body font.
+   (Extra-specific selector so this reliably beats the default theme's own
+   scoped `.name` rule regardless of CSS import order.) */
+.VPHero .heading .name {
+  font-family: 'Bodega Plain', 'Arial Narrow', Impact, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+}
