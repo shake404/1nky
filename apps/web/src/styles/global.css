@@ -1578,6 +1578,15 @@ main {
   resize: none;
 }
 
+/* Sits directly above the composer, so the note is read before typing. */
+.dm-composer__note {
+  position: sticky;
+  bottom: 84px;
+  margin: 0;
+  padding: 6px var(--gutter);
+  text-align: center;
+}
+
 /* --- Chips / facets --------------------------------------------------------
  * Explore and the post-flow facet picker share this. A chip is a can cap: flat
  * when unpressed, chromed (pressed-into-the-can indent) when active.

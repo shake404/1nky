@@ -9,6 +9,7 @@ import { WriterChip } from '../components/WriterChip.js';
 import { Spraying } from '../components/Spraying.js';
 import { getPref, setPref } from '../lib/db.js';
 import { fetchFlick, fetchWriterSummary, type Flick, type WriterSummary } from '../lib/feed.js';
+import type { Tag } from '../lib/identity.js';
 import { candidatesFrom, extractMentions, type MentionCandidate } from '../lib/mentions.js';
 import { ago } from '../lib/platform.js';
 import { buffEvents, postComment, type Stage } from '../lib/publish.js';
@@ -27,10 +28,11 @@ interface Comment {
 export function FlickDetail(): JSX.Element {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  // `tag` (me) owns buffing and the mine/flag checks; `active` only signs the
-  // comment (own tag, or a crew when the switcher is on).
+  // `tag` (me) is the writer behind the screen; `active` signs the comment (own
+  // tag, or a crew when the switcher is on). Taking the flick DOWN is a third
+  // thing again — see `owner` below, which is whichever key can speak for it.
   const { tag } = useTag();
-  const { active, actingAsCrew } = useActiveTag();
+  const { active, actingAsCrew, signerFor } = useActiveTag();
   const { say } = useToast();
 
   const [flick, setFlick] = useState<Flick | null>(null);
@@ -100,7 +102,32 @@ export function FlickDetail(): JSX.Element {
     [flick],
   );
 
-  const mine = Boolean(tag && flick && tag.pubkey === flick.pubkey);
+  /**
+   * The key that can take this flick down: the writer's own tag when they put
+   * it up themselves, or the crew key from the ring when they put it up as a
+   * crew. Null when this is somebody else's work.
+   *
+   * Looked up rather than compared because the ring lives in IndexedDB. Without
+   * it, a flick posted as a crew was orphaned the moment it went up — never
+   * "mine", so never buffable by the one person holding the key.
+   */
+  const [owner, setOwner] = useState<Tag | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    if (!flick) {
+      setOwner(null);
+      return;
+    }
+    void signerFor(flick.pubkey).then((signer) => {
+      if (live) setOwner(signer);
+    });
+    return () => {
+      live = false;
+    };
+  }, [flick, signerFor]);
+
+  const mine = owner !== null;
 
   // Who you can @: the writer whose flick this is plus everyone who has
   // commented. No global directory — the people on this page are the pool.
@@ -132,11 +159,14 @@ export function FlickDetail(): JSX.Element {
   }, [active, actingAsCrew, parent, draft, say, candidates]);
 
   const buff = useCallback(async () => {
-    if (!tag || !flick) return;
+    // Signed by the key that PUT IT UP, not by whoever is on screen: the wall
+    // only honours a take-down from the author, so a crew's flick has to be
+    // buffed with the crew's key even while speaking as your own tag.
+    if (!owner || !flick) return;
     setConfirmBuff(false);
     setStage('spraying');
     try {
-      await buffEvents(tag, [flick.id], [flick.mediaType === 'video' ? KINDS.VIDEO : KINDS.FLICK], { onStage: setStage });
+      await buffEvents(owner, [flick.id], [flick.mediaType === 'video' ? KINDS.VIDEO : KINDS.FLICK], { onStage: setStage });
       // Optimistic: the relay drops it, but the local wall should not wait.
       const hidden = await getPref<string[]>('buffed', []);
       await setPref('buffed', [flick.id, ...hidden]);
@@ -147,7 +177,7 @@ export function FlickDetail(): JSX.Element {
     } finally {
       setStage(null);
     }
-  }, [tag, flick, say, navigate]);
+  }, [owner, flick, say, navigate]);
 
   if (missing) {
     return (

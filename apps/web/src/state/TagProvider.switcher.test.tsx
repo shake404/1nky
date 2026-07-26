@@ -1,3 +1,4 @@
+import { giftWrapRecipient, KINDS, type SignedEvent } from '@1nky/protocol';
 import { IDBFactory } from 'fake-indexeddb';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -43,12 +44,19 @@ vi.mock('../lib/crew-sync.js', () => ({
   syncCrewKeys: vi.fn(async () => undefined),
 }));
 
+/** Everything handed to the relay — gift wraps never go through the miner. */
+const published: SignedEvent[] = [];
+
 vi.mock('../lib/relay.js', () => ({
   relay: {
     connect: vi.fn(),
     watch: vi.fn(() => () => {}),
     query: vi.fn(async () => []),
-    publish: vi.fn(async () => ({ accepted: true, message: '' })),
+    subscribe: vi.fn(() => ({ close: vi.fn() })),
+    publish: vi.fn(async (event: SignedEvent) => {
+      published.push(event);
+      return { accepted: true, message: '' };
+    }),
   } as unknown as (typeof import('../lib/relay.js'))['relay'],
 }));
 
@@ -56,7 +64,8 @@ const { TagProvider, useTag } = await import('./TagProvider.js');
 const { createTag, loadTag } = await import('../lib/identity.js');
 const { saveCrewKey, removeCrewKey } = await import('../lib/crew-keys.js');
 const { getPref, resetDbHandle } = await import('../lib/db.js');
-const { postThread } = await import('../lib/publish.js');
+const { buffEvents, postThread } = await import('../lib/publish.js');
+const { DmProvider, useDms } = await import('./DmProvider.js');
 
 type Ctx = ReturnType<typeof useTag>;
 
@@ -76,6 +85,29 @@ let api: Ctx | null = null;
 function Probe(): null {
   api = useTag();
   return null;
+}
+
+let dms: ReturnType<typeof useDms> | null = null;
+
+/** The same, for the message store — only mounted by the messages tests. */
+function DmProbe(): null {
+  dms = useDms();
+  return null;
+}
+
+async function mountWithDms(): Promise<void> {
+  root = createRoot(container);
+  await act(async () => {
+    root!.render(
+      <TagProvider>
+        <Probe />
+        <DmProvider>
+          <DmProbe />
+        </DmProvider>
+      </TagProvider>,
+    );
+  });
+  await settle();
 }
 
 async function settle(rounds = 8): Promise<void> {
@@ -125,7 +157,9 @@ beforeEach(async () => {
   setActEnv(true);
   resetDbHandle();
   mined.length = 0;
+  published.length = 0;
   api = null;
+  dms = null;
   container = document.createElement('div');
   document.body.append(container);
   await createTag('ME-WRITER');
@@ -354,5 +388,103 @@ describe('posting through the active signer', () => {
     expect([...mined[0]!.secret]).toEqual([...api!.me!.secret]);
     // The me path DOES record own-history — that is expected, not a switcher path.
     expect((await loadTag())?.hasPosted).toBe(true);
+  });
+});
+
+describe('taking your own work down', () => {
+  it('treats a crew’s post as yours when the ring holds its key, and hands back the crew signer', async () => {
+    await mount();
+
+    const signer = await api!.signerFor(CREW_A.pubkey);
+
+    expect(signer).not.toBeNull();
+    expect(signer!.pubkey).toBe(CREW_A.pubkey);
+    expect([...signer!.secret]).toEqual([...CREW_A.secret]);
+  });
+
+  it('answers for your own tag too, and for nobody else', async () => {
+    await mount();
+
+    const meSigner = await api!.signerFor(api!.me!.pubkey);
+    expect(meSigner?.pubkey).toBe(api!.me!.pubkey);
+
+    // A writer whose key this device does not hold is not ours to speak for —
+    // no signer, so no buff button.
+    expect(await api!.signerFor('c'.repeat(64))).toBeNull();
+  });
+
+  it('is not the switcher: a crew post stays yours while speaking as your own tag', async () => {
+    await mount();
+    // Never switched — still posting as ME.
+    expect(api!.actingAsCrew).toBeNull();
+
+    // The crew's work is still takeable-down, because the KEY is what decides.
+    expect((await api!.signerFor(CREW_A.pubkey))?.pubkey).toBe(CREW_A.pubkey);
+  });
+
+  it('buffs a crew post with the CREW key, not the writer’s own tag', async () => {
+    await mount();
+    const signer = await api!.signerFor(CREW_A.pubkey);
+
+    watchTagStore();
+    await act(async () => {
+      await buffEvents(signer!, ['f'.repeat(64)], [KINDS.FLICK]);
+    });
+
+    // The wall only honours a take-down from the author: it must be the crew.
+    expect(mined).toHaveLength(1);
+    expect(mined[0]!.pubkey).toBe(CREW_A.pubkey);
+    expect([...mined[0]!.secret]).toEqual([...CREW_A.secret]);
+    // And taking a crew's post down is still not an event in the writer's own
+    // history — nothing reaches the single-slot `tag` store.
+    expect(tagWrites).toBe(0);
+  });
+});
+
+describe('messages always come from your own tag', () => {
+  it('signs an outgoing message as ME even while posting as a crew', async () => {
+    await mountWithDms();
+    await act(async () => {
+      await api!.actAs(CREW_A.pubkey);
+    });
+    // The switcher really is on — this is not a false pass.
+    expect(api!.actingAsCrew).toBe(CREW_A.pubkey);
+
+    const partner = 'd'.repeat(64);
+    await act(async () => {
+      await dms!.send(partner, 'meet at the yard');
+    });
+
+    // Two wraps go up: the partner's copy and our own self-copy. `wrapMessage`
+    // addresses the self-copy to the SENDER, so its recipient names who signed.
+    const recipients = published
+      .filter((event) => event.kind === KINDS.GIFT_WRAP)
+      .map((event) => giftWrapRecipient(event));
+
+    expect(recipients).toHaveLength(2);
+    expect(recipients).toContain(partner);
+    // Signed by the writer's own tag...
+    expect(recipients).toContain(api!.me!.pubkey);
+    // ...and NOT by the crew. A crew-signed message would put its self-copy in
+    // the crew's inbox, which this device never listens on — the reply, and our
+    // own sent copy, would both be lost while still looking delivered.
+    expect(recipients).not.toContain(CREW_A.pubkey);
+  });
+
+  it('records the sent message under the writer’s own tag', async () => {
+    await mountWithDms();
+    await act(async () => {
+      await api!.actAs(CREW_A.pubkey);
+    });
+
+    const partner = 'd'.repeat(64);
+    await act(async () => {
+      await dms!.send(partner, 'through the fence');
+    });
+
+    const thread = dms!.thread(partner);
+    expect(thread).toHaveLength(1);
+    expect(thread[0]!.senderPubkey).toBe(api!.me!.pubkey);
+    expect(thread[0]!.senderPubkey).not.toBe(CREW_A.pubkey);
   });
 });

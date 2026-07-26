@@ -12,7 +12,7 @@ import { KINDS, type SignedEvent } from '@1nky/protocol';
 import { getPref, setPref } from '../lib/db.js';
 import { decodeWrap, dmKey, sendMessage, type DecodedDm } from '../lib/dm.js';
 import { relay } from '../lib/relay.js';
-import { useActiveTag, useTag } from './TagProvider.js';
+import { useTag } from './TagProvider.js';
 
 /**
  * The on-device message store.
@@ -73,11 +73,18 @@ function summaries(cache: CacheShape, readAt: Record<string, number>): Conversat
 }
 
 export function DmProvider({ children }: { children: ReactNode }): JSX.Element {
-  // The INBOX (subscription + cache) is always the writer's own tag — a crew's
-  // messages are its own inbox, not ours. Only the OUTGOING wrap is signed by
-  // the active signer, so a message sent "as a crew" leaves under the crew key.
+  // Messages are ALWAYS the writer's own tag, both ways — the switcher does not
+  // reach in here.
+  //
+  // A crew's messages belong to the crew's own inbox, and this device only ever
+  // listens on `tag`. Signing an outgoing message with a crew key would send it
+  // somewhere we cannot hear the answer: the reply comes back addressed to the
+  // crew, and so does our own sent copy, so the conversation would vanish on the
+  // next load while still looking delivered. Rather than half-build that, the
+  // crew stays out of messages entirely and the composer says so plainly.
+  // Giving crews real messages means a per-identity inbox — its own piece of
+  // work, not a rider on the switcher.
   const { tag } = useTag();
-  const { active } = useActiveTag();
   const [cache, setCache] = useState<CacheShape>({});
   const [readAt, setReadAt] = useState<Record<string, number>>({});
   const [ready, setReady] = useState(false);
@@ -149,21 +156,20 @@ export function DmProvider({ children }: { children: ReactNode }): JSX.Element {
 
   const send = useCallback(
     async (partner: string, text: string): Promise<void> => {
-      const signer = active ?? tag;
-      if (!signer) return;
-      await sendMessage(signer, partner, text);
+      if (!tag) return;
+      await sendMessage(tag, partner, text);
       const createdAt = Math.floor(Date.now() / 1000);
       const trimmed = text.trim();
       upsert({
-        key: dmKey({ senderPubkey: signer.pubkey, createdAt, text: trimmed }),
+        key: dmKey({ senderPubkey: tag.pubkey, createdAt, text: trimmed }),
         partner,
-        senderPubkey: signer.pubkey,
+        senderPubkey: tag.pubkey,
         text: trimmed,
         createdAt,
         mine: true,
       });
     },
-    [active, tag, upsert],
+    [tag, upsert],
   );
 
   const markRead = useCallback(

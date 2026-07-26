@@ -33,10 +33,17 @@ const ACTING_AS_KEY = 'acting-as';
 /**
  * Turn a crew keyring row into a posting-signer that satisfies the `Tag` shape
  * `publish.ts` already accepts (`Pick<Tag,'secret'|'pubkey'|'name'>` plus the
- * fields the flick/thread tier logic reads). A crew in the ring was FOUNDED on
- * this device, which already published its kind-0 + definition, so it is past
- * the newcomer tier — `hasPosted: true`. This object lives only in memory; it
- * is never written back to any durable store.
+ * fields the flick/thread tier logic reads). This object lives only in memory;
+ * it is never written back to any durable store.
+ *
+ * `hasPosted: true` picks the POST tier rather than the newcomer tier. That is
+ * the right guess but no longer a guarantee: a crew key reaches this ring three
+ * ways now — founded here (already published its kind-0 + definition, so it IS
+ * past the newcomer gate), pulled from an encrypted backup by crew-key sync, or
+ * imported from a crew blackbook. The last two can land a crew that has never
+ * posted from anywhere. Guessing wrong is safe: the relay answers with the
+ * difficulty it actually wants and `mineSendRetry` re-mines once at that tier,
+ * so a never-posted crew self-heals on its first event instead of failing.
  */
 function crewSigner(row: StoredCrewKey): Tag {
   return {
@@ -77,6 +84,18 @@ interface TagContextValue {
   actAs: (pubkey: string | null) => Promise<boolean>;
   /** The crews held in the ring, for the switcher menu. */
   heldCrews: () => Promise<StoredCrewKey[]>;
+  /**
+   * The signer this device can speak for a pubkey WITH, or null if it cannot.
+   *
+   * Answers "is this mine, and what do I sign the answer with?" in one go —
+   * which is exactly what taking your own work down needs. A post is yours when
+   * it came from your own tag OR from a crew whose key is in the ring, and the
+   * buff has to be signed by that SAME key (the relay only honours a kind 5
+   * from the author). Independent of the switcher: you can buff a crew's post
+   * without switching to it, and switching does not make somebody else's post
+   * yours.
+   */
+  signerFor: (pubkey: string) => Promise<Tag | null>;
   /**
    * Re-check that the active crew key still exists in the ring. If it vanished
    * mid-session, fall back to `me` and return false (the caller toasts). Safe
@@ -184,6 +203,15 @@ export function TagProvider({ children }: { children: ReactNode }): JSX.Element 
 
   const heldCrews = useCallback(() => listCrewKeys(), []);
 
+  const signerFor = useCallback(
+    async (pubkey: string): Promise<Tag | null> => {
+      if (tag && tag.pubkey === pubkey) return tag;
+      const row = await getCrewKey(pubkey).catch(() => undefined);
+      return row ? crewSigner(row) : null;
+    },
+    [tag],
+  );
+
   const verifyActive = useCallback(async (): Promise<boolean> => {
     if (!activeCrew) return true;
     if (await hasCrewKey(activeCrew.pubkey)) return true;
@@ -251,6 +279,7 @@ export function TagProvider({ children }: { children: ReactNode }): JSX.Element 
       actingAsCrew,
       actAs,
       heldCrews,
+      signerFor,
       verifyActive,
       ready,
       persisted,
@@ -267,6 +296,7 @@ export function TagProvider({ children }: { children: ReactNode }): JSX.Element 
       actingAsCrew,
       actAs,
       heldCrews,
+      signerFor,
       verifyActive,
       ready,
       persisted,
@@ -295,9 +325,11 @@ export function useRequiredTag(): Tag | null {
 
 /**
  * The active-signer surface, for POSTING surfaces only (flicks, threads,
- * comments, DMs, media-upload auth). Everything that means "the writer's own
- * identity" — settings, blackbook, hang-it-up, restore/backup, the /me wall —
- * must keep using {@link useTag}'s `tag`/`me`, NOT `active`.
+ * comments, media-upload auth) plus taking your own work down. Everything that
+ * means "the writer's own identity" — settings, blackbook, hang-it-up,
+ * restore/backup, the /me wall — must keep using {@link useTag}'s `tag`/`me`,
+ * NOT `active`. Messages are deliberately NOT on this list: they always come
+ * from the writer's own tag (see DmProvider).
  */
 export interface ActiveTagValue {
   me: Tag | null;
@@ -305,10 +337,11 @@ export interface ActiveTagValue {
   actingAsCrew: string | null;
   actAs: (pubkey: string | null) => Promise<boolean>;
   heldCrews: () => Promise<StoredCrewKey[]>;
+  signerFor: (pubkey: string) => Promise<Tag | null>;
   verifyActive: () => Promise<boolean>;
 }
 
 export function useActiveTag(): ActiveTagValue {
-  const { me, active, actingAsCrew, actAs, heldCrews, verifyActive } = useTag();
-  return { me, active, actingAsCrew, actAs, heldCrews, verifyActive };
+  const { me, active, actingAsCrew, actAs, heldCrews, signerFor, verifyActive } = useTag();
+  return { me, active, actingAsCrew, actAs, heldCrews, signerFor, verifyActive };
 }
