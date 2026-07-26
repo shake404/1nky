@@ -64,7 +64,7 @@ rubber-stamp them.
 
 1. **Receipt & review.** We check the notice against the statutory requirements.
 2. **Removal.** If the notice is valid, we remove or disable access to the material
-   expeditiously — from the relay, from the index, and from the CDN cache.
+   expeditiously — from the wall, from the index, and from any cache in front of them.
 3. **Notice to the poster.** We attempt to notify the writer whose tag posted the
    material. Note the hard limit: **we have no email address for anyone.** In
    practice notification means an in-app notice to that tag and a public record of
@@ -141,5 +141,5 @@ information violates the [terms](/legal/terms) regardless of copyright status an
 gets removed as a moderation matter, not a legal one.
 
 **Illegal content, especially CSAM:** see the
-[zero-tolerance clause](/legal/terms#3-zero-tolerance-child-sexual-abuse-material).
+[zero-tolerance clause](/legal/terms#_3-zero-tolerance-child-sexual-abuse-material).
 It is handled immediately and reported, and it does not go through this process.

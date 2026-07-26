@@ -117,13 +117,25 @@ you for being first.
 **Weather and light.** Shadows give time of day. Wet pavement gives a date. It's
 tedious to exploit, but it has been done.
 
-::: tip Coming in Phase 4
-Client-side face and hand blur — detection and blurring done entirely on your
-device, nothing sent anywhere for processing, applied before the re-encode.
-[Track it on the roadmap.](/roadmap#phase-4-hardening-sovereignty)
-Until it ships, blur it yourself before you upload, and check your blur is
-destructive (a black box drawn over pixels), not an overlay in some editor's
-project file.
+**Clips give away more than flicks.** A 60-second video is sixty seconds of
+background: voices, a train announcement, a passing plate, the way you walk, the
+route you took out. The metadata is stripped the same way and the face blur does not
+run on video. If you post clips, watch them back with the sound on before they go up.
+
+::: tip Face blur is live — use it
+There's a **blur faces** switch on the post screen. Detection and blurring happen
+entirely on your device; nothing is sent anywhere to be looked at. What you see in
+the preview is exactly the pixels that upload, the covering is destructive, and you
+can tap anything the detector missed.
+
+It's **off by default** — a tool that quietly alters somebody's picture is worse than
+no tool — so you have to turn it on. If it can't start, posting stays blocked until
+you switch it off yourself, so a failed download can never turn into uncovered faces.
+
+Two gaps to know about: it doesn't cover **hands** (that's still on you, and see
+below), and it doesn't run on clips. For anything it can't handle, blur it yourself
+before you upload and check your blur is destructive — a box drawn over pixels, not
+an overlay in some editor's project file. [Roadmap.](/roadmap#not-yet)
 :::
 
 ## Your tag name is a link
@@ -151,23 +163,28 @@ Treat the tag as a clean identity from day one. You can't retroactively unlink i
 
 ## Use the onion mirror if you're serious
 
-Clearnet 1NKY passes through Cloudflare, which sees your IP transiently at the
-edge — we explain that honestly on the [no-logs page](/privacy/no-logs#what-the-edge-sees).
-Our origin keeps no logs, but the edge is a third party in the request path.
+Clearnet 1NKY is an app shell served by a commercial static host talking to our own
+box — [who's actually in that path](/privacy/no-logs#what-the-edge-sees) is spelled
+out honestly on the no-logs page. Our box keeps nothing, but other people's computers
+are in the request path, and your ISP can see you looked us up.
 
-The **.onion mirror** removes that entirely: Tor Browser → hidden service → our
-origin. No CDN, no third-party TLS termination, no IP visible at any hop, no ISP
-record that you visited a graffiti site.
+The **onion mirror** removes all of that: Tor Browser → hidden service → our box. No
+static host, no content network, no third-party TLS termination, no DNS lookup, no
+address visible at any hop.
 
 ```text
 http://jd3i7s473cmwlxvfqynshzodo5rwtfrpkjtu5lhpbfguqd3u4uzqzfyd.onion
 ```
 
-One honest caveat while we finish the wiring: the site and its data ride the
-hidden service end to end, but flick images themselves currently still load
-from the clearnet media host. Inside Tor Browser that fetch still goes through
-Tor — your IP stays out of it — it just crosses the regular edge instead of the
-hidden service. We're closing that gap; until then this note stays here.
+**The whole app is on it now** — posting, flicks, clips, media, messages, crews, all
+of it on that one address. The old half-mirror caveat (pictures loading from the
+clearnet host) is fixed; if you find anything at all still loading from `1nky.com`
+while you're on the onion, that's a bug and a
+[disclosable one](/security).
+
+Check the address character by character. There's no registrar to stop somebody
+publishing a lookalike, and the authoritative copy lives here and on
+[the onion page](/privacy/onion) — not in a forum post or a DM.
 
 If you post flicks of your own work, this should be your default path, not your
 paranoid path. Combine it with:
@@ -177,8 +194,7 @@ paranoid path. Combine it with:
 - **A device that isn't your daily driver**, if you can manage it.
 - **Not logging into anything identifiable** in the same browser session. Ever.
 
-Onion mirror status: Phase 4, launch-blocking.
-[See the roadmap.](/roadmap#phase-4-hardening-sovereignty)
+[Full detail on the onion mirror.](/privacy/onion)
 
 ## Your blackbook is also an opsec object
 
@@ -194,6 +210,13 @@ Which means it's also the one thing that can prove you are you.
   searchable remotely.
 - **Don't screenshot it to a phone that auto-syncs photos.** Same problem as the
   cloud drive, with an extra step of it also being in a machine-learning pipeline.
+- **A crew blackbook is everybody's blackbook.** Whoever holds it *is* the crew. A
+  crew is exactly as careful as its least careful member, and there's no way to take
+  the file back once you've handed it over — only to buff someone off the roster.
+  [How crews work.](/guide/crews)
+- **If you switch on Recovery**, we hold a locked copy of your blackbook. We can't
+  open it and neither can anyone who serves us paper, but it exists, and a passphrase
+  you'd use elsewhere is the weak link in that. Use one you don't use anywhere else.
 
 ## The one-minute checklist
 

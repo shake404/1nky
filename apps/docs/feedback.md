@@ -1,13 +1,13 @@
 # Bugs & feature requests
 
-Three channels, depending on what you've got. Pick the right one and it gets seen
-faster.
+Pick the right channel and it gets seen faster. Right now **Holler is the one that
+actually works** — the code isn't public yet, so neither is the issue tracker.
 
 | You have | Use | Identity needed |
 |---|---|---|
-| A bug, or a feature idea | [GitHub Issues](#github-issues) | A GitHub account |
-| A bug or idea, and you want to stay anonymous | [Holler](#holler-in-app-anonymous) | Just your tag |
+| A bug, or a feature idea | [Holler](#holler-in-app-anonymous), in the app | Just your tag |
 | A security vulnerability | [Responsible disclosure](/security) | None |
+| Anything, once the repo is public | [GitHub Issues](#github-issues) | A GitHub account |
 
 ::: danger Don't file security bugs in public
 If you've found something that could leak user information, deanonymize a writer,
@@ -18,8 +18,9 @@ deanonymization vector puts real people at real risk before we can fix it.
 
 ## GitHub Issues {#github-issues}
 
-**[github.com/bodegga/1nky](https://github.com/bodegga/1nky)** — 🔨 *coming online
-with launch; the link 404s until then.*
+**[github.com/bodegga/1nky](https://github.com/bodegga/1nky)** — 📋 *not public yet;
+the link 404s. [Roadmap.](/roadmap#not-yet)* Everything below describes how it'll work
+when it lands, and a good bug report looks the same in Holler today.
 
 Best for anything reproducible, anything with a stack trace, and anything you want
 to be able to follow along with. Issues are public, searchable, and get linked to
@@ -46,11 +47,12 @@ scenario, ever, where we need your secret. Anyone asking for it is not us.
 
 ## Holler — in-app, anonymous {#holler-in-app-anonymous}
 
-**📋 Ships with the feedback board in Phase 2.**
+**✅ Live. It's in the app: Boards → Holler at us, or `/holler`.**
 
 **Holler** is the feedback board inside the app. Post to it exactly like any other
 board: your tag, your words, done. No email, no GitHub, no account, no extra
-identity of any kind beyond the tag you already have.
+identity of any kind beyond the tag you already have. You can read what everybody
+else has said, too.
 
 It rides the same rails as everything else on 1NKY, which means the same properties
 apply:
@@ -59,8 +61,8 @@ apply:
   the same writer without knowing who that writer is.
 - No IP is recorded when you post it, because none is recorded when you post
   anything. [Same architecture, same verification.](/privacy/no-logs)
-- You can post it over the onion mirror if you don't want the CDN edge to see the
-  connection at all.
+- You can post it over the [onion mirror](/privacy/onion) if you don't want anybody
+  in the path to see the connection at all.
 - You can **buff** your holler later if you change your mind.
 
 **Why bother having a tag on it at all?** So we can reply and you can see the
@@ -94,9 +96,10 @@ fixed first.
 information" class jumps the queue over everything else, including features. If we
 can't reproduce it we'll say so and ask for detail rather than closing it quietly.
 
-**Feature requests.** Triaged onto the **[public roadmap](/roadmap)**. That page is
-the real backlog, not a marketing artifact — accepted ideas land in a phase or in
-the [parking lot](/roadmap#good-ideas-parking-lot) with a status. If we say no,
+**Feature requests.** Triaged onto the **[public roadmap](/roadmap)** — and onto the
+copy of it inside the app at `/roadmap`, so you don't have to leave to see where your
+idea went. That page is the real backlog, not a marketing artifact: accepted ideas
+land in a lane or in the [parking lot](/roadmap#good-ideas-parking-lot). If we say no,
 we'll say why on the issue, and "no" usually means "this conflicts with a hard
 rule" (adding accounts, adding analytics, adding anything that collects an address)
 rather than "we don't like it."

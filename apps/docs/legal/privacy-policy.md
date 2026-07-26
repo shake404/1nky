@@ -56,32 +56,50 @@ public posts, for feeds and search. It contains only what's already public in th
 posts themselves, plus derived counts. It can be deleted and rebuilt from the relay
 at any time. No addresses, no identifiers.
 
-**Media blobs.** Uploaded images are stored content-addressed — the storage key is
-the SHA-256 hash of the image bytes, not a filename tied to you. They're re-encoded
-on receipt, and the original bytes as received are never persisted.
+**Media blobs.** Uploaded images and clips are stored content-addressed — the storage
+key is the hash of the bytes, not a filename tied to you. They're re-encoded on
+receipt with no metadata carried through, and the original bytes as received are never
+persisted.
 
 **Your tag's secret, on your device only.** Held in your browser's local storage on
 your device. It is never transmitted to us. We cannot read it, recover it or reset
 it.
 
+**Private messages, which we cannot read.** A message is encrypted between the two
+devices and reaches us as a sealed envelope signed by a throwaway name and addressed
+to the recipient, with the timestamp deliberately smeared by up to two days. We do not
+learn the sender, the time or the contents, and messages are not copied into the
+searchable index.
+
+**A locked recovery copy — only if you switch it on.** If you opt in to Recovery, we
+store an encrypted copy of your blackbook, keyed to your tag's public half. The
+passphrase never leaves your device, so we cannot decrypt it, and neither can anyone
+who serves us legal process. It is **off by default** and it is the only thing we
+store that is linked to a specific tag beyond that tag's public posts.
+
 ## Third parties in the path
 
 We'd rather show you the seams than claim there aren't any.
 
-**Cloudflare (CDN, clearnet only).** The clearnet site is served through
-Cloudflare, which terminates TLS and processes visitor requests — including IP
-addresses — at its edge, transiently, under **Cloudflare's own privacy policy**, not
-this one and not our control. We use them for caching, DDoS protection and their
-CSAM scanning tool. We do not receive visitor IPs from them and do not enable
-Cloudflare analytics on the zone.
+**A static host, for the clearnet app shell.** The HTML, JavaScript and icons that
+make up the clearnet app are served as static files by a commercial hosting provider,
+which therefore processes requests for those files — including the address they came
+from — transiently, under **their** policy, not this one and not our control. What
+they serve is identical for every visitor and contains nothing about you. We receive
+no visitor addresses from them and enable no analytics with them.
 
-*This is the one genuine privacy compromise in the architecture, and the reason the
-**.onion mirror** exists: it reaches our origin directly over Tor with no CDN in the
-path. [Full explanation.](/privacy/no-logs#what-the-edge-sees)*
+**Hosting and storage providers.** Our server is rented and our media blobs sit on
+object storage. Those providers know we are their customer. They have no user data
+from us, because we have none to give them.
 
-**Hosting and storage providers.** Our servers are rented and our media blobs are
-stored on object storage. Those providers know we are their customer. They have no
-user data from us, because we have none to give them.
+*There is currently no content-delivery network in front of our origin. When one is
+added — the free child-safety scanning tooling we need before a public launch comes
+attached to one — this section will say so **before** the change ships, because a
+privacy policy that lags the architecture is worse than none.*
+
+*The reason the **onion mirror** exists is that it reaches our box directly over Tor
+with none of the above in the path.
+[Full explanation.](/privacy/no-logs#what-the-edge-sees)*
 
 **Nobody else.** No analytics vendors, no ad networks, no data brokers, no
 third-party fonts or scripts, no embedded social widgets, no customer-support
@@ -110,7 +128,7 @@ yourself in the app is the mechanism.
 ## Children
 
 1NKY is for adults, 18+. We do not knowingly permit use by minors and remove
-content involving minors. See the [zero-tolerance CSAM clause](/legal/terms#3-zero-tolerance-child-sexual-abuse-material).
+content involving minors. See the [zero-tolerance CSAM clause](/legal/terms#_3-zero-tolerance-child-sexual-abuse-material).
 
 ## Legal process
 

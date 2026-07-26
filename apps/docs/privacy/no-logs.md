@@ -22,6 +22,8 @@ So here's the architecture, claim by claim, with the check next to each one.
 | 4 | Writes never touch the API | Writes are signed events straight to the relay | Watch your own devtools |
 | 5 | No analytics, telemetry or cookies | None in the client, none on this docs site | Devtools → Network |
 | 6 | No email, password or OAuth anywhere | Identity is a client-held keypair | There's no login form to find |
+| 7 | We can't read private messages | Sealed on the sender's device; never indexed | Send one, read the socket frame |
+| 8 | The onion path has no third party in it | Hidden service straight to the origin | Load it in Tor Browser |
 
 ## 1. Caddy, with logging deliberately absent
 
@@ -32,15 +34,28 @@ no journald sink where request lines exist.
 
 ```
 # infra/caddy/Caddyfile — shape of it
-1nky.com {
+api.1nky.com {
     header -Server
     # no log block. On purpose. Adding one is a bug, not a config change.
-    handle /media/* { reverse_proxy media:8080 }
-    handle /api/*   { reverse_proxy api:8080 }
     handle /relay   { reverse_proxy strfry:7777 }
+    handle /api/*   { reverse_proxy api:3001 }
+    handle /media/* { reverse_proxy media:3002 }
+}
+
+:8080 {            # the .onion vhost — same routes, plus the app itself
+    header -Server
+    # no log block here either. Same rule, no exceptions.
+    handle /relay   { reverse_proxy strfry:7777 }
+    handle /api/*   { reverse_proxy api:3001 }
+    handle /media/* { reverse_proxy media:3002 }
     handle          { root * /srv/web; file_server }
 }
 ```
+
+Two more deliberate absences in that file, both of which would undo the point:
+there is no `metrics` endpoint (per-path request counters are telemetry by another
+name), and no `X-Real-IP` / `X-Forwarded-For` plumbing to any upstream. strfry's
+`realIpHeader` is set to the empty string, so it would ignore one anyway.
 
 The relay itself binds to loopback behind Caddy, so from strfry's point of view
 every connection in the world originates from `127.0.0.1`. Even if it were chatty,
@@ -110,7 +125,7 @@ event go up the socket and you'll see no `POST /api/...` anywhere. Media upload 
 the one write that is HTTP (`PUT` to the Blossom-compatible media service,
 authorized by a signed kind-24242 event) and it too is logged nowhere.
 
-## 5. No analytics, no telemetry, no cookies {#what-the-edge-sees}
+## 5. No analytics, no telemetry, no cookies
 
 The client ships no analytics SDK, no error-reporting SDK, no tag manager, no
 fonts loaded from someone else's domain, and sets no tracking cookies. This
@@ -121,33 +136,39 @@ at build time, not a hosted search service.
 be to a 1NKY-controlled hostname. Then devtools → Application → Cookies. Should be
 empty.
 
-### What Cloudflare sees at the edge
+### Who else is in the request path {#what-the-edge-sees}
 
-Here's the part where we don't pretend. On the clearnet site, Cloudflare sits in
-front of us as CDN, cache and DDoS protection. That means:
+Here's the part where we don't pretend. There are two ways into 1NKY and they have
+different shapes.
 
-- **Cloudflare terminates TLS**, so their edge processes your request, including
-  your IP address, transiently, under their own privacy policy — not ours, and not
-  under our control.
-- **We chose that** on purpose: it's what makes content-addressed image serving
-  cheap enough to run for pocket change, and Cloudflare's free CSAM Scanning Tool
-  is part of how we keep the worst content off the platform.
-- **It's a genuine wart.** We're not going to call a third party in the request
-  path "zero knowledge."
+**Clearnet (`1nky.com`).** The app shell — HTML, JavaScript, the icons — is static
+files served by a commercial static host. Everything that matters (the wall, media,
+posting, messages) goes to **our own box**, directly, over a certificate we get
+ourselves. So:
 
-Two things bound the damage. First, the origin keeps no logs regardless, so the CDN
-edge is the *only* place a clearnet address exists, in someone else's infrastructure,
-for someone else's retention window. Second — and this is the real answer — the
-**.onion mirror bypasses Cloudflare entirely**, going straight to the origin over
-Tor's hidden service protocol. No CDN, no TLS termination by a third party, no IP
-at any hop that could be turned into a subpoena target.
+- **The static host sees requests for the app shell**, including the address they
+  came from, transiently and under their own policies — not ours, and not under our
+  control. What they serve is the same files for everybody, with nothing in them
+  about you.
+- **Our box sees the real traffic and keeps nothing** — no logs, no IP columns, per
+  everything above on this page.
+- **Your DNS resolver and your ISP see that you looked up 1nky.com.** That's true of
+  every website, and it's the hop that a lot of people actually care about.
+- **There is currently no content network in front of us**, so no third party
+  terminates TLS on the traffic that matters. That's also why bandwidth is the
+  cheapest thing about this operation and why one is
+  [likely to be added](/roadmap#not-yet) — the free child-safety scanning tooling we
+  need before a public launch comes attached to one. When that changes, this
+  paragraph changes with it, before the change ships.
 
-The onion mirror is a Phase 4 deliverable and a launch-blocking feature, not a
-someday. Until it's live, this page will say so. Status:
-[see the roadmap](/roadmap#phase-4-hardening-sovereignty).
+**The onion mirror.** The [full app over a Tor address](/privacy/onion): no static
+host, no content network, no certificate authority, no DNS lookup, and nothing at any
+hop that could become a subpoena target. Posting, pictures, messages — all of it, on
+the one address.
 
 **Positioning, stated plainly:** clearnet is the convenient path, onion is the
-sovereign path. Pick according to your threat model.
+sovereign path. Pick according to your threat model. Neither one costs you your tag —
+it's the same name and the same wall either way.
 
 ## 6. There is no account to compromise
 
@@ -181,11 +202,17 @@ bytes that left your machine. Full walkthrough on the [opsec page](/privacy/opse
 adds a logging dependency, an IP column or an analytics script is visible in a
 diff, forever, with a name on it.
 
-::: info Repo status
-The public GitHub mirror at `github.com/bodegga/1nky` goes online with launch.
-Until then the links on this page 404 — we'd rather ship the page with the check
-written down than describe the check vaguely. File paths above match the monorepo
-layout described in the [technical page](/for-the-nerds).
+::: info Repo status — read this before you try the greps
+**The code is not public yet.** The links to `github.com/bodegga/1nky` on this page
+404 today, and the `git clone` above won't work. That's the biggest thing still owed
+to anybody reading these pages sceptically, and it's on the
+[roadmap](/roadmap#not-yet).
+
+We publish the checks anyway, with the exact commands, because a check written down
+in advance is one we can be held to — and because the checks that *don't* need the
+repo (devtools, `exiftool`, watching your own network tab) work right now, today, and
+they cover the claims that matter most. File paths above match the monorepo layout
+described in the [technical page](/for-the-nerds).
 :::
 
 ## Subpoena posture
@@ -199,6 +226,13 @@ what compliance can produce:
 signed posts anyone can already read on the site — and the public key that signed
 them. That's it. A public key is not a person; it's a number that was never linked
 to a name, an email, a phone or an address on our side.
+
+**One thing to declare, for writers who opted in:** if you switched on
+[Recovery](/guide/your-tag#recovery-optional-off-by-default), we hold an encrypted
+copy of your blackbook, keyed to your own public half. It's off by default, and the
+passphrase never reaches us — so what could be handed over is a blob nobody can open,
+including us. We list it here rather than leaving it out, because a privacy page that
+omits the one thing we store is worthless.
 
 **What we could not hand over, because it was never collected:**
 
