@@ -3,11 +3,13 @@
 # 1NKY — nightly backup (handoff item G)
 # =============================================================================
 #
-# Two artifacts per night, streamed straight to the existing S3-compatible
+# Three artifacts per night, streamed straight to the existing S3-compatible
 # bucket under <prefix>/YYYY-MM-DD/ :
 #
 #   postgres-YYYY-MM-DD.dump      pg_dump custom format, gzip level 9
 #   strfry-lmdb-YYYY-MM-DD.tar.gz the relay's LMDB directory
+#   tor-keys-YYYY-MM-DD.tar.gz    the hidden-service keypair (the .onion
+#                                 address itself — unregenerable)
 #
 # Then prefixes older than BACKUP_RETAIN_DAYS are purged.
 #
@@ -146,6 +148,17 @@ main() {
 	fi
 	upload_stream "strfry-lmdb-${DATE}.tar.gz" \
 		tar -czf - -C "$src" --exclude=lock.mdb .
+
+	# --- 2b. onion keys ------------------------------------------------------
+	# The hidden-service keypair IS the published .onion address; it cannot be
+	# regenerated, only replaced with a different address. A few hundred bytes
+	# guarded so a deployment without the tor profile still backs up cleanly.
+	if [[ -d /tor-keys ]] && [[ -n "$(ls -A /tor-keys 2>/dev/null)" ]]; then
+		upload_stream "tor-keys-${DATE}.tar.gz" \
+			tar -czf - -C /tor-keys .
+	else
+		echo "tor-keys: not mounted or empty, skipped"
+	fi
 
 	# --- 3. verify + report ------------------------------------------------
 	# Read the sizes back from the bucket rather than from local files: that

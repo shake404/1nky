@@ -473,6 +473,11 @@ services:
       # tradeoff note in backup.sh and infra/README.md. To take consistent
       # snapshots instead, drop the `:ro` here and accept a writable mount.
       - strfry_db:/strfry-db:ro
+      # The hidden-service keys ARE the published .onion address (see the tor
+      # service). READ-ONLY, tiny, and the one artifact that can never be
+      # regenerated — losing it retires a published link permanently, so it
+      # rides along with every night's run.
+      - tor_keys:/tor-keys:ro
       # Last-run status, so "are backups actually running?" has an answer that
       # is not "scroll the logs":
       #     docker compose exec backup cat /var/lib/1nky-backup/status
