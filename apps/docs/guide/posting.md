@@ -86,8 +86,9 @@ This is the screen for "show me freights out of the Bay" or "just handstyles."
 
 ## Search
 
-Type words. You get three groups back:
+Type words. You get four groups back:
 
+- **Writers** — tags (and crews) whose name matches. Exact matches first.
 - **Walls** — boards matching what you typed.
 - **Up** — flicks and clips whose captions or tags match.
 - **Talk** — threads and replies.
@@ -95,10 +96,10 @@ Type words. You get three groups back:
 Search runs over what's up publicly and nothing else. There's no search history,
 because there's nowhere to keep one.
 
-**There's no writer-name search**, deliberately-ish: tag names aren't unique, so a
-name lookup would mostly be a list of people who might be the person you meant. You
-get to a writer by tapping their name on something they put up, and you check the
-[mark](/guide/your-tag#your-mark) when you land.
+One thing to keep straight: tag names aren't unique, so a name search can return
+more than one writer with the same name. The list shows each writer's
+[mark](/guide/your-tag#your-mark) next to the name — same name, different mark =
+different writer. Check it before you trust it.
 
 ## Your own wall
 

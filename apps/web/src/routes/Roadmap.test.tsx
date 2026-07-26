@@ -75,7 +75,8 @@ describe('the roadmap', () => {
     expect(words).toContain('blackbook');
     expect(words).toContain('Beef');
     expect(words).toContain('Crews');
-    expect(words).toContain('face and hand blur');
+    expect(words).toContain('face blur');
+    expect(words).toContain('Hand blur');
     expect(words).toContain('onion network');
     expect(words).toContain('jams and meets');
   });
