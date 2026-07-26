@@ -86,7 +86,7 @@ c_head "preflight"
 
 [[ -n "$DROPLET_HOST" ]] || c_die \
   "DROPLET_HOST is not set.
-   Use the RESERVED ip that provision.sh printed, e.g.
+   Use your host's public IP or hostname, e.g.
      DROPLET_HOST=203.0.113.10 ./infra/deploy/deploy.sh"
 
 if [[ -z "$GIT_REMOTE" ]]; then

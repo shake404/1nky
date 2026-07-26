@@ -446,16 +446,16 @@ services:
     environment:
       DATABASE_URL: "${DATABASE_URL:-postgres://oneinky:oneinky@postgres:5432/oneinky}"
       # The existing bucket credentials, unchanged. R2_* is a historical name:
-      # the bucket is a cloud host Spaces today (sfo3), R2 later.
+      # an S3-compatible bucket; the specific provider comes from infra/.env.
       R2_ENDPOINT: "${R2_ENDPOINT:-}"
       R2_ACCESS_KEY_ID: "${R2_ACCESS_KEY_ID:-}"
       R2_SECRET_ACCESS_KEY: "${R2_SECRET_ACCESS_KEY:-}"
       R2_BUCKET: "${R2_BUCKET:-1nky-media}"
-      # rclone's S3 provider profile. `a cloud host` matches the current
+      # rclone's S3 provider profile, supplied from infra/.env (never the
       # bucket; set `Cloudflare` when the bucket moves to R2, `Other` for
       # anything else. Not a secret, so it is defaulted here rather than added
       # to the root .env.example (which infra/ may not edit).
-      BACKUP_S3_PROVIDER: "${BACKUP_S3_PROVIDER:-a cloud host}"
+      BACKUP_S3_PROVIDER: "${BACKUP_S3_PROVIDER:-Other}"
       # Usually unnecessary — the endpoint carries the region. Set it only if
       # the provider rejects the signature.
       BACKUP_S3_REGION: "${BACKUP_S3_REGION:-}"

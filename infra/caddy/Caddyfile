@@ -119,17 +119,16 @@
 }
 
 # =============================================================================
-# PRODUCTION — interim TLS host (ACTIVE)
+# PRODUCTION — TLS host (ACTIVE)
 # =============================================================================
-# REDACTED-HOST.sslip.io resolves to the droplet's reserved IP via sslip.io's
-# wildcard DNS, which lets Caddy obtain a real certificate before the 1nky.com
-# nameserver flip at the registrar. The PWA on Vercel talks to this origin over
-# wss:// and https://. When 1nky.com's A records resolve here, add
-# `1nky.com, www.1nky.com` to the address line below and redeploy — nothing
-# else changes.
+# The API origin. The PWA talks to it over wss:// and https://.
+#
+# CADDY_EXTRA_HOST (from infra/.env, gitignored) can add a bootstrap host to the
+# address line — e.g. an `<ip>.sslip.io` name for obtaining a certificate before
+# a DNS cutover. It defaults empty, so the public config commits no host address.
 # =============================================================================
 
-api.1nky.com, REDACTED-HOST.sslip.io {
+api.1nky.com {$CADDY_EXTRA_HOST} {
 	import scrub_headers
 
 	encode zstd gzip
