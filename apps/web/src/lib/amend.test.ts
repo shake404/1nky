@@ -82,18 +82,20 @@ describe('parseWalls', () => {
     expect(parseWalls('west oakland, trains')).toEqual(['west-oakland', 'trains']);
   });
 
-  it('slugifies exactly the way a post tag is slugified', () => {
-    expect(parseWalls('  #SF Bay  ')).toEqual(['sf-bay']);
+  it('canonicalizes through the same alias map the posting flow uses', () => {
+    // Adding "frisco" to a post must not mint a wall the picker prevents.
+    expect(parseWalls('frisco')).toEqual(['san-francisco']);
+    expect(parseWalls('  #SF Bay  ')).toEqual(['san-francisco']);
   });
 
-  it('drops empties and repeats', () => {
-    expect(parseWalls('sf,,  , sf , SF')).toEqual(['sf']);
+  it('drops empties and repeats — including two nicknames for the same wall', () => {
+    expect(parseWalls('sf,,  , frisco , SF')).toEqual(['san-francisco']);
     expect(parseWalls('')).toEqual([]);
     expect(parseWalls('###')).toEqual([]);
   });
 
-  it('leaves out a wall the post is already on — that is nothing, not an error', () => {
-    expect(parseWalls('SF, oakland', ['sf'])).toEqual(['oakland']);
-    expect(parseWalls('sf', ['sf'])).toEqual([]);
+  it('leaves out a wall the post is already on — even via a different nickname', () => {
+    expect(parseWalls('SF, oakland', ['san-francisco'])).toEqual(['oakland']);
+    expect(parseWalls('frisco', ['sf'])).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import { normalizeBoard, parseAmendment, type SignedEvent } from '@1nky/protocol';
+import { canonicalWall } from './walls.js';
 
 /**
  * "Add to this" — reading the additions back on the client.
@@ -57,10 +58,13 @@ export function amendedBoards(
  * wall it is already on is not an error, it is just nothing.
  */
 export function parseWalls(input: string, already: readonly string[] = []): string[] {
-  const have = new Set(already.map((slug) => normalizeBoard(slug)));
+  // Through the same canonicalizer the posting flow uses, so adding "frisco"
+  // to a post lands on san-francisco instead of minting the duplicate wall
+  // the gazetteer exists to prevent.
+  const have = new Set(already.map((slug) => canonicalWall(normalizeBoard(slug))));
   const out: string[] = [];
   for (const part of input.split(/[,\n]+/)) {
-    const slug = normalizeBoard(part);
+    const slug = canonicalWall(normalizeBoard(part));
     if (!slug || have.has(slug)) continue;
     have.add(slug);
     out.push(slug);
