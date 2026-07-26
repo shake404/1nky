@@ -1,0 +1,4 @@
+# apps/web's built dist/, rsynced here by infra/deploy/deploy.sh and bind-mounted
+# read-only into the caddy container at /srv/web (see docker-compose.yml's caddy
+# service and the Caddyfile's :8080 root handle). Build artifacts, never committed.
+web-dist/

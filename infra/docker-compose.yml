@@ -202,6 +202,19 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      # apps/web's built dist/ (index.html + assets/), served at :8080's root
+      # for the .onion mirror and, once 1nky.com's block above is uncommented,
+      # the clearnet vhost too — same dist/ either way, since config.ts derives
+      # API/media/relay bases from the .onion host at runtime instead of
+      # baking clearnet URLs in. A plain relative bind mount, not a named
+      # volume: infra/deploy/deploy.sh populates ./web-dist by rsyncing
+      # apps/web/dist/ here as part of every deploy, before this container is
+      # recreated, and a bind mount is what lets the deploy step overwrite it
+      # without going through docker at all. `:ro` — nothing in the container
+      # ever needs to write into it. Empty ./web-dist (e.g. first bring-up
+      # before a deploy has shipped anything) just means file_server 404s;
+      # see the Caddyfile's :8080 root handle comment.
+      - ./web-dist:/srv/web:ro
     ports:
       # Overridable for dev boxes where something already owns 80/443.
       # Leave them at the defaults in production — ACME needs 80 and 443.

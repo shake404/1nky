@@ -316,15 +316,28 @@ api.1nky.com, REDACTED-HOST.sslip.io {
 	}
 
 	# --- Root ----------------------------------------------------------------
-	# The PWA is served from Vercel today, not from this box, so there is no
-	# /srv/web to fall back to. Placeholder rather than a clearnet redirect
-	# (see the header). Once apps/web's dist is mounted into the caddy
-	# container, replace this with the same root/try_files/file_server trio the
-	# commented 1nky.com block uses — that is the point at which the onion
-	# becomes a full mirror instead of a backend mirror.
+	# apps/web's dist/ is bind-mounted read-only at /srv/web (docker-compose.yml,
+	# the caddy service's `./web-dist:/srv/web:ro` volume) — same trio as the
+	# commented 1nky.com block above, so this is a full mirror, not a backend
+	# mirror: the onion visitor gets the PWA itself, not a placeholder, and
+	# apps/web/src/lib/config.ts detects the `.onion` host at runtime and points
+	# API_BASE/MEDIA_BASE/RELAY_WS_URL back at this same origin, so no separate
+	# build is needed — it is the same dist/ shipped to 1nky.com.
+	#
+	# deploy.sh ships dist/ into ./web-dist *before* `docker compose up`
+	# recreates this container, so the mount is never empty when caddy starts.
+	# If you bring this vhost up by hand before a first deploy, ./web-dist is an
+	# empty directory and file_server will 404 on everything except the
+	# try_files fallback to /index.html, which will also 404 — that is a "dist
+	# not shipped yet" state, not a config bug.
 	handle {
-		header Content-Type "text/plain; charset=utf-8"
-		respond "1NKY" 200
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+		# The app shell changes on every deploy; do not let it get pinned.
+		header /index.html Cache-Control "no-cache"
+		# Vite emits content-hashed asset filenames, so those ARE immutable.
+		header /assets/* Cache-Control "public, max-age=31536000, immutable"
 	}
 }
 # =============================================================================
