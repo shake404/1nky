@@ -15,6 +15,7 @@ import { API_BASE, POW_BITS } from './config.js';
 import { fetchWriterFlicks, parseFeedResponse, type Flick } from './feed.js';
 import { getPref, setPref } from './db.js';
 import type { Tag } from './identity.js';
+import { resolveLookupInput } from './lookup.js';
 import { fetchProfile } from './profiles.js';
 import { publishProfile, publishTemplate, type PublishOptions } from './publish.js';
 import { relay } from './relay.js';
@@ -446,35 +447,17 @@ export type { GrafType, Surface };
 // Founder roster management — signed by the CREW key, never the founder's tag.
 // ---------------------------------------------------------------------------
 
-const HEX64 = /^[0-9a-f]{64}$/;
-
 /**
- * Pull a writer's id out of a "put someone on" input.
+ * Pull a writer's (or crew's) id out of a "put someone on" input.
  *
- * Accepts:
- *   - a profile link (`https://1nky.com/w/<hex>` or `/w/<hex>` or `.../w/<hex>`)
- *   - the raw 64-hex tag id directly.
- *
- * A mark is a one-way fingerprint and CANNOT be reversed to an id, so asking
- * for one would be a footgun — this deliberately only accepts forms that
- * already carry the id. Anything else (a name, a mark, junk) returns `null`
- * and the caller shows a "could not make out that writer" message.
+ * A thin re-export of the shared parser in `lookup.ts` — kept under its
+ * original name because both the crew founder panel and the account-restore
+ * locked-copy handle already call it. See {@link resolveLookupInput} for
+ * what it accepts and why a mark is deliberately rejected.
  *
  * Returns the 64-char lowercase hex id, or `null`.
  */
-export function resolveWriterInput(input: string): string | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  // Pull `/w/<hex>` out of a full URL OR a bare path. A leading search/hash is
-  // tolerated so a pasted browser address bar works either way.
-  const pathMatch = /(?:^|\/)w\/([0-9a-fA-F]{64})(?:[/#?]|$)/.exec(trimmed);
-  if (pathMatch) return pathMatch[1]!.toLowerCase();
-
-  const cleaned = trimmed.replace(/^#+/, '').trim();
-  if (HEX64.test(cleaned)) return cleaned.toLowerCase();
-  return null;
-}
+export const resolveWriterInput = resolveLookupInput;
 
 /**
  * Re-publish the crew's kind-30078 definition with an updated roster, signed by
