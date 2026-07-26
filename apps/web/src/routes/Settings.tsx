@@ -224,6 +224,20 @@ export function Settings(): JSX.Element {
             Read up
           </a>
         </div>
+        <div className="settings-row">
+          <span className="muted">
+            Don&apos;t trust us — check. Prove this app is the exact code we put up,
+            byte for byte, on your own machine.
+          </span>
+          <a
+            href="https://docs.1nky.com/privacy/verify"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn--ghost btn--sm sticker"
+          >
+            Check the paint
+          </a>
+        </div>
         <p className="help">
           A holler is an ordinary post on an ordinary board. Same rules as the wall — no
           name, no number, just your tag.
