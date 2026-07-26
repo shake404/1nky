@@ -997,10 +997,30 @@ describe('GET /search', () => {
     });
   });
 
+  it('returns the writers whose tag matches — typing a tag finds the writer', async () => {
+    const res = await request(app(responder), '/search?q=smog');
+    expect(res.status).toBe(200);
+    const body = res.body as { writers: { pubkey: string; tag: string; mark: string | null; city: string | null; avatarSha256: string | null }[] };
+    expect(body.writers).toHaveLength(1);
+    expect(body.writers[0]).toEqual({
+      pubkey: AUTHOR,
+      tag: 'SMOG',
+      mark: markOf(AUTHOR),
+      avatarSha256: null,
+      city: 'sf',
+    });
+  });
+
+  it('asks the profiles table at all — the bug was that it never did', async () => {
+    const db = fakeDb(responder);
+    await request(createApp(db, TEST_CONFIG), '/search?q=smog');
+    expect(db.matching('from profiles p').length).toBeGreaterThan(0);
+  });
+
   it('answers with empty lists rather than 404 when nothing matches', async () => {
     const res = await request(app(), '/search?q=nothingatall');
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ flicks: [], videos: [], threads: [] });
+    expect(res.body).toMatchObject({ writers: [], flicks: [], videos: [], threads: [] });
   });
 
   it('rejects an absurdly long query', async () => {

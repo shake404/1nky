@@ -207,6 +207,135 @@ describe.skipIf(!enabled)('expired rows are hidden before the sweep reaches them
 });
 
 /**
+ * Searching for a writer, end to end.
+ *
+ * The bug this exists for: `GET /search?q=shake` answered with walls, flicks,
+ * clips and talk and NO writers at all, so the one thing a writer is most likely
+ * to type — somebody's tag — could not find them. The unit tests prove the SQL
+ * is the SQL we meant; only this proves Postgres agrees about the ranking, the
+ * ban filter, and that a crew (a kind-0 profile like any other) comes along.
+ *
+ * Five profiles are seeded: the exact tag, a longer one starting with it, one
+ * that merely contains it, a banned one that must not show up at all, and a crew
+ * whose own kind-0 lives in the same table.
+ */
+describe.skipIf(!enabled)('searching for a writer against a live Postgres', () => {
+  let config: ApiConfig;
+  let db: Database;
+  let app: Express;
+  let seed: pg.Pool;
+
+  const EXACT = hex('d1');
+  const PREFIX = hex('d2');
+  const INSIDE = hex('d3');
+  const BANNED = hex('d4');
+  const CREW = hex('d5');
+  const ALL = [EXACT, PREFIX, INSIDE, BANNED, CREW];
+  const now = Math.floor(Date.now() / 1000);
+
+  const clean = async (): Promise<void> => {
+    await seed.query('delete from banned_pubkeys where pubkey = any($1::text[])', [ALL]);
+    await seed.query('delete from crews where crew_pubkey = any($1::text[])', [ALL]);
+    await seed.query('delete from profiles where pubkey = any($1::text[])', [ALL]);
+  };
+
+  beforeAll(async () => {
+    config = loadConfig({
+      ...process.env,
+      MOD_API_KEY: process.env['MOD_API_KEY'] ?? 'pgtest-mod-key',
+    });
+    db = connect(config.databaseUrl);
+    app = createApp(db, config);
+    seed = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
+
+    await clean();
+
+    for (const [pubkey, tag] of [
+      [EXACT, 'PGSHAKE'],
+      [PREFIX, 'PGSHAKEDOWN'],
+      [INSIDE, 'EARTHPGSHAKER'],
+      [BANNED, 'PGSHAKEBANNED'],
+      [CREW, 'PGSHAKECREW'],
+    ] as const) {
+      await seed.query(
+        `insert into profiles (pubkey, tag_name, city, first_seen, updated_at)
+         values ($1, $2, 'pgtest-city', $3, $3)
+         on conflict (pubkey) do update set tag_name = excluded.tag_name`,
+        [pubkey, tag, now - 600],
+      );
+    }
+    await seed.query(
+      `insert into banned_pubkeys (pubkey, reason, banned_at) values ($1, 'pgtest', $2)
+       on conflict (pubkey) do nothing`,
+      [BANNED, now - 500],
+    );
+    // A crew is a kind-0 profile signed by the crew's own key, plus a row here.
+    await seed.query(
+      `insert into crews (crew_pubkey, name, members, created_at, updated_at)
+       values ($1, 'PGSHAKECREW', '{}'::text[], $2, $2)
+       on conflict (crew_pubkey) do nothing`,
+      [CREW, now - 600],
+    );
+  });
+
+  afterAll(async () => {
+    if (seed) {
+      await clean();
+      await seed.end();
+    }
+    if (db) await db.end();
+  });
+
+  const writersOf = async (q: string): Promise<{ pubkey: string; tag: string | null }[]> => {
+    const res = await request(app, `/search?q=${encodeURIComponent(q)}`);
+    expect(res.status).toBe(200);
+    return (res.body as { writers: { pubkey: string; tag: string | null }[] }).writers;
+  };
+
+  it('finds a writer by their tag, which is the whole point', async () => {
+    const found = await writersOf('pgshake');
+    expect(found.map((w) => w.pubkey)).toContain(EXACT);
+  });
+
+  it('matches a tag case-insensitively', async () => {
+    expect((await writersOf('PgShAkE')).map((w) => w.pubkey)).toContain(EXACT);
+  });
+
+  it('puts the exact tag above one that merely starts with it, and that above the rest', async () => {
+    const order = (await writersOf('pgshake')).map((w) => w.pubkey);
+    expect(order.indexOf(EXACT)).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf(EXACT)).toBeLessThan(order.indexOf(PREFIX));
+    expect(order.indexOf(PREFIX)).toBeLessThan(order.indexOf(INSIDE));
+  });
+
+  it('leaves a banned writer out, like every other public read', async () => {
+    expect((await writersOf('pgshake')).map((w) => w.pubkey)).not.toContain(BANNED);
+  });
+
+  it('finds a crew too — a crew is a profile like any other', async () => {
+    expect((await writersOf('pgshakecrew')).map((w) => w.pubkey)).toEqual([CREW]);
+  });
+
+  it('carries the tag, the mark and the city on every row', async () => {
+    const row = (await writersOf('pgshake')).find((w) => w.pubkey === EXACT) as
+      | { tag: string; mark: string; city: string }
+      | undefined;
+    expect(row?.tag).toBe('PGSHAKE');
+    expect(row?.mark).toBeTypeOf('string');
+    expect(row?.city).toBe('pgtest-city');
+  });
+
+  it('treats a typed wildcard as text, not as "everybody"', async () => {
+    const found = (await writersOf('%')).map((w) => w.pubkey);
+    for (const pubkey of ALL) expect(found).not.toContain(pubkey);
+  });
+
+  it('answers with an empty list rather than an error for a tag nobody uses', async () => {
+    expect(await writersOf('pgnobodyusesthis')).toEqual([]);
+  });
+});
+
+/**
  * Happenings, end to end.
  *
  * The unit tests prove the ordering, the city filter and the 7-day window are in

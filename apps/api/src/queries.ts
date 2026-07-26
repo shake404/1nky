@@ -812,6 +812,58 @@ limit $3::int`,
 }
 
 /**
+ * `ilike` treats `%` and `_` as wildcards and `\` as its escape, so a writer who
+ * types any of the three has to have it escaped or "50%" would match everybody.
+ * Escaped here rather than with `... escape ''` so the pattern stays a plain
+ * bound value.
+ */
+const likePattern = (q: string): string => q.replace(/[\\%_]/g, (char) => `\\${char}`);
+
+/**
+ * The half of search that was missing: writers, matched on the tag they chose.
+ *
+ * Substring `ilike` rather than full text: a tag is a name, not prose — "shake"
+ * has to find SHAKE, SHAKEDOWN and EARTHSHAKER, and an FTS lexeme match finds
+ * none of those. Ranked in three buckets by `match_rank` — the exact tag, then a
+ * tag that starts with what was typed, then a tag that merely contains it —
+ * because somebody typing a whole tag wants that writer at the top, and
+ * `length` then `pubkey` break the tie so the same rows always come back in the
+ * same order. No trigram extension: the profiles table is one row per writer and
+ * this is a bounded, limited scan.
+ *
+ * Crews arrive for free and deliberately: a crew's name lives on the crew's own
+ * kind-0, which the indexer upserts into this same table with no kind filter, so
+ * searching a crew's name finds the crew.
+ *
+ * `city` rides along on the row (the box asks "who or where") but is NOT matched
+ * on. Typing a city is already answered by the wall list — matching it here as
+ * well would put a limit's worth of writers from Oakland above the Oakland wall
+ * itself, which is not what "oakland" means when somebody types it.
+ *
+ * No `events` join and so no NIP-40 predicate: a kind 0 does not expire, and
+ * a profile row is the writer's current name rather than an event-backed post.
+ * Banned writers disappear here as they do from every other public read.
+ */
+export function searchWritersQuery(q: string, limit: number): Sql {
+  const pattern = likePattern(q);
+  return {
+    text: `select p.pubkey, p.tag_name, p.city, p.avatar_sha256,
+       case
+         when lower(p.tag_name) = lower($1) then 0
+         when p.tag_name ilike $3 then 1
+         else 2
+       end as match_rank
+from profiles p
+where coalesce(p.tag_name, '') <> ''
+  and p.tag_name ilike $2
+  and ${notBanned('p.pubkey')}
+order by match_rank asc, length(p.tag_name) asc, lower(p.tag_name) asc, p.pubkey asc
+limit $4::int`,
+    params: [q, `%${pattern}%`, `${pattern}%`, limit],
+  };
+}
+
+/**
  * The mod queue: newest reports, each with enough context to act on in one
  * screen — the reported content, its thumbnail, and how trustworthy the
  * reporter looks.

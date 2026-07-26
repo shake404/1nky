@@ -1,20 +1,23 @@
+import { fingerprint } from '@1nky/protocol';
 import { parseBoardResponse, type ThreadRow } from './boards.js';
 import { API_BASE } from './config.js';
 import { parseFeedResponse, type Flick } from './feed.js';
+import { isIgnored } from './mute.js';
 
 /**
  * One box, everything on the wall.
  *
- * `GET /search?q=` hands back four lists — walls (board slugs), flicks, clips,
- * and talk (threads). Nothing here parses any of them by hand: media goes
- * through `feed.ts` so a clip is told from a picture exactly the way the wall
- * does it, and talk goes through `boards.ts` so a thread row is shaped (and an
- * ignored writer dropped) exactly the way a board does it. Two parsers, not
- * five, and the mute list is enforced in both without this file knowing it
- * exists.
+ * `GET /search?q=` hands back five lists — writers, walls (board slugs), flicks,
+ * clips, and talk (threads). Media goes through `feed.ts` so a clip is told from
+ * a picture exactly the way the wall does it, and talk goes through `boards.ts`
+ * so a thread row is shaped (and an ignored writer dropped) exactly the way a
+ * board does it. Writers are the one list shaped here, because there is no other
+ * screen that reads a bare list of them — and it applies the same mute rule by
+ * hand, so search stays no kind of hole in it.
  *
- * Every list is treated as optional. An older box may not answer with clips or
- * talk at all, and the screen has to be fine with that rather than blank.
+ * Every list is treated as optional. An older box may not answer with writers,
+ * clips or talk at all, and the screen has to be fine with that rather than
+ * blank.
  */
 
 /** Shortest thing worth asking the wall about. */
@@ -28,9 +31,22 @@ export const SEARCH_LIMIT = 24;
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
+/** A writer the wall matched by their tag, ready for a row at `/w/:pubkey`. */
+export interface WriterHit {
+  pubkey: string;
+  /** The name they chose, or null when they have never set one. */
+  tag: string | null;
+  /** Their mark — same name, different mark means a different writer. */
+  mark: string;
+  avatarSha256: string | null;
+  city: string | null;
+}
+
 export interface SearchResults {
   /** What the wall thought we asked for. */
   q: string;
+  /** Writers whose tag matches, best match first. */
+  writers: WriterHit[];
   /** Board slugs, ready to link at `/b/:slug`. */
   boards: string[];
   /** Flicks and clips in one wall, newest first. */
@@ -39,7 +55,13 @@ export interface SearchResults {
   threads: ThreadRow[];
 }
 
-export const NO_RESULTS: SearchResults = Object.freeze({ q: '', boards: [], media: [], threads: [] });
+export const NO_RESULTS: SearchResults = Object.freeze({
+  q: '',
+  writers: [],
+  boards: [],
+  media: [],
+  threads: [],
+});
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -97,10 +119,50 @@ function normalizeThread(row: unknown): unknown {
 }
 
 /**
+ * One writer row.
+ *
+ * The id has to be a real one or the row is dropped — a chip that links nowhere
+ * is worse than no chip. The mark is computed here when the wall did not send
+ * one, because the mark is derived from the id and never needs asking for.
+ */
+function writerHit(value: unknown): WriterHit | null {
+  const raw = record(value);
+  if (!raw) return null;
+  const id = raw['pubkey'] ?? raw['writer'] ?? raw['id'];
+  if (typeof id !== 'string') return null;
+  const pubkey = id.trim().toLowerCase();
+  if (!HEX64.test(pubkey)) return null;
+
+  const tag = raw['tag'] ?? raw['name'];
+  const mark = raw['mark'];
+  const avatar = raw['avatarSha256'] ?? raw['avatar_sha256'];
+  const city = raw['city'];
+
+  return {
+    pubkey,
+    tag: typeof tag === 'string' && tag.trim() !== '' ? tag.trim() : null,
+    mark: typeof mark === 'string' && mark !== '' ? mark : fingerprint(pubkey),
+    avatarSha256: typeof avatar === 'string' && avatar !== '' ? avatar.toLowerCase() : null,
+    city: typeof city === 'string' && city.trim() !== '' ? city.trim() : null,
+  };
+}
+
+/**
  * Read whatever the wall answered with. Never throws, never invents a list.
  */
 export function parseSearchResponse(payload: unknown): SearchResults {
   const body = record(payload) ?? {};
+
+  // Writers, in the order the wall ranked them. Somebody you are ignoring does
+  // not come back just because you typed their tag.
+  const writers: WriterHit[] = [];
+  const known = new Set<string>();
+  for (const item of list(body['writers'])) {
+    const writer = writerHit(item);
+    if (!writer || known.has(writer.pubkey) || isIgnored(writer.pubkey)) continue;
+    known.add(writer.pubkey);
+    writers.push(writer);
+  }
 
   const boards: string[] = [];
   for (const item of list(body['boards'])) {
@@ -121,6 +183,7 @@ export function parseSearchResponse(payload: unknown): SearchResults {
 
   return {
     q: typeof body['q'] === 'string' ? body['q'] : '',
+    writers,
     boards,
     media,
     threads,
@@ -129,7 +192,12 @@ export function parseSearchResponse(payload: unknown): SearchResults {
 
 /** True when the wall had nothing at all for the query. */
 export function isEmpty(results: SearchResults): boolean {
-  return results.boards.length === 0 && results.media.length === 0 && results.threads.length === 0;
+  return (
+    results.writers.length === 0 &&
+    results.boards.length === 0 &&
+    results.media.length === 0 &&
+    results.threads.length === 0
+  );
 }
 
 /** `GET /search?q=&limit=`. Exposed so a test can pin the shape of the ask. */
