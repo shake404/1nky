@@ -67,6 +67,21 @@ describe('parseShoutsResponse', () => {
     expect(first.where).toEqual({ id: ID('1'), type: 'flick', subject: null, excerpt: 'rooftop' });
   });
 
+  it('tells a reply apart from being put on a post', () => {
+    // A writer can add your name to their own flick after it is up ("Add to
+    // this"). There is nothing to quote, so the row has to know which it is.
+    expect(parseShoutsResponse({ mentions: [row()] }).shouts[0]?.source).toBe('reply');
+    const tagged = parseShoutsResponse({
+      mentions: [row({ source: 'tag', content: '' })],
+    }).shouts[0];
+    expect(tagged?.source).toBe('tag');
+    expect(tagged?.content).toBe('');
+    // Anything unfamiliar reads as a reply, which is what every row used to be.
+    expect(parseShoutsResponse({ mentions: [row({ source: 'whatever' })] }).shouts[0]?.source).toBe(
+      'reply',
+    );
+  });
+
   it('throws out a row with nowhere to go', () => {
     const page = parseShoutsResponse({
       mentions: [

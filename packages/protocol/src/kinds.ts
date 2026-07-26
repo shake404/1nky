@@ -36,6 +36,32 @@ export const KINDS = {
   GIFT_WRAP: 1059,
   /** NIP-22 comment — replies on flicks and thread posts. */
   COMMENT: 1111,
+  /**
+   * An **amendment**: tags the author adds to something they already put up.
+   * User-facing copy: "Add to this" (never "edit").
+   *
+   * 1NKY's one non-standard kind, and the number is chosen on purpose:
+   *
+   *   - It sits in the NIP-01 **regular** range (1000-9999), so a relay stores
+   *     every amendment rather than replacing the previous one. That is
+   *     load-bearing, not incidental: amendments are ADD-ONLY, and the read
+   *     model is the set-union of the original's tags with every amendment's.
+   *     A replaceable kind (10000+/30000+) would let the relay drop all but the
+   *     newest, and a rebuild would then lose whatever the earlier ones added.
+   *   - It is adjacent to 1111 (NIP-22 comment) because it is the same sort of
+   *     thing: a signed pointer at somebody's own earlier event. Nothing in any
+   *     NIP claims 1113, and 1NKY never publishes to public relays (see
+   *     CLAUDE.md "Do NOT"), so the only allowlist it has to agree with is our
+   *     own — ALLOWED_KINDS in infra/strfry/write-policy.mjs.
+   *
+   * Why an amendment exists at all: events are signed and immutable, and every
+   * comment references the original's id. Buffing and reposting to fix a missing
+   * wall would orphan the whole conversation, so the fix is additive — a second
+   * signed event by the SAME author carrying the tags that were missing. The
+   * original is never touched, and only the original author's amendment counts
+   * (the indexer enforces that at read time; see `applyAmendment`).
+   */
+  AMENDMENT: 1113,
   /** NIP-56 report — user-facing copy: "flag it". */
   REPORT: 1984,
   /** NIP-51 mute list — user-facing copy: "ignore this writer". */

@@ -126,6 +126,24 @@ describe('the shout-outs screen', () => {
     expect(link!.textContent).toContain('rooftop');
   });
 
+  it('says who put your name on their flick, rather than quoting nothing', async () => {
+    // A writer can add your name to a post that is already up ("Add to this").
+    // There is no text to show, so the row says what happened instead.
+    await createTag('WRITER');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      wallFetch([shout({ source: 'tag', content: '' })]),
+    );
+
+    await mount();
+
+    const link = container.querySelector(`a[href="/f/${ID('1')}"]`);
+    expect(link).not.toBeNull();
+    expect(link!.textContent).toContain('put your name on this one');
+    expect(link!.textContent).toContain('SMOG');
+    // Still a door to the flick, with the place named.
+    expect(link!.textContent).toContain('rooftop');
+  });
+
   it('sends a thread shout to the thread it happened in', async () => {
     await createTag('WRITER');
     vi.spyOn(globalThis, 'fetch').mockImplementation(

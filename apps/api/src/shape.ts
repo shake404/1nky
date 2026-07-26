@@ -1,4 +1,4 @@
-import { fingerprint } from '@1nky/protocol';
+import { fingerprint, KINDS } from '@1nky/protocol';
 
 /**
  * Row -> JSON shaping. Pure, and unit tested.
@@ -548,10 +548,13 @@ export function countComments(comments: readonly CommentJson[]): number {
 // ---------------------------------------------------------------------------
 
 export interface MentionSource extends WriterSource {
-  /** The comment that named the reader. */
+  /** The event that named the reader — a comment, or an amendment. */
   event_id: string;
   created_at: number | string;
+  /** The comment's text. Null for an amendment, which has none. */
   content: string | null;
+  /** Kind of the naming event, so the shaper can say which sort it was. */
+  source_kind?: number | string | null;
   /** The flick, clip or thread the conversation hangs off. */
   root_id: string;
   root_type: string | null;
@@ -559,13 +562,26 @@ export interface MentionSource extends WriterSource {
   root_excerpt: string | null;
 }
 
+/**
+ * How a writer came to be named.
+ *
+ * `reply` — somebody typed their name in a comment.
+ * `tag`   — an author added them to their own post afterwards (an amendment).
+ *
+ * Two words rather than a kind number, because the client renders them
+ * differently and must not have to know a kind to do it.
+ */
+export type MentionSourceKind = 'reply' | 'tag';
+
 export interface MentionJson {
-  /** The comment that named you. */
+  /** The event that named you. */
   id: string;
   createdAt: number;
-  /** What they said. Already truncated by the query. */
+  /** What they said. Empty when you were tagged rather than replied to. */
   content: string;
-  /** Who said it. */
+  /** Whether you were named in a reply or tagged into a post. */
+  source: MentionSourceKind;
+  /** Who named you. */
   writer: WriterJson;
   /** Where it was said, and enough to name the place on a list row. */
   where: {
@@ -591,6 +607,7 @@ export function shapeMention(row: MentionSource): MentionJson {
     id: row.event_id,
     createdAt: num(row.created_at),
     content: row.content ?? '',
+    source: num(row.source_kind) === KINDS.AMENDMENT ? 'tag' : 'reply',
     writer: shapeWriter(row),
     where: {
       id: row.root_id,

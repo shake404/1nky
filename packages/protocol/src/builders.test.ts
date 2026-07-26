@@ -3,6 +3,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey, verifyEvent } from 'nos
 import {
   beefExpiration,
   boardTag,
+  buildAmendment,
   buildBuff,
   buildComment,
   buildCrewBadgeRegistry,
@@ -32,6 +33,7 @@ import {
   mentionedPubkeys,
   mentionTag,
   normalizeBoard,
+  parseAmendment,
   parseInvite,
   parseInviteRedemption,
   parseModBan,
@@ -742,6 +744,104 @@ describe('mention marker', () => {
   });
 });
 
+describe('buildAmendment / parseAmendment', () => {
+  const flick: EventRef = { id: HEX_A, pubkey: HEX_B, kind: KINDS.FLICK };
+
+  it('is a regular-range kind, so a relay keeps every amendment', () => {
+    // Load-bearing: amendments are add-only and merge as a union, so losing all
+    // but the newest (what a replaceable kind would mean) would lose tags.
+    expect(KINDS.AMENDMENT).toBe(1113);
+    expect(KINDS.AMENDMENT).toBeGreaterThanOrEqual(1000);
+    expect(KINDS.AMENDMENT).toBeLessThan(10_000);
+  });
+
+  it('names the original with e + k and carries the added boards', () => {
+    const ev = buildAmendment(flick, { boards: ['  Oakland ', '#oakland', 'SF Bay'], createdAt: FIXED });
+    expect(ev.kind).toBe(KINDS.AMENDMENT);
+    expect(ev.content).toBe('');
+    expect(ev.created_at).toBe(FIXED);
+    expect(find(ev.tags, 'e')).toEqual([['e', HEX_A, '', HEX_B]]);
+    expect(find(ev.tags, 'k')).toEqual([['k', '20']]);
+    // Normalised through the same path a flick's boards take, and deduped.
+    expect(find(ev.tags, 't')).toEqual([
+      ['t', 'oakland'],
+      ['t', 'sf-bay'],
+    ]);
+  });
+
+  it('names writers with the existing mention marker', () => {
+    const ev = buildAmendment(flick, { mentions: [HEX_C, HEX_D, HEX_C] });
+    expect(find(ev.tags, 'p')).toEqual([
+      ['p', HEX_C, '', MENTION_MARKER],
+      ['p', HEX_D, '', MENTION_MARKER],
+    ]);
+    expect(mentionedPubkeys(ev)).toEqual([HEX_C, HEX_D]);
+  });
+
+  it('never names the author — you cannot shout at yourself', () => {
+    const ev = buildAmendment(flick, { mentions: [HEX_B, HEX_C] });
+    expect(mentionedPubkeys(ev)).toEqual([HEX_C]);
+  });
+
+  it('carries a relay hint in the e tag when one is given', () => {
+    const ev = buildAmendment({ ...flick, relay: 'wss://r' }, { boards: ['oakland'] });
+    expect(first(ev.tags, 'e')).toEqual(['e', HEX_A, 'wss://r', HEX_B]);
+  });
+
+  it('refuses an amendment that adds nothing', () => {
+    expect(() => buildAmendment(flick)).toThrow(TypeError);
+    expect(() => buildAmendment(flick, { boards: [], mentions: [] })).toThrow(TypeError);
+    // A board that normalises to nothing is nothing.
+    expect(() => buildAmendment(flick, { boards: ['###', '  '] })).toThrow(TypeError);
+  });
+
+  it('validates the original and every mention', () => {
+    expect(() => buildAmendment({ ...flick, id: 'nope' }, { boards: ['x'] })).toThrow(TypeError);
+    expect(() => buildAmendment({ ...flick, pubkey: 'nope' }, { boards: ['x'] })).toThrow(TypeError);
+    expect(() => buildAmendment({ ...flick, kind: 1.5 }, { boards: ['x'] })).toThrow(TypeError);
+    expect(() => buildAmendment(flick, { mentions: ['nope'] })).toThrow(TypeError);
+  });
+
+  it('takes a NIP-40 expiration like every other builder', () => {
+    const ev = buildAmendment(flick, { boards: ['oakland'], expiration: FIXED + 60 });
+    expect(first(ev.tags, 'expiration')).toEqual(['expiration', String(FIXED + 60)]);
+  });
+
+  it('parses back what it built', () => {
+    const ev = buildAmendment(flick, { boards: ['Oakland'], mentions: [HEX_C] });
+    expect(parseAmendment(ev)).toEqual({
+      targetId: HEX_A,
+      targetKind: KINDS.FLICK,
+      boards: ['oakland'],
+      mentions: [HEX_C],
+    });
+  });
+
+  it('reads a hand-rolled amendment defensively rather than throwing', () => {
+    // Uppercase target, junk kind, junk board, unmarked p tag (a reply target,
+    // not a mention), duplicate board.
+    const parsed = parseAmendment({
+      kind: KINDS.AMENDMENT,
+      tags: [
+        ['e', HEX_A.toUpperCase(), '', HEX_B],
+        ['k', 'twenty'],
+        ['t', '  SF Bay '],
+        ['t', 'sf-bay'],
+        ['t', '###'],
+        ['p', HEX_C, ''],
+      ],
+    });
+    expect(parsed).toEqual({ targetId: HEX_A, targetKind: null, boards: ['sf-bay'], mentions: [] });
+  });
+
+  it('is null for every event that is not an amendment', () => {
+    expect(parseAmendment(buildComment(flick, { content: 'x' }))).toBeNull();
+    expect(parseAmendment({ kind: KINDS.AMENDMENT, tags: [] })).toBeNull();
+    expect(parseAmendment({ kind: KINDS.AMENDMENT, tags: [['e', 'nope']] })).toBeNull();
+    expect(parseAmendment({ kind: KINDS.AMENDMENT })).toBeNull();
+  });
+});
+
 describe('buildBuff', () => {
   it('is kind 5 with one e tag per buffed event', () => {
     const ev = buildBuff([HEX_A, HEX_B], { kinds: [KINDS.FLICK], createdAt: FIXED });
@@ -1029,6 +1129,7 @@ describe('every builder produces a signable template', () => {
     }),
     threadOp: buildThreadOp({ content: 'hi', boards: ['sf-bay'] }),
     comment: buildComment(ref, { content: 'clean' }),
+    amendment: buildAmendment(ref, { boards: ['oakland'], mentions: [HEX_B] }),
     buff: buildBuff([HEX_A]),
     report: buildReport({ pubkey: pk }, 'spam'),
     muteList: buildMuteList([HEX_B]),

@@ -1,4 +1,5 @@
 import type {
+  AmendmentRow,
   BanRow,
   BoardRow,
   CommentRow,
@@ -177,6 +178,124 @@ export function insertMention(row: MentionRow): Sql {
            values ($1, $2, $3, $4, $5)
            on conflict (event_id, mentioned_pubkey) do nothing`,
     params: [row.event_id, row.mentioned_pubkey, row.author_pubkey, row.root_id, row.created_at],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Amendments — kind 1113, "Add to this" (migration 010)
+// ---------------------------------------------------------------------------
+
+/**
+ * Record the amendment itself. `do nothing` on conflict: a kind 1113 is not
+ * replaceable, so the same event id always adds the same tags.
+ *
+ * Stored whether or not it applies to anything yet — that is the whole point.
+ * The relay hands back stored events newest first, so on a rebuild an amendment
+ * routinely arrives before the post it amends; the row waits here until the
+ * target lands and `selectPendingAmendments` replays it.
+ */
+export function insertAmendment(row: AmendmentRow): Sql {
+  return {
+    text: `insert into amendments (event_id, target_id, author_pubkey, boards, mentions, created_at)
+           values ($1, $2, $3, $4::text[], $5::text[], $6)
+           on conflict (event_id) do nothing`,
+    params: [
+      row.event_id,
+      row.target_id,
+      row.author_pubkey,
+      row.boards,
+      row.mentions,
+      row.created_at,
+    ],
+  };
+}
+
+/** The derived tables an amendment can add board slugs to. */
+export const AMENDABLE_TABLES = ['flicks', 'videos', 'threads'] as const;
+export type AmendableTable = (typeof AMENDABLE_TABLES)[number];
+
+/**
+ * Merge an amendment's board slugs into the target's `boards` array.
+ *
+ * THE AUTHORSHIP RULE IS THIS `where` CLAUSE. `event_id = $1 and pubkey = $2`
+ * says: the post exists, and the writer amending it is the writer who put it up.
+ * In SQL rather than as a read-then-write, exactly like `buffDelete`'s ownership
+ * predicate, so a forged amendment cannot race a legitimate one — and so a
+ * BUFFED post (hard-deleted, cascading this table's target away from `events`)
+ * matches nothing and quietly stays buffed.
+ *
+ * The merge appends only slugs not already present, which keeps the original's
+ * tag order intact and makes a re-delivery a no-op. It is a set union: add-only
+ * semantics mean applying the same amendment twice, or two amendments in either
+ * order, always lands on the same set. `rowCount` is 0 when the guard refused —
+ * which is also how the caller knows not to register the boards.
+ *
+ * `table` is interpolated from {@link AMENDABLE_TABLES}, never from a value.
+ */
+export function applyAmendmentBoards(
+  table: AmendableTable,
+  row: Pick<AmendmentRow, 'target_id' | 'author_pubkey' | 'boards'>,
+): Sql {
+  return {
+    text: `update ${table} as t
+              set boards = t.boards || coalesce(
+                    (select array_agg(s) from unnest($3::text[]) as s where s <> all(t.boards)),
+                    '{}'::text[])
+            where t.event_id = $1
+              and t.pubkey = $2`,
+    params: [row.target_id, row.author_pubkey, row.boards],
+  };
+}
+
+/**
+ * File one mention from an amendment — but only if the amended post is really
+ * there, really this author's, and really something that can be amended.
+ *
+ * The `where exists` is the same guard `applyAmendmentBoards` gets from its
+ * `where`, spelled out because an insert has no target row to constrain: without
+ * it, an amendment naming a stranger against a buffed (or invented, or somebody
+ * else's) event id would put a row in a writer's shout-outs pointing at nothing.
+ * A mention is the one part of an amendment that reaches another person, so it
+ * is the part that must not fire on an unverifiable target.
+ */
+export function insertAmendmentMention(row: MentionRow, amendableKinds: readonly number[]): Sql {
+  return {
+    text: `insert into mentions (event_id, mentioned_pubkey, author_pubkey, root_id, created_at)
+           select $1, $2, $3, $4, $5
+           where exists (
+             select 1 from events e
+              where e.id = $4
+                and e.pubkey = $3
+                and e.kind = any($6::int[])
+           )
+           on conflict (event_id, mentioned_pubkey) do nothing`,
+    params: [
+      row.event_id,
+      row.mentioned_pubkey,
+      row.author_pubkey,
+      row.root_id,
+      row.created_at,
+      [...amendableKinds],
+    ],
+  };
+}
+
+/**
+ * Every amendment already filed against a post by the writer who put it up.
+ *
+ * Run once, when the post itself is indexed, to catch the amendments that
+ * arrived first. `author_pubkey = $2` (the target's own pubkey) is the second
+ * place authorship is enforced: a stranger's amendment is in the table but is
+ * never selected here. Ordered so a replay is deterministic.
+ */
+export function selectPendingAmendments(targetId: string, authorPubkey: string): Sql {
+  return {
+    text: `select event_id, target_id, author_pubkey, boards, mentions, created_at
+             from amendments
+            where target_id = $1
+              and author_pubkey = $2
+            order by created_at asc, event_id asc`,
+    params: [targetId, authorPubkey],
   };
 }
 
@@ -604,6 +723,7 @@ export const DERIVED_TABLES = [
   'profiles',
   'comments',
   'mentions',
+  'amendments',
   'reports',
   'deletions',
   'boards',

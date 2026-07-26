@@ -1,12 +1,14 @@
 import { COPY, KINDS, type EventRef, type SignedEvent } from '@1nky/protocol';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { AddToThis } from '../components/AddToThis.js';
 import { AgeDots } from '../components/AgeDots.js';
 import { FlagIt } from '../components/FlagIt.js';
 import { IgnoreWriter } from '../components/IgnoreWriter.js';
 import { MentionBox } from '../components/MentionBox.js';
 import { WriterChip } from '../components/WriterChip.js';
 import { Spraying } from '../components/Spraying.js';
+import { amendedBoards } from '../lib/amend.js';
 import { getPref, setPref } from '../lib/db.js';
 import { fetchFlick, fetchWriterSummary, type Flick, type WriterSummary } from '../lib/feed.js';
 import type { Tag } from '../lib/identity.js';
@@ -42,6 +44,14 @@ export function FlickDetail(): JSX.Element {
   const [draft, setDraft] = useState('');
   const [stage, setStage] = useState<Stage | null>(null);
   const [confirmBuff, setConfirmBuff] = useState(false);
+  /**
+   * Walls the writer added AFTER putting this up (see `amendPost`). Kept apart
+   * from the flick itself because the flick is what was signed and does not
+   * change; this is the second half of what the page has to show.
+   */
+  const [amendments, setAmendments] = useState<SignedEvent[]>([]);
+  /** Walls added on this device just now, before the wall echoes them back. */
+  const [justAdded, setJustAdded] = useState<string[]>([]);
 
   useEffect(() => {
     let live = true;
@@ -93,6 +103,34 @@ export function FlickDetail(): JSX.Element {
     });
     return () => sub.close();
   }, [id]);
+
+  // Additions stream in beside the replies. Same shape, same reason: the page
+  // should show what the writer added without anyone reaching for a refresh.
+  useEffect(() => {
+    if (!id) return;
+    setAmendments([]);
+    setJustAdded([]);
+    const sub = relay.subscribe([{ kinds: [KINDS.AMENDMENT], '#e': [id], limit: 100 }], {
+      onEvent: (event: SignedEvent) => {
+        setAmendments((current) =>
+          current.some((a) => a.id === event.id) ? current : [...current, event],
+        );
+      },
+    });
+    return () => sub.close();
+  }, [id]);
+
+  /**
+   * Every wall this flick is on: the ones it went up with, plus the ones its
+   * writer added later. `amendedBoards` ignores an addition signed by anybody
+   * else, so nobody can park somebody else's flick on a wall.
+   */
+  const walls = useMemo<string[]>(() => {
+    if (!flick) return [];
+    const merged = amendedBoards(flick, amendments);
+    // Optimism: what went up a second ago, until the wall hands it back.
+    return [...merged, ...justAdded.filter((slug) => !merged.includes(slug))];
+  }, [flick, amendments, justAdded]);
 
   const parent = useMemo<EventRef | null>(
     () =>
@@ -245,6 +283,38 @@ export function FlickDetail(): JSX.Element {
       )}
 
       {flick.caption ? <p>{flick.caption}</p> : null}
+
+      {walls.length > 0 ? (
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {walls.map((slug) => (
+            <Link key={slug} to={`/b/${slug}`} className="chip mono">
+              #{slug}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+
+      {mine && owner && parent ? (
+        // Only the writer who put it up, and signed with the key that did —
+        // which for a crew's flick is the crew's, not whoever is on screen.
+        <AddToThis
+          target={parent}
+          owner={owner}
+          asCrew={actingAsCrew !== null}
+          boards={walls}
+          candidates={candidates}
+          onStage={setStage}
+          onAdded={({ boards, mentions }) => {
+            setJustAdded((current) => [...current, ...boards.filter((s) => !current.includes(s))]);
+            say(
+              mentions.length > 0 && boards.length === 0
+                ? 'Added. They will see it.'
+                : COPY.addTo.done,
+            );
+          }}
+          onError={(message) => say(message, 'hazard')}
+        />
+      ) : null}
 
       {mine ? (
         <div>

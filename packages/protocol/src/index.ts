@@ -51,6 +51,7 @@ export type { PowOptions } from './pow.js';
 export {
   beefExpiration,
   boardTag,
+  buildAmendment,
   buildBuff,
   buildComment,
   buildCrewBadgeRegistry,
@@ -81,6 +82,7 @@ export {
   mentionTag,
   MOD_BAN_DTAG_PREFIX,
   normalizeBoard,
+  parseAmendment,
   parseInvite,
   parseInviteRedemption,
   parseModBan,
@@ -91,6 +93,8 @@ export {
 } from './builders.js';
 export { PROFILE_BIO_MAX } from './builders.js';
 export type {
+  BuildAmendmentInput,
+  ParsedAmendment,
   BuildCrewBadgeRegistryInput,
   BuildCrewDefinitionInput,
   BuilderOptions,

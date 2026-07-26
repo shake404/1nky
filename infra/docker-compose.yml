@@ -140,7 +140,7 @@ services:
       # cannot be added back here: write-policy.mjs rejects them by number
       # before it looks at this list. They only ever exist encrypted inside a
       # 1059, so one arriving at the relay is a plaintext DM leak.
-      ALLOWED_KINDS: "${ALLOWED_KINDS:-0,1,5,20,22,1059,1111,1984,10000,30078}"
+      ALLOWED_KINDS: "${ALLOWED_KINDS:-0,1,5,20,22,1059,1111,1113,1984,10000,30078}"
       MAX_EVENT_BYTES: "${MAX_EVENT_BYTES:-65536}"
       # NIP-13 tiers. Defaults mirror the root .env.example.
       POW_BITS_NEW: "${POW_BITS_NEW:-18}"

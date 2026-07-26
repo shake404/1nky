@@ -396,10 +396,23 @@ describe('mentionsQuery', () => {
     expect(text).toContain('re.expires_at is null or re.expires_at > extract(epoch from now())');
   });
 
-  it('hides a banned writer and a buffed comment', () => {
+  it('hides a banned writer and a buffed naming event', () => {
     const text = mentionsQuery({ pubkey: NAMED, limit: 24 }).text;
-    expect(text).toContain('b.pubkey = c.pubkey');
-    expect(text).toContain('c.event_id = any(d.targets)');
+    // Keyed on the denormalised author, so the rule holds whether the naming
+    // came from a comment or from an amendment (which has no `comments` row).
+    expect(text).toContain('b.pubkey = m.author_pubkey');
+    expect(text).toContain('m.event_id = any(d.targets)');
+  });
+
+  it('serves a tag as well as a reply, from the one table', () => {
+    const text = mentionsQuery({ pubkey: NAMED, limit: 24 }).text;
+    // An amendment (kind 1113) files a mention with no comment behind it, so the
+    // comment join has to be optional or the whole row would vanish.
+    expect(text).toContain('left join comments c on c.event_id = m.event_id');
+    expect(text).toContain('m.author_pubkey as pubkey');
+    expect(text).toContain('e.kind as source_kind');
+    // The writer's tag/avatar comes from the denormalised author too.
+    expect(text).toContain('left join profiles p on p.pubkey = m.author_pubkey');
   });
 
   it('cuts the excerpt in Postgres so a 64KB comment never crosses the wire', () => {

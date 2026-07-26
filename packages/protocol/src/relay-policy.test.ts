@@ -449,6 +449,34 @@ describe('write-policy: NIP-13 proof of work', () => {
     }
   });
 
+  it('charges an amendment the post tier, like the comment it sits beside', async () => {
+    // An amendment adds content — a mention on one lands in somebody's
+    // shout-outs — so it must NOT be in POW_REACTION_KINDS. It has no tier of
+    // its own: falling through to POW_BITS_POST is the whole intent.
+    const pubkey = 'd4'.repeat(32);
+    const { verdicts } = await drive(
+      [
+        request({ kind: KINDS.NOTE, pubkey, id: idWithBits(18), tags: [['nonce', '1', '18']] }),
+        request({
+          kind: KINDS.AMENDMENT,
+          pubkey,
+          id: idWithBits(13),
+          tags: [['nonce', '1', '13']],
+        }),
+        request({
+          kind: KINDS.AMENDMENT,
+          pubkey,
+          id: idWithBits(8),
+          tags: [['nonce', '1', '8']],
+        }),
+      ],
+      POW,
+    );
+    expect(verdicts[0]?.action).toBe('accept');
+    expect(verdicts[1]?.action).toBe('accept');
+    expect(verdicts[2]?.msg).toMatch(/below the required 13/);
+  });
+
   it('takes the first nonce tag, so a second one cannot launder the target', async () => {
     const verdict = await decide(
       {

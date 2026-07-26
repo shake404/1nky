@@ -30,6 +30,7 @@ describe('KINDS', () => {
       VIDEO: 22,
       GIFT_WRAP: 1059,
       COMMENT: 1111,
+      AMENDMENT: 1113,
       REPORT: 1984,
       MUTE_LIST: 10000,
       APP_DATA: 30078,

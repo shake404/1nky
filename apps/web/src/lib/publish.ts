@@ -1,4 +1,5 @@
 import {
+  buildAmendment,
   buildBuff,
   buildComment,
   buildThreadOp,
@@ -329,6 +330,45 @@ export async function postComment(
     POW_BITS.post,
     publishOptions,
   );
+  await noteOwnPost(event.id, recordOwn);
+  return event;
+}
+
+export interface AmendInput extends PublishOptions {
+  /** City walls to add. Free text; the builder slugifies each one. */
+  boards?: readonly string[];
+  /** Writers to name. Each becomes a real reference, so it reaches them. */
+  mentions?: readonly string[];
+  /** See {@link PostFlickInput.recordOwn}. Default true. */
+  recordOwn?: boolean;
+}
+
+/**
+ * Kind 1113 — "Add to this": put more walls or more writers on something that
+ * is already up.
+ *
+ * Nothing about the original changes. It cannot: what went up was signed, and
+ * every reply underneath it points at that exact thing — buffing and reposting
+ * to add a wall would take the whole conversation with it. So this goes up as
+ * its own small thing that says "and this too", and the wall merges the two when
+ * it reads them.
+ *
+ * `tag` MUST be the key that PUT IT UP — a crew's flick has to be added to with
+ * the crew's key, the same rule taking one down follows. The wall ignores an
+ * addition from anybody else. Priced at the post tier, like a reply: naming a
+ * writer reaches them, so this is not a cheap signal.
+ */
+export async function amendPost(
+  tag: Tag,
+  target: EventRef,
+  input: AmendInput = {},
+): Promise<SignedEvent> {
+  const { boards, mentions, recordOwn = true, ...options } = input;
+  const template = buildAmendment(target, {
+    ...(boards?.length ? { boards } : {}),
+    ...(mentions?.length ? { mentions } : {}),
+  });
+  const event = await send(template, tag, POW_BITS.post, options);
   await noteOwnPost(event.id, recordOwn);
   return event;
 }

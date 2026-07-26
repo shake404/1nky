@@ -303,16 +303,25 @@ export interface MentionsOptions {
 }
 
 /**
- * `GET /mentions/:pubkey` — every comment that deliberately named a writer.
+ * `GET /mentions/:pubkey` — every time a writer was deliberately named.
  *
  * The selection rule lives entirely in the `mentions` table: the indexer only
  * files a row for a `p` tag carrying the mention marker, so the reply-target
  * tags NIP-22 puts on every comment never get here and this read does not have
  * to know the difference. See migration 009.
  *
+ * TWO THINGS CAN NAME YOU, and this read serves both without a second endpoint:
+ * a comment (kind 1111) and an amendment (kind 1113 — the tags an author adds
+ * to their own post afterwards, migration 010). That is why `comments` is a LEFT
+ * join and why the naming writer is read from `m.author_pubkey` rather than from
+ * `c.pubkey`: the indexer denormalises the author onto every mention row exactly
+ * so this read does not depend on which kind produced it. An amendment has no
+ * text, so `content` is null for one and `source_kind` tells the client which it
+ * is looking at.
+ *
  * Both ends of the row have to still be readable, hence two joins to `events`:
  *
- *   - `e` is the comment that did the naming. Expired, buffed or from a banned
+ *   - `e` is the event that did the naming. Expired, buffed or from a banned
  *     writer and the mention is gone with it — the same rules every other
  *     public read applies.
  *   - `re` is the flick, clip or thread the conversation hangs off, and it is an
@@ -331,7 +340,8 @@ export interface MentionsOptions {
 export function mentionsQuery(options: MentionsOptions): Sql {
   return {
     text: `select m.event_id, m.created_at, m.root_id,
-       c.pubkey, left(c.content, 240) as content,
+       m.author_pubkey as pubkey, left(c.content, 240) as content,
+       e.kind as source_kind,
        ${WRITER_COLUMNS},
        case
          when f.event_id is not null then 'flick'
@@ -342,16 +352,16 @@ export function mentionsQuery(options: MentionsOptions): Sql {
        t.subject as root_subject,
        coalesce(f.caption, v.caption, left(re.content, 160)) as root_excerpt
 from mentions m
-join comments c on c.event_id = m.event_id
 join events e on e.id = m.event_id
 join events re on re.id = m.root_id
-left join profiles p on p.pubkey = c.pubkey
+left join comments c on c.event_id = m.event_id
+left join profiles p on p.pubkey = m.author_pubkey
 left join flicks f on f.event_id = m.root_id
 left join videos v on v.event_id = m.root_id
 left join threads t on t.event_id = m.root_id
 where m.mentioned_pubkey = $1
-  and ${notBanned('c.pubkey')}
-  and ${notBuffed('c.pubkey', 'c.event_id')}
+  and ${notBanned('m.author_pubkey')}
+  and ${notBuffed('m.author_pubkey', 'm.event_id')}
   and ${NOT_EXPIRED}
   and (re.expires_at is null or re.expires_at > extract(epoch from now())::bigint)
   and ($2::bigint is null or (m.created_at, m.event_id) < ($2::bigint, $3::text))
