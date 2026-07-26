@@ -16,9 +16,13 @@ export default defineConfig({
     ['meta', { name: 'referrer', content: 'no-referrer' }],
     ['meta', { name: 'robots', content: 'index, follow' }],
     ['meta', { name: 'color-scheme', content: 'dark light' }],
+    // Self-hosted mark only — no third-party icon services.
+    ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
+    ['link', { rel: 'alternate icon', href: '/favicon.png', type: 'image/png' }],
   ],
   themeConfig: {
     siteTitle: '1NKY docs',
+    logo: '/logo.svg',
     outline: [2, 3],
     nav: [
       { text: 'Start Here', link: '/how-it-works' },
