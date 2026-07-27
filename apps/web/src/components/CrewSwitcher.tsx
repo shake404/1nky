@@ -123,7 +123,7 @@ export function CrewSwitcher(): JSX.Element | null {
                 className={`switcher__item ${crew.pubkey === actingAsCrew ? 'is-active' : ''}`}
                 onClick={() => void pick(crew.pubkey)}
               >
-                {crew.name}
+                {(crew.name || 'crew').toUpperCase()}
               </button>
             ))
           )}

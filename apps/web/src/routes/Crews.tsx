@@ -1,7 +1,7 @@
 import { COPY, fingerprint } from '@1nky/protocol';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Identicon } from '../components/Identicon.js';
+import { Avatar } from '../components/Avatar.js';
 import { ensureCrewBackups, syncCrewKeys } from '../lib/crew-sync.js';
 import { fetchWriterCrews, loadFoundedCrews } from '../lib/crews.js';
 import { fetchProfile } from '../lib/profiles.js';
@@ -11,6 +11,7 @@ interface CrewRow {
   pubkey: string;
   name: string | null;
   foundedByMe: boolean;
+  avatarSha256: string | null;
 }
 
 /**
@@ -43,19 +44,21 @@ export function Crews(): JSX.Element {
 
       const byPubkey = new Map<string, CrewRow>();
       for (const c of local) {
-        byPubkey.set(c.pubkey, { pubkey: c.pubkey, name: c.name, foundedByMe: true });
+        byPubkey.set(c.pubkey, { pubkey: c.pubkey, name: c.name, foundedByMe: true, avatarSha256: null });
       }
       for (const pk of remotePubkeys) {
-        if (!byPubkey.has(pk)) byPubkey.set(pk, { pubkey: pk, name: null, foundedByMe: false });
+        if (!byPubkey.has(pk)) byPubkey.set(pk, { pubkey: pk, name: null, foundedByMe: false, avatarSha256: null });
       }
 
-      // Fill in names for repped crews we did not found ourselves. The crew's
-      // own kind-0 carries its name; a miss reads as "unnamed crew".
-      const unknown = [...byPubkey.values()].filter((r) => r.name === null);
+      // Each crew's own kind-0 carries its avatar (and its name, for crews we
+      // did not found). Fetch it for every row so the list shows the crew's
+      // sticker, not just an identicon — a miss falls back to the identicon.
       await Promise.allSettled(
-        unknown.map(async (r) => {
+        [...byPubkey.values()].map(async (r) => {
           const meta = await fetchProfile(r.pubkey);
-          if (live) r.name = meta?.name?.trim() || null;
+          if (!live) return;
+          if (r.name === null) r.name = meta?.name?.trim() || null;
+          r.avatarSha256 = meta?.avatarSha256 ?? null;
         }),
       );
 
@@ -107,9 +110,9 @@ export function Crews(): JSX.Element {
       <div className="stack">
         {rows.map((row) => (
           <Link key={row.pubkey} to={`/crew/${row.pubkey}`} className="writer dm-row" style={{ gap: 12 }}>
-            <Identicon pubkey={row.pubkey} size={40} />
+            <Avatar pubkey={row.pubkey} avatarSha256={row.avatarSha256} size={40} alt={row.name || ''} />
             <div className="dm-row__main" style={{ gap: 3 }}>
-              <span className="writer__name">{row.name || 'unnamed crew'}</span>
+              <span className="writer__name">{(row.name || 'unnamed crew').toUpperCase()}</span>
               <span className="writer__mark">{fingerprint(row.pubkey)}</span>
             </div>
             {row.foundedByMe ? <span className="kicker">founder</span> : null}

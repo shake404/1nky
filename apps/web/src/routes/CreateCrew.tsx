@@ -55,7 +55,9 @@ export function CreateCrew(): JSX.Element {
   if (!tag) return <div className="shell empty" />;
 
   const run = async (): Promise<void> => {
-    const trimmed = name.trim();
+    // Crew names are stored UPPERCASE so they read consistently everywhere
+    // (the display font makes case hard to tell apart).
+    const trimmed = name.trim().toUpperCase();
     if (!trimmed) {
       setError('Pick a crew name first.');
       return;
