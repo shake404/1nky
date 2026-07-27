@@ -19,6 +19,10 @@ export default defineConfig({
     // Self-hosted mark only — no third-party icon services.
     ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
     ['link', { rel: 'alternate icon', href: '/favicon.png', type: 'image/png' }],
+    // Belt-and-suspenders: if a stale service worker from the deploy mishap is
+    // still controlling this origin, evict it whenever a docs page does load.
+    // The self-destroying /sw.js is the primary fix; this catches the rest.
+    ['script', {}, "if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){r.unregister()})});if(window.caches){caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k)})})}}"],
   ],
   themeConfig: {
     siteTitle: '1NKY docs',
