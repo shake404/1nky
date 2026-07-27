@@ -7,20 +7,33 @@
 //   node verify-1nky.mjs <manifest> <origin>   # origin defaults to https://1nky.com
 //
 // The manifest is the dist-manifest.json attached to a GitHub release
-// (github.com/shake404/1nky/releases): { commit, tag, generated,
-// files: { "<path>": "<sha256hex>", ... } }. For every file it lists, this
-// script fetches <origin>/<path>, hashes the bytes your machine actually
-// receives, and compares. It also reads <origin>/index.html and checks that
-// every /assets/* file the app shell pulls in is one the manifest vouches for —
-// so nothing un-attested gets loaded.
+// (github.com/shake404/1nky/releases), schema:
+//   { "commit": "<sha>", "generated": "<iso8601>",
+//     "files": { "<relative-path>": "<sha256hex>", ... } }
+// For every file it lists, this script fetches <origin>/<path>, hashes the bytes
+// your machine actually receives, and compares. It also reads <origin>/index.html
+// and checks that every /assets/* file the app shell pulls in is one the manifest
+// vouches for — so nothing un-attested gets loaded.
 //
 // Exit code is 0 only if every file matches and the shell references nothing
 // outside the manifest; non-zero otherwise. Nothing is sent anywhere but the
 // origin and the manifest URL — no telemetry, no third party.
 //
-// Over Tor: run it through a SOCKS proxy so the check itself stays on the onion,
-// e.g.  torsocks node verify-1nky.mjs <manifest> http://<address>.onion
-// (torsocks wraps the process; this script needs no SOCKS code of its own).
+// Over Tor (the .onion origin): the check itself should ride the onion too, so
+// you're not proving one thing from a path that betrays another. Two ways, none
+// of which need any SOCKS code in this script:
+//
+//   * torsocks wraps the whole process and routes every TCP connection through
+//     SOCKS:
+//       torsocks node verify-1nky.mjs <manifest> http://<address>.onion
+//
+//   * An HTTP proxy env var. Set HTTPS_PROXY (or HTTP_PROXY) to a Tor HTTP proxy
+//     port and launch Node with `--use-env-proxy` (Node 24+), which makes global
+//     fetch honor it:
+//       HTTPS_PROXY=http://127.0.0.1:8118 node --use-env-proxy \
+//         verify-1nky.mjs <manifest> http://<address>.onion
+//     On Node 18–23 there's no built-in flag, so use torsocks or an external
+//     wrapper (proxychains-ng, etc.) for the env-var path instead.
 // =============================================================================
 
 import { createHash } from 'node:crypto';
@@ -83,7 +96,10 @@ const main = async () => {
     if (got.status !== 200) {
       console.log(`${RED}MISSING ${OFF}${path}  (HTTP ${got.status})`);
       bad += 1;
-    } else if (got.hash === want) {
+      continue;
+    }
+    if (got.hash === want) {
+      console.log(`${GREEN}ok      ${OFF}${path}`);
       ok += 1;
     } else {
       console.log(`${RED}MISMATCH${OFF} ${path}`);
@@ -119,14 +135,15 @@ const main = async () => {
   if (bad === 0 && shellBad === 0) {
     console.log(`${GREEN}VERIFIED${OFF}  ${ok}/${paths.length} files match, and the app shell loads nothing unlisted.`);
     console.log(`${DIM}${ORIGIN} is serving exactly the code ${manifest.tag ?? 'this release'} published.${OFF}`);
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   }
   console.log(`${RED}FAILED${OFF}  ${ok} ok, ${bad} file problem(s), ${shellBad} shell problem(s).`);
   console.log(`Do not trust this origin until this is explained. See https://docs.1nky.com/security`);
-  process.exit(1);
+  process.exitCode = 1;
 };
 
 main().catch((err) => {
   console.error(`${RED}verify error:${OFF} ${err.message}`);
-  process.exit(2);
+  process.exitCode = 2;
 });
