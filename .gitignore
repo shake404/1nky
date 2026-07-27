@@ -21,3 +21,4 @@ Bodega-extracted/
 infra/loadtest/results/
 infra/secrets/
 .internal/
+.claude/
