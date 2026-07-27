@@ -134,7 +134,7 @@ export function loadConfig(env: Env = process.env): MediaConfig {
 
 /**
  * S3/R2 connection settings. The endpoint is taken verbatim from
- * `R2_ENDPOINT` when set (lets DO Spaces / MinIO stand in), otherwise it is
+ * `R2_ENDPOINT` when set (lets any S3-compatible store / MinIO stand in), otherwise it is
  * derived from the Cloudflare account id.
  */
 export function loadS3Config(env: Env = process.env): S3Config {

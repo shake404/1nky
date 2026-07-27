@@ -13,8 +13,8 @@ the source and against what the site actually serves ([check the paint](/privacy
 1NKY uses the **Nostr data model** — signed events, secp256k1/Schnorr, `nostr-tools`
 — with a **self-hosted strfry relay as the single source of truth**, a **Postgres
 indexer** as a rebuildable read cache, a **read-only Express REST API**, and a
-**Blossom-compatible media service** on S3-compatible object storage (a cloud host
-Spaces today). The client is a React 18 + Vite PWA that never shows the user any of
+**Blossom-compatible media service** on S3-compatible object storage. The client
+is a React 18 + Vite PWA that never shows the user any of
 those words. We publish to no public relays. The whole thing is also served over a
 **v3 Tor hidden service**, from the same origin, with the same build.
 
@@ -22,7 +22,7 @@ those words. We publish to no public relays. The whole thing is also served over
 The PWA is static output on Vercel at `1nky.com`; these docs are a second Vercel
 project at `docs.1nky.com`. Everything else — strfry, the read API, the media
 service, Postgres, the Tor daemon, the nightly backup job — is one Caddy-fronted
-Docker Compose stack on a single a cloud host droplet answering as `api.1nky.com`
+Docker Compose stack on a single cloud VPS answering as `api.1nky.com`
 and as the onion address. **There is no CDN in front of the origin right now.**
 :::
 
@@ -186,7 +186,7 @@ kind-24242 event. Blobs are addressed by SHA-256, which means the same image has
 the same address everywhere — mirroring and URL healing come free.
 
 Storage is S3-compatible and therefore swappable; production is currently a
-a cloud host Spaces bucket, driven through `@aws-sdk/client-s3` with the endpoint in
+cloud object-storage bucket, driven through `@aws-sdk/client-s3` with the endpoint in
 config. R2's zero-egress pricing is the reason the design assumed R2 and the reason
 moving back to it is a one-variable change if bandwidth ever becomes the bill.
 
