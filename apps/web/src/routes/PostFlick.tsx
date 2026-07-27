@@ -2,10 +2,12 @@ import { COPY, GRAF_TYPES, SURFACES, type GrafType, type Surface } from '@1nky/p
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BlurFaces } from '../components/BlurFaces.js';
+import { RegionPicker } from '../components/RegionPicker.js';
 import { Spraying } from '../components/Spraying.js';
 import { WallPicker } from '../components/WallPicker.js';
 import { postFlick, postVideo, type Stage } from '../lib/publish.js';
 import { probeVideo } from '../lib/flicks.js';
+import { canonicalRegion } from '../lib/regions.js';
 import { canonicalWall } from '../lib/walls.js';
 import { useActiveTag } from '../state/TagProvider.js';
 import { useToast } from '../state/ToastProvider.js';
@@ -99,7 +101,7 @@ export function PostFlick(): JSX.Element {
       const boards = wall ? [wall] : [];
       const facetDetails = {
         ...(boards.length ? { boards } : {}),
-        ...(region.trim() ? { region: region.trim() } : {}),
+        ...(region.trim() ? { region: canonicalRegion(region) } : {}),
         ...(typeSet.size ? { types: [...typeSet] } : {}),
         ...(surfaceSet.size ? { surfaces: [...surfaceSet] } : {}),
         ...(legal ? { legalPermission: true } : {}),
@@ -222,12 +224,7 @@ export function PostFlick(): JSX.Element {
 
         <div className="facet-group">
           <span className="facet-group__label">Region (optional)</span>
-          <input
-            className="input"
-            value={region}
-            onChange={(e) => setRegion(e.target.value.slice(0, 32))}
-            placeholder="e.g. bay-area"
-          />
+          <RegionPicker id="region" value={region} onChange={setRegion} placeholder="e.g. the bay" />
         </div>
 
         <label className={`toggle ${legal ? 'toggle--on' : ''}`}>

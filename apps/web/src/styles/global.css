@@ -878,15 +878,19 @@ main {
   flex: none;
 }
 
-/* --- "Where" wall typeahead ----------------------------------------------- */
+/* --- Canonicalizing typeahead (the "Where" city picker and the region
+   picker share this — see components/Picker.tsx) ---------------------------- */
 /* Same drop-down furniture as the @-mention menu, kept as its own block so the
-   two can drift apart without either one breaking. Two lines per row here: the
-   city, and the region that tells London, England from London, Ontario. */
-.wall-picker {
+   two can drift apart without either one breaking. The wall picker's rows
+   carry a second line (the region that tells London, England from London,
+   Ontario); the region picker's rows do not need one, and `.picker__meta`
+   simply goes unused there. */
+.wall-picker,
+.region-picker {
   position: relative;
 }
 
-.wall-picker__menu {
+.picker__menu {
   position: absolute;
   left: 0;
   right: 0;
@@ -902,7 +906,7 @@ main {
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.35);
 }
 
-.wall-picker__item {
+.picker__item {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -917,17 +921,17 @@ main {
   cursor: pointer;
 }
 
-.wall-picker__item.is-active,
-.wall-picker__item:hover {
+.picker__item.is-active,
+.picker__item:hover {
   background: var(--soot-3);
   color: var(--sodium);
 }
 
-.wall-picker__name {
+.picker__name {
   font-weight: 600;
 }
 
-.wall-picker__where {
+.picker__meta {
   flex: none;
   font-size: 0.8rem;
 }
